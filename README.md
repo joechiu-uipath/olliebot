@@ -1,6 +1,9 @@
 # OllieBot
 
-Personal support agent that runs continuously to respond to triggers and perform automated tasks.
+Personal agent that runs continuously to respond to triggers and perform recurring tasks.
+
+Why create this when "XYZ" exists (XYZ = whatever is trending this week)?
+- This is a lab for agent feature set experiments. Because this is a single fully localized code base, it is easier to experiment with different ways that agents could work or even what an agent is.
 
 ## Features
 
@@ -73,13 +76,13 @@ npm run dev:server console
 
 ### Task Configuration
 
-Create task definitions as `.md` files in `user/agent/`. The bot will:
+Create task definitions as `.md` files in `user/tasks/`. The bot will:
 1. Watch for changes to these files
 2. Parse them into structured `.json` configs using LLM
 3. Version both files with git
 4. Schedule and execute tasks accordingly
 
-Example (`user/agent/daily-summary.md`):
+Example (`user/tasks/daily-summary.md`):
 ```markdown
 # Daily Summary Task
 
@@ -124,7 +127,8 @@ olliebot/
 │   └── skills/          # SKILL.md parser and executor
 ├── web/                  # React frontend
 ├── user/
-│   ├── agent/           # Task configuration .md files
+│   ├── tasks/           # Task configuration .md files
+│   ├── sub-agents/      # Sub-agent prompt overrides
 │   ├── data/            # SQLite database
 │   └── skills/          # SKILL.md workflow files
 ├── turbo.json           # Turbo monorepo config

@@ -96,7 +96,7 @@ function parseMCPServers(configStr: string): MCPServerConfig[] {
 const CONFIG = {
   port: parseInt(process.env.PORT || '3000', 10),
   dbPath: process.env.DB_PATH || join(process.cwd(), 'user', 'data', 'olliebot.db'),
-  configDir: process.env.CONFIG_DIR || join(process.cwd(), 'user', 'agent'),
+  configDir: process.env.CONFIG_DIR || join(process.cwd(), 'user', 'tasks'),
   skillsDir: process.env.SKILLS_DIR || join(process.cwd(), 'user', 'skills'),
 
   // LLM Configuration
@@ -357,7 +357,7 @@ async function main(): Promise<void> {
 
   console.log(`[Init] Tool runner initialized with ${toolRunner.getToolsForLLM().length} tools`);
 
-  // Initialize Task Manager (watches user/agent for .md task configs)
+  // Initialize Task Manager (watches user/tasks for .md task configs)
   console.log('[Init] Initializing task manager...');
   const taskManager = new TaskManager({
     configDir: CONFIG.configDir,

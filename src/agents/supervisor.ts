@@ -57,8 +57,8 @@ function stripBinaryDataForLLM(output: unknown): unknown {
   return output;
 }
 
-// Directory for external agent prompts (user can override defaults)
-const PROMPTS_DIR = join(process.cwd(), 'user', 'agent', 'prompts');
+// Directory for external sub-agent prompts (user can override defaults)
+const PROMPTS_DIR = join(process.cwd(), 'user', 'sub-agents');
 
 // Default prompts (used if no external file exists)
 const DEFAULT_PROMPTS: Record<string, string> = {
