@@ -4,7 +4,9 @@
 
 This document analyzes specialized "computer use" models from Anthropic, OpenAI, and Google that are purpose-built for controlling computer interfaces. These models represent a fundamentally different approach from our current design (screenshot + general vision model + Playwright selectors) and offer significant advantages in accuracy, simplicity, and native understanding of UI interactions.
 
-**Key Finding**: Specialized computer use models are **faster**, **more accurate**, and **simpler to implement** than the selector-based approach, though they come with different cost profiles and trade-offs.
+**Key Finding**: Specialized computer use models offer **better accuracy on unknown websites** and **no selector maintenance**, but are **NOT faster** than DOM-based approaches in real-world use. The marketed "225ms latency" for Gemini does not hold up in practice.
+
+**Reality Check**: In head-to-head tests, DOM-based agents (like Browser Use) complete tasks in 15 seconds while Gemini Computer Use takes 1 minute 15 seconds for the same task. All vision-based computer use models add ~0.8 seconds of latency per screenshot for image encoding alone.
 
 ---
 
@@ -561,46 +563,182 @@ const COMPUTER_USE_ERRORS = {
 
 ---
 
-## Upsides Summary
+## Reality Check: Marketing vs. Real-World Performance
 
-### Faster
+### The 225ms Latency Claim is Misleading
 
-| Metric | Our Current Design | Computer Use Models |
-|--------|-------------------|---------------------|
-| API calls per action | 2 (vision + reasoning) | 1 (unified) |
-| Latency per step | 2-5 seconds | 225ms-3s |
-| Time to complete 10-step task | 30-60 seconds | 5-30 seconds |
+Google claims Gemini 2.5 Computer Use has "225ms latency" and "industry-leading response speed." However:
 
-**Winner**: Gemini 2.5 Computer Use (225ms latency)
+**What the 225ms actually means**:
+- This is the **model inference time only** (processing the screenshot)
+- It does NOT include: screenshot capture, image encoding, network round-trip, action execution, UI settling
 
-### Cheaper
+**Real-world measurements**:
 
-| Approach | Cost per 10-step task |
-|----------|----------------------|
-| Our Design (Claude Sonnet vision + reasoning) | ~$1.20 |
-| Claude Computer Use | ~$0.90 |
-| OpenAI CUA | ~$0.75 |
-| **Gemini Computer Use** | **~$0.56** |
+| Test | Browser Use (DOM) | Gemini Computer Use | Difference |
+|------|-------------------|---------------------|------------|
+| Find most recent PR on GitHub | **15 seconds** | 1 min 15 seconds | 5x slower |
+| Average step time | **3 seconds** | 11-15 seconds | 4-5x slower |
+| Full task trajectory | **68 seconds** | 225-330 seconds | 3-5x slower |
 
-**Winner**: Gemini 2.5 Computer Use (53% cheaper than our design)
+Source: [Browser Use benchmarks](https://browser-use.com/posts/speed-matters)
 
-### More Accurate
+### Why Vision-Based Computer Use is Actually Slower
 
-| Benchmark | Our Design (estimated) | Best Computer Use |
-|-----------|----------------------|-------------------|
-| Simple web forms | ~60% | 87% (OpenAI CUA) |
-| Complex web flows | ~40% | 87% (OpenAI CUA) |
-| Desktop automation | N/A | 66% (Claude Opus) |
+Each screenshot adds overhead:
+- **~0.8 seconds** for image encoder processing alone
+- **Network upload** of 100-500KB PNG per step
+- **Model "thinking"** about visual layout
+- **Coordinate precision** requires larger images (1024x768 minimum)
 
-**Winner**: OpenAI CUA for web, Claude Opus for desktop
+DOM-based approaches (like Playwright) skip all of this by reading the page structure directly.
 
-### Additional Benefits
+### Real-World Problems Reported
 
-1. **No selector maintenance**: Sites can update their CSS without breaking automation
-2. **Universal UI support**: Works on Canvas, images, non-DOM interfaces
-3. **Simpler codebase**: Less translation logic between vision and action
-4. **Better error recovery**: Model can visually verify action results
-5. **Desktop expansion**: Same approach extends to full OS automation
+**Gemini Computer Use issues** (from developer feedback):
+
+| Problem | Description | Source |
+|---------|-------------|--------|
+| **Actual task time** | "It took four minutes to find the right article. Pretty slow for a simple request." | [Cybernews Review](https://cybernews.com/ai-tools/gemini-2-5-computer-use-review/) |
+| **Throttling** | "Throttling errors under load or during previews" | [Skywork Best Practices](https://skywork.ai/blog/gemini-2-5-computer-use-best-practices-limitations-2025/) |
+| **Context loss** | "Loss of focus after many steps; misapplied previous instructions" | Google Model Card |
+| **Rate limits** | "Error 429 (Too Many Requests)" - scripts crash | Developer reports |
+| **CAPTCHA blocks** | Gets stuck on Cloudflare verification | Real-world testing |
+| **Typos** | Model types "httb://" instead of "http://" | Developer reports |
+
+**Claude Computer Use issues**:
+
+| Problem | Description |
+|---------|-------------|
+| **Slow and error-prone** | Anthropic themselves call it "slow and error-prone" |
+| **Basic action failures** | "Failing at basic actions such as scrolling or zooming" |
+| **Flipbook limitation** | Misses transient UI states between screenshots |
+
+**OpenAI CUA issues**:
+
+| Problem | Description |
+|---------|-------------|
+| **Preview limitations** | "May be susceptible to exploits and inadvertent mistakes" |
+| **Auth discouraged** | "Discourages trusting it in authenticated environments" |
+| **Research preview** | Limited to tier 3-5 developers |
+
+### Benchmark Caveats
+
+**Self-reported data warning**:
+> "Test results come from self-reported data, Browserbase evaluations, and Google internal testing."
+
+The benchmarks are:
+- Run by the companies themselves
+- On curated test sets
+- Under optimal conditions
+- Not independently verified
+
+### The Browser Use Alternative
+
+[Browser Use](https://browser-use.com/) (open source) achieves **same accuracy as computer use models while being 4x faster**:
+
+| Metric | Browser Use 1.0 | Computer Use Models |
+|--------|-----------------|---------------------|
+| OnlineMind2Web accuracy | ~65% | ~65% |
+| Average trajectory time | **68 seconds** | 225-330 seconds |
+| Steps per minute | **20** | 4-5 |
+| Screenshot requirement | Optional (DOM-based) | Required every step |
+
+**How Browser Use is faster**:
+- Extracts DOM into text representation
+- LLM reads structure without image encoding
+- Screenshots only when visually necessary
+- No coordinate translation needed
+
+---
+
+## Revised Assessment
+
+### Speed: DOM-Based Wins
+
+| Approach | Real-World Speed | Notes |
+|----------|------------------|-------|
+| **Playwright + DOM** | 3s per step | Direct element access |
+| **Browser Use** | 3s per step | DOM extraction + LLM |
+| Computer Use (any) | 11-15s per step | Screenshot + vision overhead |
+
+**Verdict**: Our Playwright design is actually **faster** for web automation.
+
+### Accuracy: Computer Use Wins (Marginally)
+
+| Approach | WebVoyager-like | Notes |
+|----------|-----------------|-------|
+| Browser Use (DOM) | ~65% | Fast but needs good selectors |
+| OpenAI CUA | 87% | Best accuracy, slower |
+| Gemini CU | 70-83% | Middle ground |
+| Claude CU | 56% | Slower, broader capability |
+
+**Verdict**: Computer use is more accurate on **unknown/complex sites**, but the gap is smaller than marketed.
+
+### Cost: Gemini is Cheapest (If It Works)
+
+| Provider | Cost/1M tokens | Real-World Caveat |
+|----------|----------------|-------------------|
+| Gemini 2.5 CU | $1.25 / $10 | Rate limiting, throttling |
+| OpenAI CUA | $3 / $12 | Preview, limited access |
+| Claude CU | $3 / $15 | Most stable |
+
+**Verdict**: Gemini is cheapest on paper, but rate limits may force retries that increase effective cost.
+
+### When Computer Use Actually Helps
+
+| Scenario | Best Approach | Why |
+|----------|---------------|-----|
+| Unknown websites | Computer Use | No selector research needed |
+| Canvas/image-heavy UIs | Computer Use | DOM doesn't help |
+| Desktop applications | Claude CU | Only option |
+| Known sites, high volume | Playwright | Faster, more reliable |
+| Sites with test-ids | Playwright | Stable selectors |
+| File upload/download | Playwright | Native support |
+
+---
+
+## Updated Upsides Summary (Honest Assessment)
+
+### Speed: NOT Faster
+
+| Metric | Playwright/DOM | Computer Use |
+|--------|----------------|--------------|
+| Real step time | **3 seconds** | 11-15 seconds |
+| 10-step task | **30-60 seconds** | 2-5 minutes |
+| Image encoding overhead | None | +0.8s per step |
+
+**Reality**: Computer use models are **3-5x slower** than DOM-based approaches.
+
+### Cost: Depends on Reliability
+
+| Scenario | Cheaper Option |
+|----------|----------------|
+| Simple, known sites | Playwright (no vision API calls) |
+| Complex, unknown sites | Gemini CU (if no rate limits) |
+| High reliability needed | Claude CU (fewer retries) |
+
+**Reality**: The cheapest option depends on retry rates and task complexity.
+
+### Accuracy: Real Advantage
+
+| Benchmark | DOM-Based | Computer Use | Delta |
+|-----------|-----------|--------------|-------|
+| Known sites with good selectors | ~80% | ~70-87% | Comparable |
+| Unknown sites | ~40-50% | ~70-87% | **CU wins** |
+| Non-DOM UIs (Canvas, etc.) | 0% | ~70% | **CU only option** |
+
+**Reality**: Computer use has a real accuracy advantage on **unknown and non-DOM interfaces**.
+
+### Maintenance: Real Advantage
+
+| Aspect | Playwright | Computer Use |
+|--------|------------|--------------|
+| Selector updates when sites change | Required | Not needed |
+| Works on any visual interface | No | Yes |
+| Debugging failed actions | Easier (DOM) | Harder (coordinates) |
+
+**Reality**: Computer use eliminates selector maintenance, which is a genuine benefit.
 
 ---
 
@@ -653,19 +791,58 @@ const COMPUTER_USE_ERRORS = {
 
 ---
 
-## Conclusion
+## Conclusion (Revised After Reality Check)
 
-Specialized computer use models represent a significant improvement over our current screenshot + vision + selector approach:
+Specialized computer use models are **NOT the silver bullet** that marketing suggests:
 
-| Dimension | Improvement |
-|-----------|-------------|
-| **Speed** | 2-10x faster (especially Gemini) |
-| **Cost** | 30-50% cheaper |
-| **Accuracy** | 40-80% → 70-87% success rate |
-| **Maintenance** | No selector updates needed |
-| **Scope** | Extends to desktop, mobile, Canvas UIs |
+| Dimension | Marketing Claim | Reality |
+|-----------|-----------------|---------|
+| **Speed** | "225ms latency" (Gemini) | 11-15 seconds per step (3-5x slower than DOM) |
+| **Cost** | Cheapest option | Rate limits and retries increase effective cost |
+| **Accuracy** | 87% (OpenAI CUA) | Real advantage only on unknown/non-DOM sites |
+| **Maintenance** | No selectors | True benefit, but debugging coordinates is harder |
 
-**Recommendation**: Adopt a **hybrid architecture** that uses computer use models as the primary approach (Gemini for speed/cost, OpenAI for accuracy), with Playwright as fallback for specific operations (file handling, multi-tab, known stable sites).
+### Actual Recommendation
+
+**For OllieBot browser automation, use a tiered approach:**
+
+1. **Primary: DOM-Based (Playwright + LLM)**
+   - Faster (3s vs 11-15s per step)
+   - More reliable for known sites
+   - Better debugging
+   - Consider [Browser Use](https://browser-use.com/) as an alternative to raw Playwright
+
+2. **Fallback: Computer Use (when DOM fails)**
+   - Unknown websites where we can't find selectors
+   - Canvas/image-heavy interfaces
+   - When selector-based approach fails after retries
+
+3. **Desktop: Claude Computer Use only**
+   - Only option for non-browser automation
+   - Accept the slower speed as necessary trade-off
+
+### When to Use Computer Use
+
+| Use Case | Approach | Rationale |
+|----------|----------|-----------|
+| Known websites (e.g., moltbook.com after initial analysis) | Playwright | Faster, more reliable |
+| First-time visit to unknown site | Computer Use | No selector research needed |
+| Site with heavy JavaScript/Canvas | Computer Use | DOM may not reflect visual state |
+| Desktop applications | Claude CU | Only option |
+| High-volume, repeated tasks | Playwright | Cost and speed matter |
+
+### The Honest Trade-off
+
+Computer use models trade **speed for flexibility**:
+- ✅ Works on any visual interface
+- ✅ No selector maintenance
+- ✅ Better on unknown sites
+- ❌ 3-5x slower per action
+- ❌ Rate limiting issues
+- ❌ Still error-prone (even Anthropic admits this)
+- ❌ Harder to debug coordinate-based failures
+
+**Bottom line**: Computer use is a useful tool in the toolbox, not a replacement for DOM-based automation. Use it strategically for its actual strengths (unknown sites, non-DOM UIs), not as a default approach.
 
 ---
 
