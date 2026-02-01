@@ -17,45 +17,7 @@ import type { LLMService } from '../llm/service.js';
 import type { LLMMessage, LLMToolUse } from '../llm/types.js';
 import { getDb } from '../db/index.js';
 import type { WebChannel } from '../channels/web.js';
-
-/**
- * Strip large binary data (like base64 images) from tool results before sending to LLM.
- * The LLM can't meaningfully process binary data, and it wastes context tokens.
- */
-function stripBinaryDataForLLM(output: unknown): unknown {
-  if (output === null || output === undefined) {
-    return output;
-  }
-
-  if (typeof output === 'string') {
-    // Check if the entire string is a data URL
-    if (output.startsWith('data:image/')) {
-      const sizeKB = Math.round(output.length / 1024);
-      return `[Image data: ${sizeKB}KB - displayed to user]`;
-    }
-    return output;
-  }
-
-  if (Array.isArray(output)) {
-    return output.map(item => stripBinaryDataForLLM(item));
-  }
-
-  if (typeof output === 'object') {
-    const cleaned: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(output as Record<string, unknown>)) {
-      if (key === 'dataUrl' && typeof value === 'string' && value.startsWith('data:')) {
-        // Replace dataUrl with a placeholder indicating it was shown to the user
-        const sizeKB = Math.round(value.length / 1024);
-        cleaned[key] = `[Image data: ${sizeKB}KB - displayed to user]`;
-      } else {
-        cleaned[key] = stripBinaryDataForLLM(value);
-      }
-    }
-    return cleaned;
-  }
-
-  return output;
-}
+import { stripBinaryDataForLLM } from '../utils/index.js';
 
 // Directory for external sub-agent prompts (user can override defaults)
 const PROMPTS_DIR = join(process.cwd(), 'user', 'sub-agents');

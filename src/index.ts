@@ -137,9 +137,8 @@ const CONFIG = {
   mcpServers: process.env.MCP_SERVERS || '[]',
 
   // Native tool API keys
-  imageGenProvider: (process.env.IMAGE_GEN_PROVIDER || 'openai') as 'openai' | 'stability',
+  imageGenProvider: (process.env.IMAGE_GEN_PROVIDER || 'openai') as 'openai' | 'azure_openai',
   imageGenModel: process.env.IMAGE_GEN_MODEL || 'dall-e-3',
-  stabilityApiKey: process.env.STABILITY_API_KEY || '',
 
   // Web search configuration
   webSearchProvider: (process.env.WEB_SEARCH_PROVIDER || 'serper') as WebSearchProvider,
@@ -371,18 +370,23 @@ async function main(): Promise<void> {
   toolRunner.registerNativeTool(new TakeScreenshotTool());
   toolRunner.registerNativeTool(new AnalyzeImageTool(llmService));
 
-  // Image generation (requires API key)
-  const imageApiKey = CONFIG.imageGenProvider === 'openai'
-    ? CONFIG.openaiApiKey
-    : CONFIG.stabilityApiKey;
+  // Image generation (requires API key based on provider)
+  const imageApiKey = CONFIG.imageGenProvider === 'azure_openai'
+    ? CONFIG.azureOpenaiApiKey
+    : CONFIG.openaiApiKey;
+  console.log(`[Init] Image generation: provider=${CONFIG.imageGenProvider}, hasApiKey=${!!imageApiKey}`);
   if (imageApiKey) {
     toolRunner.registerNativeTool(
       new CreateImageTool({
         apiKey: imageApiKey,
         provider: CONFIG.imageGenProvider,
         model: CONFIG.imageGenModel,
+        azureEndpoint: CONFIG.azureOpenaiEndpoint,
+        azureApiVersion: CONFIG.azureOpenaiApiVersion,
       })
     );
+  } else {
+    console.log('[Init] CreateImageTool not registered: no API key configured');
   }
 
   // Memory tool (always available)

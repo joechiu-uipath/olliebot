@@ -83,7 +83,15 @@ For DOM strategy: Actions use CSS selectors`;
     if (!sessionId) {
       return {
         success: false,
-        error: 'sessionId is required',
+        error: `sessionId is required. Received params: ${JSON.stringify(Object.keys(params))}`,
+      };
+    }
+
+    // Validate sessionId format (should be UUID-like)
+    if (sessionId.length < 30 || !sessionId.includes('-')) {
+      return {
+        success: false,
+        error: `Invalid sessionId format: "${sessionId}". Expected a valid UUID.`,
       };
     }
 

@@ -53,6 +53,9 @@ function App() {
   // Expanded tool events
   const [expandedTools, setExpandedTools] = useState(new Set());
 
+  // Response pending state (disable input while waiting)
+  const [isResponsePending, setIsResponsePending] = useState(false);
+
   const messagesEndRef = useRef(null);
   const messagesContainerRef = useRef(null);
 
@@ -110,6 +113,7 @@ function App() {
             : m
         )
       );
+      setIsResponsePending(false);
     } else if (data.type === 'error') {
       const errorId = data.id || `err-${Date.now()}`;
       setMessages((prev) => {
@@ -128,6 +132,7 @@ function App() {
           },
         ];
       });
+      setIsResponsePending(false);
     } else if (data.type === 'connected') {
       setIsConnected(true);
     } else if (data.type === 'interaction') {
@@ -479,6 +484,7 @@ function App() {
       setMessages([]);
       setIsUserScrolled(false);
       setShowScrollButton(false);
+      setIsResponsePending(false);
     } catch (error) {
       console.error('Failed to create new conversation:', error);
       // Fallback to local-only
@@ -671,6 +677,7 @@ function App() {
     });
     setInput('');
     setAttachments([]);
+    setIsResponsePending(true);
   };
 
   // Convert file to base64
@@ -987,8 +994,19 @@ function App() {
 
   // Close browser session (terminate the browser process)
   const handleCloseBrowserSession = useCallback((sessionId) => {
+    // Optimistically remove from UI immediately
+    setBrowserSessions((prev) => prev.filter((s) => s.id !== sessionId));
+    setBrowserScreenshots((prev) => {
+      const next = { ...prev };
+      delete next[sessionId];
+      return next;
+    });
+    if (selectedBrowserSessionId === sessionId) {
+      setSelectedBrowserSessionId(null);
+    }
+    // Send close request to server
     sendMessage({ type: 'browser-action', action: 'close', sessionId });
-  }, [sendMessage]);
+  }, [sendMessage, selectedBrowserSessionId]);
 
   // Get selected browser session object
   const selectedBrowserSession = browserSessions.find(
@@ -1573,13 +1591,13 @@ function App() {
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
                 onPaste={handlePaste}
-                placeholder="Type a message... (Shift+Enter for new line, drag & drop or paste images)"
-                disabled={!isConnected}
+                placeholder={isResponsePending ? "Waiting for response..." : "Type a message... (Shift+Enter for new line, drag & drop or paste images)"}
+                disabled={!isConnected || isResponsePending}
                 rows={3}
               />
             </div>
-            <button type="submit" disabled={!isConnected || (!input.trim() && attachments.length === 0)}>
-              Send
+            <button type="submit" disabled={!isConnected || isResponsePending || (!input.trim() && attachments.length === 0)}>
+              {isResponsePending ? 'Waiting...' : 'Send'}
             </button>
           </form>
         </footer>

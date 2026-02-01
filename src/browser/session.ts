@@ -124,9 +124,12 @@ export class BrowserSessionInstance extends EventEmitter {
       this.setStatus('starting');
 
       // Create isolated browser context
+      // Note: In debug mode (headful), setting deviceScaleFactor: 2 prevents content
+      // resizing/flickering on high-DPI displays when taking screenshots (see playwright#2576)
       this.context = await this.browser.newContext({
         viewport: this.config.viewport,
         userAgent: this.config.userAgent,
+        ...(this.config.debugMode && { deviceScaleFactor: 2 }),
       });
 
       // Create new page

@@ -89,14 +89,12 @@ export function BrowserPreview({
             <button
               className="browser-preview-close-session"
               onClick={() => {
-                if (window.confirm('Close this browser session? This will terminate the browser process.')) {
-                  onCloseSession(session.id);
-                  onClose();
-                }
+                onCloseSession(session.id);
+                onClose();
               }}
-              title="Close browser session"
+              title="Kill browser session"
             >
-              Close Session
+              Kill Session
             </button>
           )}
         </div>
