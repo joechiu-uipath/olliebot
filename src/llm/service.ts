@@ -140,15 +140,13 @@ export class LLMService {
     },
     options?: LLMOptions
   ): Promise<LLMResponseWithTools> {
-    console.log(`[LLMService] generateWithToolsStream called, provider: ${this.main.name}, has streamWithTools: ${typeof this.main.streamWithTools === 'function'}`);
-
     if (typeof this.main.streamWithTools === 'function') {
-      console.log('[LLMService] Using provider streamWithTools');
+      console.log(`[LLMService] generateWithToolsStream: ${this.main.name} (streaming)`);
       return this.main.streamWithTools(messages, callbacks, options);
     }
 
     // Fallback to non-streaming if streamWithTools not supported
-    console.log('[LLMService] Fallback to non-streaming generateWithTools');
+    console.log(`[LLMService] generateWithToolsStream: ${this.main.name} (fallback to non-streaming)`);
     const response = await this.generateWithTools(messages, options);
     callbacks.onChunk(response.content);
     if (response.toolUse && callbacks.onToolUse) {

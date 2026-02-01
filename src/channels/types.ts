@@ -36,6 +36,9 @@ export interface ChannelEvent {
   data: unknown;
 }
 
+/**
+ * Channel is communication channel, example: web, console, 3rd party chat apps like Microsoft Teams, Slack, etc.
+ */
 export interface Channel {
   readonly id: string;
   readonly name: string;

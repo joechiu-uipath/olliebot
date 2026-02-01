@@ -79,9 +79,6 @@ export class AzureOpenAIComputerUseProvider implements IComputerUseProvider {
         previousCallId
       );
 
-      console.log('[AzureOpenAI CU] Sending request to:', this.endpoint);
-      console.log('[AzureOpenAI CU] Previous response ID:', previousResponseId || 'none');
-
       const response = await fetch(this.endpoint, {
         method: 'POST',
         headers: {
@@ -98,7 +95,7 @@ export class AzureOpenAIComputerUseProvider implements IComputerUseProvider {
       }
 
       const data = await response.json() as AzureResponsesAPIResponse;
-      console.log('[AzureOpenAI CU] Response received, id:', data.id);
+      console.log(`[AzureOpenAI CU] ${previousResponseId ? 'follow-up' : 'initial'} request -> response: ${data.id}`);
 
       return this.parseResponse(data, screenSize);
     } catch (error) {

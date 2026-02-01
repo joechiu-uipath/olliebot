@@ -112,8 +112,6 @@ export class ComputerUseBrowserStrategy extends BaseBrowserStrategy {
         screenshot = await this.captureScreenshot();
       }
 
-      console.log(`[ComputerUseStrategy] Step ${stepCount}, has previous response: ${!!this.lastResponseId}`);
-
       // Get action from Computer Use model
       const cuResponse = await this.cuProvider.getAction({
         screenshot,
@@ -157,7 +155,7 @@ export class ComputerUseBrowserStrategy extends BaseBrowserStrategy {
         continue;
       }
 
-      console.log(`[ComputerUseStrategy] Executing action: ${cuResponse.action.type}`);
+      console.log(`[ComputerUseStrategy] Step ${stepCount}: ${cuResponse.action.type}`);
 
       // Convert CU action to BrowserAction
       const browserAction = this.convertToBrowserAction(cuResponse.action);

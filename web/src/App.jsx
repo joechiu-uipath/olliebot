@@ -854,35 +854,37 @@ function App() {
       }
     }
 
-    // If parsedResult is an object, look for dataUrl properties
+    // If parsedResult is an object, look for any properties containing data URL images
     if (typeof parsedResult === 'object' && parsedResult !== null) {
-      const hasImageData = Object.entries(parsedResult).some(
-        ([key, value]) => key === 'dataUrl' && isDataUrlImage(value)
+      const imageEntries = Object.entries(parsedResult).filter(
+        ([, value]) => isDataUrlImage(value)
       );
+      const hasImageData = imageEntries.length > 0;
 
       if (hasImageData) {
-        // Render with image preview
+        // Render with image preview - show images first, then other properties
+        const nonImageEntries = Object.entries(parsedResult).filter(
+          ([, value]) => !isDataUrlImage(value)
+        );
+
         return (
           <div className="tool-result-with-image">
-            {Object.entries(parsedResult).map(([key, value]) => {
-              if (key === 'dataUrl' && isDataUrlImage(value)) {
-                return (
-                  <div key={key} className="tool-result-image">
-                    <div className="tool-result-image-label">{key}:</div>
-                    <img src={value} alt="Result image" style={{ maxWidth: '100%', maxHeight: '400px', borderRadius: '4px' }} />
-                  </div>
-                );
-              }
-              // Render other properties as JSON
-              return (
-                <div key={key} className="tool-result-property">
-                  <span className="tool-result-key">{key}:</span>{' '}
-                  <span className="tool-result-value">
-                    {typeof value === 'string' ? value : JSON.stringify(value)}
-                  </span>
-                </div>
-              );
-            })}
+            {/* Render images first */}
+            {imageEntries.map(([key, value]) => (
+              <div key={key} className="tool-result-image">
+                <div className="tool-result-image-label">{key}:</div>
+                <img src={value} alt={key} style={{ maxWidth: '100%', maxHeight: '400px', borderRadius: '4px' }} />
+              </div>
+            ))}
+            {/* Render other properties */}
+            {nonImageEntries.map(([key, value]) => (
+              <div key={key} className="tool-result-property">
+                <span className="tool-result-key">{key}:</span>{' '}
+                <span className="tool-result-value">
+                  {typeof value === 'string' ? value : JSON.stringify(value)}
+                </span>
+              </div>
+            ))}
           </div>
         );
       }
