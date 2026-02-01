@@ -8,6 +8,8 @@ import { getDb } from '../db/index.js';
 import type { MCPClient } from '../mcp/index.js';
 import type { SkillManager } from '../skills/index.js';
 import type { ToolRunner } from '../tools/index.js';
+import type { LLMService } from '../llm/service.js';
+import { setupEvalRoutes } from './eval-routes.js';
 
 export interface ServerConfig {
   port: number;
@@ -15,6 +17,7 @@ export interface ServerConfig {
   mcpClient?: MCPClient;
   skillManager?: SkillManager;
   toolRunner?: ToolRunner;
+  llmService?: LLMService;
 }
 
 export class OllieBotServer {
@@ -27,6 +30,7 @@ export class OllieBotServer {
   private mcpClient?: MCPClient;
   private skillManager?: SkillManager;
   private toolRunner?: ToolRunner;
+  private llmService?: LLMService;
 
   constructor(config: ServerConfig) {
     this.port = config.port;
@@ -34,6 +38,7 @@ export class OllieBotServer {
     this.mcpClient = config.mcpClient;
     this.skillManager = config.skillManager;
     this.toolRunner = config.toolRunner;
+    this.llmService = config.llmService;
 
     // Create Express app
     this.app = express();
@@ -423,6 +428,16 @@ export class OllieBotServer {
         res.status(500).json({ error: 'Failed to run task' });
       }
     });
+
+    // Setup evaluation routes (if llmService and toolRunner are available)
+    if (this.llmService && this.toolRunner) {
+      setupEvalRoutes(this.app, {
+        llmService: this.llmService,
+        toolRunner: this.toolRunner,
+        webChannel: this.webChannel,
+      });
+      console.log('[Server] Evaluation routes enabled');
+    }
   }
 
   async start(): Promise<void> {

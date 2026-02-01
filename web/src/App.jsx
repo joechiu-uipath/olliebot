@@ -5,6 +5,13 @@ import rehypeSanitize from 'rehype-sanitize';
 import remarkGfm from 'remark-gfm';
 import { useWebSocket } from './hooks/useWebSocket';
 import HtmlPreview from './components/HtmlPreview';
+import { EvalSidebar, EvalRunner } from './components/eval';
+
+// Mode constants
+const MODES = {
+  CHAT: 'chat',
+  EVAL: 'eval',
+};
 
 function App() {
   const [messages, setMessages] = useState([]);
@@ -41,6 +48,13 @@ function App() {
 
   // Expanded tool events
   const [expandedTools, setExpandedTools] = useState(new Set());
+
+  // Mode state (chat or eval)
+  const [mode, setMode] = useState(MODES.CHAT);
+
+  // Eval mode state
+  const [selectedEvaluation, setSelectedEvaluation] = useState(null);
+  const [selectedSuite, setSelectedSuite] = useState(null);
 
   const messagesEndRef = useRef(null);
   const messagesContainerRef = useRef(null);
@@ -807,7 +821,22 @@ function App() {
           </button>
         </div>
 
-        {sidebarOpen && (
+        {sidebarOpen && mode === MODES.EVAL && (
+          <EvalSidebar
+            onSelectEvaluation={(evaluation) => {
+              setSelectedEvaluation(evaluation);
+              setSelectedSuite(null);
+            }}
+            onSelectSuite={(suite) => {
+              setSelectedSuite(suite);
+              setSelectedEvaluation(null);
+            }}
+            selectedEvaluation={selectedEvaluation}
+            selectedSuite={selectedSuite}
+          />
+        )}
+
+        {sidebarOpen && mode === MODES.CHAT && (
           <>
           <div className="conversation-list">
             <div className="conversation-list-header">History</div>
@@ -1073,12 +1102,45 @@ function App() {
               <span className="logo-icon">🤖</span>
               <h1>OllieBot</h1>
             </div>
+            {/* Mode Switcher */}
+            <div className="mode-switcher">
+              <button
+                className={`mode-btn ${mode === MODES.CHAT ? 'active' : ''}`}
+                onClick={() => setMode(MODES.CHAT)}
+              >
+                <span className="mode-icon">💬</span>
+                Chat
+              </button>
+              <button
+                className={`mode-btn ${mode === MODES.EVAL ? 'active' : ''}`}
+                onClick={() => setMode(MODES.EVAL)}
+              >
+                <span className="mode-icon">📊</span>
+                Eval
+              </button>
+            </div>
           </div>
           <div className={`status ${isConnected ? 'connected' : 'disconnected'}`}>
             {isConnected ? 'Connected' : 'Disconnected'}
           </div>
         </header>
 
+        {/* Eval Mode Content */}
+        {mode === MODES.EVAL && (
+          <main className="eval-container">
+            <EvalRunner
+              evaluation={selectedEvaluation}
+              suite={selectedSuite}
+              onBack={() => {
+                setSelectedEvaluation(null);
+                setSelectedSuite(null);
+              }}
+            />
+          </main>
+        )}
+
+        {/* Chat Mode Content */}
+        {mode === MODES.CHAT && (
         <main className="chat-container">
           <div className="messages" ref={messagesContainerRef} onScroll={handleScroll}>
           {messages.length === 0 && (
@@ -1298,6 +1360,7 @@ function App() {
             </button>
           </form>
         </footer>
+        )}
       </div>
     </div>
   );

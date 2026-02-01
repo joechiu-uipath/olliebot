@@ -8,7 +8,6 @@
  * - Store and retrieve results
  */
 
-import { parse as parseYaml } from 'yaml';
 import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { join, relative, basename, dirname } from 'path';
 import type { LLMService } from '../llm/service.js';
@@ -109,10 +108,10 @@ export class EvaluationManager {
 
         if (entry.isDirectory()) {
           scanDir(fullPath);
-        } else if (entry.name.endsWith('.eval.yaml') || entry.name.endsWith('.eval.yml')) {
+        } else if (entry.name.endsWith('.eval.json')) {
           try {
             const content = readFileSync(fullPath, 'utf-8');
-            const parsed = parseYaml(content) as EvaluationDefinition;
+            const parsed = JSON.parse(content) as EvaluationDefinition;
 
             // Apply filters
             if (filter?.target && !parsed.metadata.target.includes(filter.target)) {
@@ -157,12 +156,12 @@ export class EvaluationManager {
     const entries = readdirSync(suitesDir, { withFileTypes: true });
 
     for (const entry of entries) {
-      if (entry.name.endsWith('.suite.yaml') || entry.name.endsWith('.suite.yml')) {
+      if (entry.name.endsWith('.suite.json')) {
         const fullPath = join(suitesDir, entry.name);
 
         try {
           const content = readFileSync(fullPath, 'utf-8');
-          const parsed = parseYaml(content) as EvaluationSuite;
+          const parsed = JSON.parse(content) as EvaluationSuite;
 
           suites.push({
             id: parsed.metadata.id,
@@ -193,7 +192,7 @@ export class EvaluationManager {
     }
 
     const content = readFileSync(fullPath, 'utf-8');
-    const parsed = parseYaml(content) as EvaluationDefinition;
+    const parsed = JSON.parse(content) as EvaluationDefinition;
 
     // Validate required fields
     this.validateEvaluation(parsed);
@@ -214,7 +213,7 @@ export class EvaluationManager {
     }
 
     const content = readFileSync(fullPath, 'utf-8');
-    const parsed = parseYaml(content) as EvaluationSuite;
+    const parsed = JSON.parse(content) as EvaluationSuite;
 
     return parsed;
   }

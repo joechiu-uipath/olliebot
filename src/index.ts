@@ -454,6 +454,7 @@ async function main(): Promise<void> {
       mcpClient,
       skillManager,
       toolRunner,
+      llmService,
     });
     await server.start();
 
