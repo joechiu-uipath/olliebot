@@ -62,6 +62,27 @@ export function EvalRunner({ evaluation, suite, onBack }) {
     };
   }, []);
 
+  // Check for active jobs on mount (UI recovery)
+  useEffect(() => {
+    const checkActiveJobs = async () => {
+      try {
+        const res = await fetch('/api/eval/jobs');
+        if (res.ok) {
+          const data = await res.json();
+          const runningJob = data.jobs?.find(job => job.status === 'running');
+          if (runningJob) {
+            setJobId(runningJob.jobId);
+            setLoading(true);
+            setProgress({ current: 0, total: 1 }); // Will be updated by WebSocket
+          }
+        }
+      } catch (err) {
+        console.error('Failed to check active jobs:', err);
+      }
+    };
+    checkActiveJobs();
+  }, []);
+
   // Load evaluation details when selected
   useEffect(() => {
     if (evaluation) {

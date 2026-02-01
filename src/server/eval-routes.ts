@@ -200,6 +200,21 @@ export function setupEvalRoutes(app: Express, config: EvalRoutesConfig): Evaluat
     }
   });
 
+  // List active jobs (for UI recovery on page load)
+  app.get('/api/eval/jobs', (_req: Request, res: Response) => {
+    try {
+      const jobs = Array.from(activeJobs.entries()).map(([jobId, job]) => ({
+        jobId,
+        status: job.status,
+        startedAt: job.startedAt,
+      }));
+      res.json({ jobs });
+    } catch (error) {
+      console.error('[EvalAPI] Failed to list jobs:', error);
+      res.status(500).json({ error: 'Failed to list jobs' });
+    }
+  });
+
   // Get job status/results
   app.get('/api/eval/results/:jobId', (req: Request, res: Response) => {
     try {
