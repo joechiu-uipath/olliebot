@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { EvalResults } from './EvalResults';
 
 export function EvalRunner({ evaluation, suite, onBack }) {
@@ -12,6 +12,51 @@ export function EvalRunner({ evaluation, suite, onBack }) {
   const [progress, setProgress] = useState(null);
   const [results, setResults] = useState(null);
   const [error, setError] = useState(null);
+  const wsRef = useRef(null);
+  const jobIdRef = useRef(null);
+
+  // Keep jobIdRef in sync
+  useEffect(() => {
+    jobIdRef.current = jobId;
+  }, [jobId]);
+
+  // Set up WebSocket listener for eval events
+  useEffect(() => {
+    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${protocol}//${window.location.host}`;
+
+    const ws = new WebSocket(wsUrl);
+    wsRef.current = ws;
+
+    ws.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+
+        // Only process events for our current job
+        if (data.jobId && jobIdRef.current && data.jobId === jobIdRef.current) {
+          if (data.type === 'eval_progress') {
+            setProgress({ current: data.current, total: data.total });
+          } else if (data.type === 'eval_complete') {
+            setResults(data.results);
+            setProgress(null);
+            setLoading(false);
+          }
+        }
+      } catch (err) {
+        // Ignore non-JSON messages
+      }
+    };
+
+    ws.onerror = (err) => {
+      console.error('[EvalRunner] WebSocket error:', err);
+    };
+
+    return () => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.close();
+      }
+    };
+  }, []);
 
   // Load evaluation details when selected
   useEffect(() => {
@@ -22,7 +67,7 @@ export function EvalRunner({ evaluation, suite, onBack }) {
     }
   }, [evaluation]);
 
-  // Poll for results when job is running
+  // Poll for results when job is running (fallback if WebSocket misses events)
   useEffect(() => {
     if (!jobId || results) return;
 
@@ -46,7 +91,7 @@ export function EvalRunner({ evaluation, suite, onBack }) {
       } catch (err) {
         console.error('Failed to poll results:', err);
       }
-    }, 2000);
+    }, 1000); // Poll every second as fallback
 
     return () => clearInterval(pollInterval);
   }, [jobId, results]);
@@ -276,16 +321,16 @@ export function EvalRunner({ evaluation, suite, onBack }) {
 
         {/* Bottom bar - anchored like chat input */}
         <div className="eval-input-bar">
-          {loading && progress ? (
+          {loading ? (
             <div className="eval-progress-inline">
               <div className="progress-bar">
                 <div
                   className="progress-fill"
-                  style={{ width: `${(progress.current / progress.total) * 100}%` }}
+                  style={{ width: progress ? `${(progress.current / progress.total) * 100}%` : '0%' }}
                 />
               </div>
               <span className="progress-text">
-                {progress.current} / {progress.total} runs
+                {progress ? `${progress.current} / ${progress.total} runs` : 'Starting evaluation...'}
               </span>
             </div>
           ) : (
