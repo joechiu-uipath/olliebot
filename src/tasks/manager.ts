@@ -6,23 +6,45 @@
  */
 
 import { v4 as uuid } from 'uuid';
+import { EventEmitter } from 'events';
+import { CronExpressionParser } from 'cron-parser';
 import { ConfigWatcher, type ConfigFile } from '../config/watcher.js';
-import { getDb } from '../db/index.js';
+import { getDb, type Task } from '../db/index.js';
 import type { LLMService } from '../llm/service.js';
 
 export interface TaskManagerConfig {
   tasksDir: string;
   llmService: LLMService;
+  /** Interval in ms to check for due tasks (default: 30000 = 30 seconds) */
+  schedulerInterval?: number;
 }
 
-export class TaskManager {
+export interface TaskDueEvent {
+  task: Task;
+}
+
+export interface TaskUpdatedEvent {
+  task: {
+    id: string;
+    name: string;
+    status: string;
+    lastRun: string | null;
+    nextRun: string | null;
+  };
+}
+
+export class TaskManager extends EventEmitter {
   private configWatcher: ConfigWatcher;
   private llmService: LLMService;
   private tasksDir: string;
+  private schedulerInterval: number;
+  private schedulerTimer: NodeJS.Timeout | null = null;
 
   constructor(config: TaskManagerConfig) {
+    super();
     this.tasksDir = config.tasksDir;
     this.llmService = config.llmService;
+    this.schedulerInterval = config.schedulerInterval ?? 30000; // Default: check every 30 seconds
     this.configWatcher = new ConfigWatcher(config.tasksDir);
   }
 
@@ -57,6 +79,100 @@ export class TaskManager {
     }
 
     console.log(`[TaskManager] Initialized with ${configs.size} tasks from ${this.tasksDir}`);
+  }
+
+  /**
+   * Start the scheduler that checks for due tasks.
+   * Call this AFTER setting up event listeners for 'task:due'.
+   */
+  startScheduler(): void {
+    if (this.schedulerTimer) {
+      return; // Already running
+    }
+
+    console.log(`[TaskManager] Starting scheduler (interval: ${this.schedulerInterval}ms)`);
+
+    // Check immediately on startup
+    this.checkDueTasks();
+
+    // Then check periodically
+    this.schedulerTimer = setInterval(() => {
+      this.checkDueTasks();
+    }, this.schedulerInterval);
+  }
+
+  /**
+   * Stop the scheduler
+   */
+  private stopScheduler(): void {
+    if (this.schedulerTimer) {
+      clearInterval(this.schedulerTimer);
+      this.schedulerTimer = null;
+      console.log(`[TaskManager] Scheduler stopped`);
+    }
+  }
+
+  /**
+   * Check for tasks that are due to run
+   */
+  private checkDueTasks(): void {
+    try {
+      const db = getDb();
+      const now = new Date();
+      const tasks = db.tasks.findAll({ status: 'active' });
+
+      for (const task of tasks) {
+        if (task.nextRun) {
+          const nextRunDate = new Date(task.nextRun);
+          if (nextRunDate <= now) {
+            console.log(`[TaskManager] Task "${task.name}" is due (scheduled: ${task.nextRun})`);
+            this.emit('task:due', { task } as TaskDueEvent);
+          }
+        }
+      }
+    } catch (error) {
+      console.error(`[TaskManager] Error checking due tasks:`, error);
+    }
+  }
+
+  /**
+   * Mark a task as executed and calculate next run time
+   * Should be called after a task has been run
+   */
+  markTaskExecuted(taskId: string): void {
+    try {
+      const db = getDb();
+      const task = db.tasks.findById(taskId);
+
+      if (!task) {
+        console.warn(`[TaskManager] Task not found: ${taskId}`);
+        return;
+      }
+
+      const now = new Date().toISOString();
+      const nextRun = this.calculateNextRun(task.jsonConfig);
+
+      db.tasks.update(taskId, {
+        lastRun: now,
+        nextRun,
+        updatedAt: now,
+      });
+
+      console.log(`[TaskManager] Task "${task.name}" marked as executed. Next run: ${nextRun || 'manual'}`);
+
+      // Emit task:updated event for WebSocket sync
+      this.emit('task:updated', {
+        task: {
+          id: taskId,
+          name: task.name,
+          status: task.status,
+          lastRun: now,
+          nextRun,
+        },
+      } as TaskUpdatedEvent);
+    } catch (error) {
+      console.error(`[TaskManager] Error marking task as executed:`, error);
+    }
   }
 
   private async handleConfigAdded(config: ConfigFile): Promise<void> {
@@ -145,6 +261,7 @@ export class TaskManager {
           mdFile: config.mdPath,
           jsonConfig,
           status: 'active',
+          nextRun: this.calculateNextRun(jsonConfig),
           updatedAt: now,
         });
         console.log(`[TaskManager] Updated task: ${config.name}`);
@@ -201,9 +318,14 @@ export class TaskManager {
       return null;
     }
 
-    // For now, just return null - scheduling implementation would go here
-    // A proper implementation would parse the cron expression
-    return null;
+    try {
+      const interval = CronExpressionParser.parse(trigger.schedule);
+      const nextDate = interval.next().toDate();
+      return nextDate.toISOString();
+    } catch (error) {
+      console.warn(`[TaskManager] Invalid cron expression "${trigger.schedule}":`, error);
+      return null;
+    }
   }
 
   /**
@@ -227,6 +349,7 @@ export class TaskManager {
   }
 
   async close(): Promise<void> {
+    this.stopScheduler();
     await this.configWatcher.close();
   }
 }

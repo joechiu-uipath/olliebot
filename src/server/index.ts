@@ -9,6 +9,7 @@ import type { MCPClient } from '../mcp/index.js';
 import type { SkillManager } from '../skills/index.js';
 import type { ToolRunner } from '../tools/index.js';
 import type { BrowserSessionManager } from '../browser/index.js';
+import type { TaskManager } from '../tasks/index.js';
 
 export interface ServerConfig {
   port: number;
@@ -17,6 +18,7 @@ export interface ServerConfig {
   skillManager?: SkillManager;
   toolRunner?: ToolRunner;
   browserManager?: BrowserSessionManager;
+  taskManager?: TaskManager;
 }
 
 export class OllieBotServer {
@@ -30,6 +32,7 @@ export class OllieBotServer {
   private skillManager?: SkillManager;
   private toolRunner?: ToolRunner;
   private browserManager?: BrowserSessionManager;
+  private taskManager?: TaskManager;
 
   constructor(config: ServerConfig) {
     this.port = config.port;
@@ -38,6 +41,7 @@ export class OllieBotServer {
     this.skillManager = config.skillManager;
     this.toolRunner = config.toolRunner;
     this.browserManager = config.browserManager;
+    this.taskManager = config.taskManager;
 
     // Create Express app
     this.app = express();
@@ -360,13 +364,18 @@ export class OllieBotServer {
       try {
         const db = getDb();
         const tasks = db.tasks.findAll({ limit: 20 });
-        res.json(tasks.map(t => ({
-          id: t.id,
-          name: t.name,
-          status: t.status,
-          lastRun: t.lastRun,
-          nextRun: t.nextRun,
-        })));
+        res.json(tasks.map(t => {
+          const config = t.jsonConfig as { description?: string; trigger?: { schedule?: string } };
+          return {
+            id: t.id,
+            name: t.name,
+            description: config.description || '',
+            schedule: config.trigger?.schedule || null,
+            status: t.status,
+            lastRun: t.lastRun,
+            nextRun: t.nextRun,
+          };
+        }));
       } catch (error) {
         console.error('[API] Failed to fetch tasks:', error);
         res.json([]);
@@ -423,6 +432,11 @@ export class OllieBotServer {
           },
         };
 
+        // Mark task as executed (updates lastRun and nextRun)
+        if (this.taskManager) {
+          this.taskManager.markTaskExecuted(task.id);
+        }
+
         // Send to supervisor (async - don't wait for completion)
         this.supervisor.handleMessage(taskMessage).catch((error) => {
           console.error('[API] Task execution error:', error);
@@ -458,6 +472,16 @@ export class OllieBotServer {
         if (action === 'close' && this.browserManager) {
           await this.browserManager.closeSession(sessionId);
         }
+      });
+    }
+
+    // Listen for task updates and broadcast to frontend
+    if (this.taskManager) {
+      this.taskManager.on('task:updated', ({ task }) => {
+        this.webChannel.broadcast({
+          type: 'task_updated',
+          task,
+        });
       });
     }
 

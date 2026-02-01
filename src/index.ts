@@ -486,8 +486,44 @@ async function main(): Promise<void> {
       skillManager,
       toolRunner,
       browserManager,
+      taskManager,
     });
     await server.start();
+
+    // Listen for scheduled tasks that are due
+    taskManager.on('task:due', async ({ task }) => {
+      console.log(`[Scheduler] Running scheduled task: ${task.name}`);
+      try {
+        const taskDescription = (task.jsonConfig as { description?: string }).description || '';
+
+        // Create a task message for the supervisor
+        const taskMessage = {
+          id: crypto.randomUUID(),
+          channel: 'web-main',  // Use web channel so responses are visible in UI
+          role: 'user' as const,
+          content: `[Scheduled Task] Run the "${task.name}" task now. Here is the task configuration:\n\n${JSON.stringify(task.jsonConfig, null, 2)}`,
+          createdAt: new Date(),
+          metadata: {
+            type: 'task_run',
+            taskId: task.id,
+            taskName: task.name,
+            taskDescription,
+            scheduled: true,
+          },
+        };
+
+        // Mark the task as executed (updates lastRun and nextRun)
+        taskManager.markTaskExecuted(task.id);
+
+        // Send to supervisor
+        await supervisor.handleMessage(taskMessage);
+      } catch (error) {
+        console.error(`[Scheduler] Error running scheduled task "${task.name}":`, error);
+      }
+    });
+
+    // Start the task scheduler (after event listeners are set up)
+    taskManager.startScheduler();
 
     console.log(`
 ✅ OllieBot ready! (Multi-Agent Architecture)

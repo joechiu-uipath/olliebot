@@ -228,6 +228,13 @@ function App() {
           c.id === id ? { ...c, title: title || c.title, updatedAt: updatedAt || c.updatedAt } : c
         )
       );
+    } else if (data.type === 'task_updated') {
+      // Task was updated (e.g., after execution)
+      setAgentTasks((prev) =>
+        prev.map((t) =>
+          t.id === data.task.id ? { ...t, ...data.task } : t
+        )
+      );
     } else if (data.type === 'browser_session_created') {
       // New browser session was created
       setBrowserSessions((prev) => {
@@ -1109,22 +1116,66 @@ function App() {
                   {agentTasks.length === 0 ? (
                     <div className="accordion-empty">No active tasks</div>
                   ) : (
-                    agentTasks.map((task) => (
-                      <div key={task.id} className="accordion-item task-item">
-                        <span className={`task-status ${task.status}`}>●</span>
-                        <span className="task-name">{task.name}</span>
-                        <button
-                          className="task-run-btn"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleRunTask(task.id);
-                          }}
-                          title="Run now"
-                        >
-                          ▶
-                        </button>
-                      </div>
-                    ))
+                    agentTasks.map((task) => {
+                      // Build tooltip content
+                      const tooltipLines = [];
+                      if (task.description) {
+                        tooltipLines.push(task.description);
+                      }
+                      if (task.schedule) {
+                        tooltipLines.push(`Schedule: ${task.schedule}`);
+                      }
+                      if (task.lastRun) {
+                        tooltipLines.push(`Last run: ${new Date(task.lastRun).toLocaleString()}`);
+                      }
+                      const tooltip = tooltipLines.join('\n') || task.name;
+
+                      // Format next run time
+                      const formatNextRun = (nextRun) => {
+                        if (!nextRun) return null;
+                        const date = new Date(nextRun);
+                        const now = new Date();
+                        const diffMs = date - now;
+
+                        // If in the past, show "Overdue"
+                        if (diffMs < 0) return 'Overdue';
+
+                        // If within 24 hours, show relative time
+                        const diffHours = diffMs / (1000 * 60 * 60);
+                        if (diffHours < 1) {
+                          const diffMins = Math.round(diffMs / (1000 * 60));
+                          return `in ${diffMins}m`;
+                        }
+                        if (diffHours < 24) {
+                          return `in ${Math.round(diffHours)}h`;
+                        }
+
+                        // Otherwise show date
+                        return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+                      };
+
+                      const nextRunDisplay = formatNextRun(task.nextRun);
+
+                      return (
+                        <div key={task.id} className="accordion-item task-item" title={tooltip}>
+                          <span className={`task-status ${task.status}`}>●</span>
+                          <span className="task-name">{task.name}</span>
+                          {nextRunDisplay && (
+                            <span className="task-next-run">{nextRunDisplay}</span>
+                          )}
+                          <button
+                            className="task-run-btn"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleRunTask(task.id);
+                            }}
+                            title="Run now"
+                          >
+                            ▶
+                          </button>
+                        </div>
+                      );
+                    })
                   )}
                 </div>
               )}
