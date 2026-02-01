@@ -267,41 +267,17 @@ export function EvalRunner({ evaluation, suite, onBack }) {
             </>
           )}
 
-          <div className="eval-config-card">
-            <h3>Run Configuration</h3>
-            <div className="config-field">
-              <label>Number of Runs:</label>
-              <input
-                type="number"
-                min="1"
-                max="20"
-                value={runConfig.runs}
-                onChange={(e) => setRunConfig(prev => ({ ...prev, runs: parseInt(e.target.value) || 5 }))}
-              />
+          {error && (
+            <div className="eval-error">
+              <strong>Error:</strong> {error}
             </div>
-            <div className="config-field">
-              <label>Alternative Prompt (optional):</label>
-              <input
-                type="text"
-                placeholder="Path to alternative prompt file"
-                value={runConfig.alternativePrompt}
-                onChange={(e) => setRunConfig(prev => ({ ...prev, alternativePrompt: e.target.value }))}
-              />
-            </div>
-          </div>
+          )}
+        </div>
 
-          <div className="eval-actions">
-            <button
-              className="run-btn primary"
-              onClick={runEvaluation}
-              disabled={loading}
-            >
-              {loading ? 'Running...' : 'Run Evaluation'}
-            </button>
-          </div>
-
-          {loading && progress && (
-            <div className="eval-progress">
+        {/* Bottom bar - anchored like chat input */}
+        <div className="eval-input-bar">
+          {loading && progress ? (
+            <div className="eval-progress-inline">
               <div className="progress-bar">
                 <div
                   className="progress-fill"
@@ -312,12 +288,35 @@ export function EvalRunner({ evaluation, suite, onBack }) {
                 {progress.current} / {progress.total} runs
               </span>
             </div>
-          )}
-
-          {error && (
-            <div className="eval-error">
-              <strong>Error:</strong> {error}
-            </div>
+          ) : (
+            <>
+              <div className="eval-config-inline">
+                <label>
+                  Runs:
+                  <input
+                    type="number"
+                    min="1"
+                    max="20"
+                    value={runConfig.runs}
+                    onChange={(e) => setRunConfig(prev => ({ ...prev, runs: parseInt(e.target.value) || 5 }))}
+                  />
+                </label>
+                <input
+                  type="text"
+                  className="alt-prompt-input"
+                  placeholder="Alternative prompt path (optional)"
+                  value={runConfig.alternativePrompt}
+                  onChange={(e) => setRunConfig(prev => ({ ...prev, alternativePrompt: e.target.value }))}
+                />
+              </div>
+              <button
+                className="run-btn primary"
+                onClick={runEvaluation}
+                disabled={loading}
+              >
+                {loading ? 'Running...' : 'Run Evaluation'}
+              </button>
+            </>
           )}
         </div>
       </div>
