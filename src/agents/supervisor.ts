@@ -346,13 +346,40 @@ Every memory adds to context window consumption for ALL future calls.`,
       const systemPrompt = this.buildSystemPrompt();
       const tools = this.getToolsForLLM();
 
-      // Build initial messages
+      // Build initial messages, including image attachments
       let llmMessages: LLMMessage[] = [
         { role: 'system', content: systemPrompt },
-        ...this.conversationHistory.slice(-10).map((m) => ({
-          role: m.role,
-          content: m.content,
-        })),
+        ...this.conversationHistory.slice(-10).map((m) => {
+          // Check if message has image attachments
+          const imageAttachments = m.attachments?.filter(a => a.type.startsWith('image/')) || [];
+
+          if (imageAttachments.length > 0 && m.role === 'user') {
+            // Build multimodal content with text and images
+            const content: Array<{ type: 'text' | 'image'; text?: string; source?: { type: 'base64'; media_type: string; data: string } }> = [];
+
+            // Add text content first (content should always be string from Message type)
+            if (m.content && typeof m.content === 'string') {
+              content.push({ type: 'text', text: m.content });
+            }
+
+            // Add image attachments
+            for (const att of imageAttachments) {
+              content.push({
+                type: 'image',
+                source: {
+                  type: 'base64',
+                  media_type: att.type,
+                  data: att.data,
+                },
+              });
+            }
+
+            return { role: m.role, content };
+          }
+
+          // Regular text-only message
+          return { role: m.role, content: m.content };
+        }),
       ];
 
       // Tool execution loop - continues until LLM stops requesting tools
@@ -364,18 +391,24 @@ Every memory adds to context window consumption for ALL future calls.`,
         iterationCount++;
 
         if (tools.length > 0 && this.toolRunner) {
-          // Use tool-enabled generation
-          const response = await this.llmService.generateWithTools(llmMessages, { tools });
-
-          // Add any text content to the stream
-          if (response.content) {
-            fullResponse += response.content;
-            // Filter out delegation blocks from streamed output (user shouldn't see internal JSON)
-            const displayContent = response.content.replace(/```delegate\s*[\s\S]*?```/g, '').trim();
-            if (displayContent) {
-              channel.sendStreamChunk!(streamId, displayContent);
-            }
-          }
+          // Use tool-enabled streaming generation
+          const response = await this.llmService.generateWithToolsStream(
+            llmMessages,
+            {
+              onChunk: (chunk: string) => {
+                fullResponse += chunk;
+                // Stream chunks immediately (filter delegation blocks later in final response)
+                channel.sendStreamChunk!(streamId, chunk);
+              },
+              onComplete: () => {
+                // Iteration complete
+              },
+              onError: (error: Error) => {
+                console.error('[Supervisor] Stream error:', error);
+              },
+            },
+            { tools }
+          );
 
           // Check if LLM requested tool use
           if (response.toolUse && response.toolUse.length > 0) {
@@ -691,7 +724,7 @@ Every memory adds to context window consumption for ALL future calls.`,
     }
   }
 
-  private ensureConversation(channel: string, firstMessageContent?: string): string {
+  private ensureConversation(channel: string, firstMessageContent?: string | unknown[]): string {
     const db = getDb();
 
     // If we have a current conversation, update its timestamp and return it
@@ -713,8 +746,14 @@ Every memory adds to context window consumption for ALL future calls.`,
     const id = uuid();
     const now = new Date().toISOString();
     // Generate title from first message (truncate to 50 chars)
-    const title = firstMessageContent
-      ? firstMessageContent.substring(0, 50) + (firstMessageContent.length > 50 ? '...' : '')
+    // Handle multimodal content by extracting text
+    const textContent = typeof firstMessageContent === 'string'
+      ? firstMessageContent
+      : Array.isArray(firstMessageContent)
+        ? (firstMessageContent as Array<{ type: string; text?: string }>).filter((b) => b.type === 'text').map((b) => b.text).join(' ')
+        : '';
+    const title = textContent
+      ? textContent.substring(0, 50) + (textContent.length > 50 ? '...' : '')
       : 'New Conversation';
 
     db.conversations.create({
@@ -771,13 +810,23 @@ Every memory adds to context window consumption for ALL future calls.`,
       const db = getDb();
       const conversationId = this.ensureConversation(message.channel, message.role === 'user' ? message.content : undefined);
 
+      // Include attachment info in metadata (without base64 data)
+      const metadata = {
+        ...(message.metadata || {}),
+        attachments: message.attachments?.map(a => ({
+          name: a.name,
+          type: a.type,
+          size: a.size,
+        })),
+      };
+
       db.messages.create({
         id: message.id,
         conversationId,
         channel: message.channel,
         role: message.role,
         content: message.content,
-        metadata: message.metadata || {},
+        metadata,
         createdAt: message.createdAt.toISOString(),
       });
 
@@ -811,7 +860,7 @@ Every memory adds to context window consumption for ALL future calls.`,
 
       if (messages.length < 3) return;
 
-      // Build context from messages
+      // Build context from messages (database messages always have string content)
       const context = messages
         .map((m) => `${m.role}: ${m.content.substring(0, 200)}`)
         .join('\n');

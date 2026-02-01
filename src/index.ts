@@ -30,10 +30,19 @@ import {
   RememberTool,
   ReadSkillTool,
   RunSkillScriptTool,
+  HttpClientTool,
 } from './tools/index.js';
 import { TaskManager } from './tasks/index.js';
 import { MemoryService } from './memory/index.js';
 import { UserToolManager } from './tools/user/index.js';
+import {
+  BrowserSessionManager,
+  loadBrowserConfig,
+  BrowserSessionTool,
+  BrowserNavigateTool,
+  BrowserActionTool,
+  BrowserScreenshotTool,
+} from './browser/index.js';
 
 /**
  * Parse MCP server configurations from various formats.
@@ -129,6 +138,7 @@ const CONFIG = {
 
   // Native tool API keys
   imageGenProvider: (process.env.IMAGE_GEN_PROVIDER || 'openai') as 'openai' | 'stability',
+  imageGenModel: process.env.IMAGE_GEN_MODEL || 'dall-e-3',
   stabilityApiKey: process.env.STABILITY_API_KEY || '',
 
   // Web search configuration
@@ -341,6 +351,7 @@ async function main(): Promise<void> {
 
   // Register native tools
   toolRunner.registerNativeTool(new WikipediaSearchTool());
+  toolRunner.registerNativeTool(new HttpClientTool());
 
   // Web search (requires API key)
   if (CONFIG.webSearchApiKey) {
@@ -369,6 +380,7 @@ async function main(): Promise<void> {
       new CreateImageTool({
         apiKey: imageApiKey,
         provider: CONFIG.imageGenProvider,
+        model: CONFIG.imageGenModel,
       })
     );
   }
@@ -379,6 +391,21 @@ async function main(): Promise<void> {
   // Skill tools (for Agent Skills spec)
   toolRunner.registerNativeTool(new ReadSkillTool(CONFIG.skillsDir));
   toolRunner.registerNativeTool(new RunSkillScriptTool(CONFIG.skillsDir));
+
+  // Initialize Browser Session Manager
+  console.log('[Init] Initializing browser session manager...');
+  const browserConfig = loadBrowserConfig();
+  const browserManager = new BrowserSessionManager({
+    defaultConfig: browserConfig,
+    llmService: llmService as unknown as import('./browser/manager.js').ILLMService,
+  });
+
+  // Register browser tools
+  toolRunner.registerNativeTool(new BrowserSessionTool(browserManager));
+  toolRunner.registerNativeTool(new BrowserNavigateTool(browserManager));
+  toolRunner.registerNativeTool(new BrowserActionTool(browserManager));
+  toolRunner.registerNativeTool(new BrowserScreenshotTool(browserManager));
+  console.log('[Init] Browser tools registered');
 
   // Initialize User Tool Manager (watches user/tools for .md tool definitions)
   console.log('[Init] Initializing user tool manager...');
@@ -454,6 +481,7 @@ async function main(): Promise<void> {
       mcpClient,
       skillManager,
       toolRunner,
+      browserManager,
     });
     await server.start();
 
@@ -477,6 +505,7 @@ async function main(): Promise<void> {
   const shutdown = async (): Promise<void> => {
     console.log('\n[Shutdown] Gracefully shutting down...');
     await registry.shutdown();
+    await browserManager.shutdown();
     await taskManager.close();
     await userToolManager.close();
     await skillManager.close();

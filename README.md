@@ -16,9 +16,11 @@ Why create this when "XYZ" exists (XYZ = whatever is trending this week)?
 
 ## Experimantal Features (not well tested)
 
+- **Browser Automation**: Computer Use models for visual browser automation with live preview
 - **Multi-Channel Communication**: Web UI, Console CLI, Microsoft Teams
 - **A2UI Human-in-the-Loop**: Request user input during automated workflows
 - **RAG System**: Automatic chunking and retrieval for large documents
+- **Git Versioning**: All config changes tracked in local git
 
 ## Quick Start
 
@@ -33,28 +35,33 @@ Why create this when "XYZ" exists (XYZ = whatever is trending this week)?
 npm install
 ```
 
-2. Create environment file:
+2. Install Playwright browsers (required for Browser Automation):
+```bash
+npx playwright install
+```
+
+3. Create environment file:
 ```bash
 cp .env.example .env
 ```
 
-3. Add your API keys to `.env`:
+4. Add your API keys to `.env`:
 ```env
 ANTHROPIC_API_KEY=your-anthropic-key
 GOOGLE_API_KEY=your-google-key  # Optional, for Gemini + embeddings
 ```
 
-4. Start the server:
+5. Start the server:
 ```bash
 npm run dev:server
 ```
 
-5. Start the web UI (in another terminal):
+6. Start the web UI (in another terminal):
 ```bash
 npm run dev:web
 ```
 
-6. Open http://localhost:5173 in your browser
+7. Open http://localhost:5173 in your browser
 
 ### Console Mode
 
@@ -79,6 +86,16 @@ npm run dev:server console
 | `MCP_SERVERS` | JSON array of MCP server configs | `[]` |
 | `WEB_SEARCH_API_KEY` | API key for web search (Serper or Google CSE) | Optional |
 | `WEB_SEARCH_PROVIDER` | Web search provider (`serper` or `google_custom_search`) | `serper` |
+
+#### Browser Automation
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `BROWSER_PROVIDER` | Computer Use provider (`azure_openai`, `google`) | `azure_openai` |
+| `BROWSER_MODEL` | Model for browser automation | `computer-use-preview` |
+| `BROWSER_DEBUG_MODE` | Enable live preview in web UI | `false` |
+| `AZURE_OPENAI_ENDPOINT` | Azure OpenAI endpoint (for azure_openai provider) | - |
+| `AZURE_OPENAI_API_KEY` | Azure OpenAI API key (for azure_openai provider) | - |
 
 ### Task Configuration
 

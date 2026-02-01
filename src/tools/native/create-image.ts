@@ -10,6 +10,7 @@ import type { NativeTool, NativeToolResult } from './types.js';
 export interface CreateImageConfig {
   apiKey: string;
   provider?: 'openai' | 'stability';
+  model?: string;
 }
 
 export class CreateImageTool implements NativeTool {
@@ -33,10 +34,12 @@ export class CreateImageTool implements NativeTool {
 
   private apiKey: string;
   private provider: 'openai' | 'stability';
+  private model: string;
 
   constructor(config: CreateImageConfig) {
     this.apiKey = config.apiKey;
     this.provider = config.provider || 'openai';
+    this.model = config.model || 'dall-e-3';
   }
 
   async execute(params: Record<string, unknown>): Promise<NativeToolResult> {
@@ -75,7 +78,7 @@ export class CreateImageTool implements NativeTool {
         Authorization: `Bearer ${this.apiKey}`,
       },
       body: JSON.stringify({
-        model: 'dall-e-3',
+        model: this.model,
         prompt: description,
         n: 1,
         size,

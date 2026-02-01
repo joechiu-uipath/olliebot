@@ -8,6 +8,7 @@ import { getDb } from '../db/index.js';
 import type { MCPClient } from '../mcp/index.js';
 import type { SkillManager } from '../skills/index.js';
 import type { ToolRunner } from '../tools/index.js';
+import type { BrowserSessionManager } from '../browser/index.js';
 
 export interface ServerConfig {
   port: number;
@@ -15,6 +16,7 @@ export interface ServerConfig {
   mcpClient?: MCPClient;
   skillManager?: SkillManager;
   toolRunner?: ToolRunner;
+  browserManager?: BrowserSessionManager;
 }
 
 export class OllieBotServer {
@@ -27,6 +29,7 @@ export class OllieBotServer {
   private mcpClient?: MCPClient;
   private skillManager?: SkillManager;
   private toolRunner?: ToolRunner;
+  private browserManager?: BrowserSessionManager;
 
   constructor(config: ServerConfig) {
     this.port = config.port;
@@ -34,6 +37,7 @@ export class OllieBotServer {
     this.mcpClient = config.mcpClient;
     this.skillManager = config.skillManager;
     this.toolRunner = config.toolRunner;
+    this.browserManager = config.browserManager;
 
     // Create Express app
     this.app = express();
@@ -219,6 +223,8 @@ export class OllieBotServer {
           createdAt: m.createdAt,
           agentName: m.metadata?.agentName,
           agentEmoji: m.metadata?.agentEmoji,
+          // Attachments
+          attachments: m.metadata?.attachments,
           // Task run metadata
           messageType: m.metadata?.type,
           taskId: m.metadata?.taskId,
@@ -298,6 +304,8 @@ export class OllieBotServer {
           createdAt: m.createdAt,
           agentName: m.metadata?.agentName,
           agentEmoji: m.metadata?.agentEmoji,
+          // Attachments
+          attachments: m.metadata?.attachments,
           // Task run metadata
           messageType: m.metadata?.type,
           taskId: m.metadata?.taskId,
@@ -436,6 +444,19 @@ export class OllieBotServer {
 
     // Register web channel with supervisor
     this.supervisor.registerChannel(this.webChannel);
+
+    // Attach web channel to browser manager if present
+    if (this.browserManager) {
+      this.browserManager.attachWebChannel(this.webChannel);
+
+      // Handle browser actions from web clients
+      this.webChannel.onBrowserAction(async (action, sessionId) => {
+        console.log(`[Server] Browser action: ${action} for session ${sessionId}`);
+        if (action === 'close' && this.browserManager) {
+          await this.browserManager.closeSession(sessionId);
+        }
+      });
+    }
 
     // Start listening
     return new Promise((resolve) => {

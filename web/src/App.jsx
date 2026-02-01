@@ -5,10 +5,14 @@ import rehypeSanitize from 'rehype-sanitize';
 import remarkGfm from 'remark-gfm';
 import { useWebSocket } from './hooks/useWebSocket';
 import HtmlPreview from './components/HtmlPreview';
+import { BrowserSessions } from './components/BrowserSessions';
+import { BrowserPreview } from './components/BrowserPreview';
 
 function App() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
+  const [attachments, setAttachments] = useState([]);
+  const [isDragOver, setIsDragOver] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
   const [pendingInteraction, setPendingInteraction] = useState(null);
 
@@ -25,12 +29,19 @@ function App() {
     skills: false,
     mcps: false,
     tools: false,
+    browserSessions: false,
   });
   const [agentTasks, setAgentTasks] = useState([]);
   const [skills, setSkills] = useState([]);
   const [mcps, setMcps] = useState([]);
   const [tools, setTools] = useState({ builtin: [], user: [], mcp: {} });
   const [expandedToolGroups, setExpandedToolGroups] = useState({});
+
+  // Browser session state
+  const [browserSessions, setBrowserSessions] = useState([]);
+  const [selectedBrowserSessionId, setSelectedBrowserSessionId] = useState(null);
+  const [browserScreenshots, setBrowserScreenshots] = useState({});
+  const [clickMarkers, setClickMarkers] = useState([]);
 
   // Actions menu state
   const [openMenuId, setOpenMenuId] = useState(null);
@@ -212,6 +223,56 @@ function App() {
           c.id === id ? { ...c, title: title || c.title, updatedAt: updatedAt || c.updatedAt } : c
         )
       );
+    } else if (data.type === 'browser_session_created') {
+      // New browser session was created
+      setBrowserSessions((prev) => {
+        if (prev.some((s) => s.id === data.session.id)) return prev;
+        return [...prev, data.session];
+      });
+      // Auto-expand accordion when first session is created
+      setExpandedAccordions((prev) => ({ ...prev, browserSessions: true }));
+    } else if (data.type === 'browser_session_updated') {
+      // Browser session was updated
+      setBrowserSessions((prev) =>
+        prev.map((s) =>
+          s.id === data.sessionId ? { ...s, ...data.updates } : s
+        )
+      );
+    } else if (data.type === 'browser_session_closed') {
+      // Browser session was closed
+      setBrowserSessions((prev) => prev.filter((s) => s.id !== data.sessionId));
+      // Clear screenshot for this session
+      setBrowserScreenshots((prev) => {
+        const next = { ...prev };
+        delete next[data.sessionId];
+        return next;
+      });
+      // Clear selection if this was selected
+      setSelectedBrowserSessionId((prev) => prev === data.sessionId ? null : prev);
+      // Remove click markers for this session
+      setClickMarkers((prev) => prev.filter((m) => m.sessionId !== data.sessionId));
+    } else if (data.type === 'browser_screenshot') {
+      // New screenshot from browser session
+      setBrowserScreenshots((prev) => ({
+        ...prev,
+        [data.sessionId]: {
+          screenshot: data.screenshot,
+          url: data.url,
+          timestamp: data.timestamp,
+        },
+      }));
+    } else if (data.type === 'browser_click_marker') {
+      // Click marker for visualization
+      const marker = {
+        ...data.marker,
+        id: `marker-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        sessionId: data.sessionId,
+      };
+      setClickMarkers((prev) => [...prev, marker]);
+      // Auto-remove marker after animation completes (1.5s)
+      setTimeout(() => {
+        setClickMarkers((prev) => prev.filter((m) => m.id !== marker.id));
+      }, 1500);
     }
   }, []);
 
@@ -247,6 +308,7 @@ function App() {
               timestamp: msg.createdAt,
               agentName: msg.agentName,
               agentEmoji: msg.agentEmoji,
+              attachments: msg.attachments,
               // Task metadata
               taskId: msg.taskId,
               taskName: msg.taskName,
@@ -339,35 +401,55 @@ function App() {
   }, []);
 
   // Smart auto-scroll - only scroll if user hasn't manually scrolled up
+  // Uses instant scroll (not smooth) so it doesn't create ongoing animations that fight with user input
   useEffect(() => {
     if (!isUserScrolled && messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+      messagesEndRef.current.scrollIntoView({ behavior: 'instant' });
     }
   }, [messages, isUserScrolled]);
 
-  // Handle scroll events to detect manual scrolling
+  // Track if we're programmatically scrolling (to avoid scroll event interference)
+  const isScrollingToBottom = useRef(false);
+
+  // Handle wheel events - immediately disengage auto-scroll when user scrolls up
+  const handleWheel = useCallback((e) => {
+    if (e.deltaY < 0) {
+      // User is scrolling UP - immediately disengage auto-scroll
+      setIsUserScrolled(true);
+      setShowScrollButton(true);
+    }
+  }, []);
+
+  // Handle scroll events to detect scroll position (only controls button visibility)
   const handleScroll = useCallback(() => {
+    // Ignore scroll events during programmatic scroll
+    if (isScrollingToBottom.current) return;
+
     const container = messagesContainerRef.current;
     if (!container) return;
 
     const { scrollTop, scrollHeight, clientHeight } = container;
     const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
 
-    // If user scrolled more than 100px from bottom, consider it manual scroll
-    if (distanceFromBottom > 100) {
-      setIsUserScrolled(true);
-      setShowScrollButton(true);
-    } else {
-      setIsUserScrolled(false);
+    // Only control button visibility - don't change auto-scroll state here
+    // Auto-scroll is only re-enabled by clicking the "scroll to bottom" button
+    if (distanceFromBottom < 50) {
       setShowScrollButton(false);
+    } else {
+      setShowScrollButton(true);
     }
   }, []);
 
   // Scroll to bottom handler
   const scrollToBottom = useCallback(() => {
+    isScrollingToBottom.current = true;
     setIsUserScrolled(false);
     setShowScrollButton(false);
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    // Reset flag after animation completes
+    setTimeout(() => {
+      isScrollingToBottom.current = false;
+    }, 500);
   }, []);
 
   // Start a new conversation
@@ -450,6 +532,7 @@ function App() {
                     timestamp: msg.createdAt || msg.created_at,
                     agentName: msg.agentName,
                     agentEmoji: msg.agentEmoji,
+                    attachments: msg.attachments,
                     taskId: msg.taskId,
                     taskName: msg.taskName,
                     taskDescription: msg.taskDescription,
@@ -519,6 +602,7 @@ function App() {
               timestamp: msg.createdAt || msg.created_at,
               agentName: msg.agentName,
               agentEmoji: msg.agentEmoji,
+              attachments: msg.attachments,
               taskId: msg.taskId,
               taskName: msg.taskName,
               taskDescription: msg.taskDescription,
@@ -541,23 +625,121 @@ function App() {
     }
   }, [currentConversationId]);
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!input.trim()) return;
+    if (!input.trim() && attachments.length === 0) return;
+
+    // If user is near the bottom when sending, re-enable auto-scroll
+    const container = messagesContainerRef.current;
+    if (container) {
+      const { scrollTop, scrollHeight, clientHeight } = container;
+      const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
+      if (distanceFromBottom < 150) {
+        setIsUserScrolled(false);
+      }
+    }
+
+    // Process attachments to base64
+    const processedAttachments = await Promise.all(
+      attachments.map(async (file) => {
+        const base64 = await fileToBase64(file);
+        return {
+          name: file.name,
+          type: file.type,
+          size: file.size,
+          data: base64,
+        };
+      })
+    );
 
     // Add user message to UI immediately
     const userMessage = {
       id: Date.now(),
       role: 'user',
       content: input,
+      attachments: attachments.map(f => ({ name: f.name, type: f.type, size: f.size })),
       timestamp: new Date().toISOString(),
     };
     setMessages((prev) => [...prev, userMessage]);
 
-    // Send via WebSocket with conversation ID
-    sendMessage({ type: 'message', content: input, conversationId: currentConversationId });
+    // Send via WebSocket with conversation ID and attachments
+    sendMessage({
+      type: 'message',
+      content: input,
+      attachments: processedAttachments,
+      conversationId: currentConversationId
+    });
     setInput('');
+    setAttachments([]);
   };
+
+  // Convert file to base64
+  const fileToBase64 = (file) => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const base64 = reader.result.split(',')[1];
+        resolve(base64);
+      };
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  };
+
+  // Handle file drop
+  const handleDrop = useCallback((e) => {
+    e.preventDefault();
+    setIsDragOver(false);
+    const files = Array.from(e.dataTransfer.files);
+    setAttachments((prev) => [...prev, ...files]);
+  }, []);
+
+  const handleDragOver = useCallback((e) => {
+    e.preventDefault();
+    setIsDragOver(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e) => {
+    e.preventDefault();
+    setIsDragOver(false);
+  }, []);
+
+  // Handle paste - extract images from clipboard
+  const handlePaste = useCallback((e) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+
+    const imageFiles = [];
+    for (const item of items) {
+      if (item.type.startsWith('image/')) {
+        const file = item.getAsFile();
+        if (file) {
+          // Create a named file (clipboard images don't have names)
+          const namedFile = new File([file], `pasted-image-${Date.now()}.png`, { type: file.type });
+          imageFiles.push(namedFile);
+        }
+      }
+    }
+
+    if (imageFiles.length > 0) {
+      setAttachments((prev) => [...prev, ...imageFiles]);
+    }
+  }, []);
+
+  // Remove attachment
+  const removeAttachment = useCallback((index) => {
+    setAttachments((prev) => prev.filter((_, i) => i !== index));
+  }, []);
+
+  // Handle textarea key down (submit on Enter, newline on Shift+Enter)
+  const handleKeyDown = useCallback((e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      if (input.trim() || attachments.length > 0) {
+        handleSubmit(e);
+      }
+    }
+  }, [input, attachments]);
 
   const handleAction = (action, data) => {
     sendMessage({ type: 'action', action, data, conversationId: currentConversationId });
@@ -683,6 +865,14 @@ function App() {
     return <pre className="tool-details-content">{JSON.stringify(parsedResult, null, 2)}</pre>;
   };
 
+  // Format file size for display
+  const formatFileSize = (bytes) => {
+    if (!bytes) return '';
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
   // Render markdown with inline HTML support
   const renderContent = (content, html = false) => {
     return (
@@ -784,6 +974,26 @@ function App() {
     if (diffDays < 7) return `${diffDays} days ago`;
     return date.toLocaleDateString();
   };
+
+  // Handle browser session selection
+  const handleSelectBrowserSession = useCallback((sessionId) => {
+    setSelectedBrowserSessionId(sessionId);
+  }, []);
+
+  // Close browser preview
+  const handleCloseBrowserPreview = useCallback(() => {
+    setSelectedBrowserSessionId(null);
+  }, []);
+
+  // Close browser session (terminate the browser process)
+  const handleCloseBrowserSession = useCallback((sessionId) => {
+    sendMessage({ type: 'browser-action', action: 'close', sessionId });
+  }, [sendMessage]);
+
+  // Get selected browser session object
+  const selectedBrowserSession = browserSessions.find(
+    (s) => s.id === selectedBrowserSessionId
+  );
 
   return (
     <div className="app-layout">
@@ -1051,6 +1261,18 @@ function App() {
                 </div>
               )}
             </div>
+
+            {/* Browser Sessions Accordion - only show when there are active sessions */}
+            {browserSessions.length > 0 && (
+              <BrowserSessions
+                sessions={browserSessions}
+                selectedSessionId={selectedBrowserSessionId}
+                onSelectSession={handleSelectBrowserSession}
+                onCloseSession={handleCloseBrowserSession}
+                expanded={expandedAccordions.browserSessions}
+                onToggle={() => toggleAccordion('browserSessions')}
+              />
+            )}
           </div>
           </>
         )}
@@ -1070,7 +1292,7 @@ function App() {
               </button>
             )}
             <div className="logo">
-              <span className="logo-icon">🤖</span>
+              <span className="logo-icon">🐙</span>
               <h1>OllieBot</h1>
             </div>
           </div>
@@ -1080,7 +1302,7 @@ function App() {
         </header>
 
         <main className="chat-container">
-          <div className="messages" ref={messagesContainerRef} onScroll={handleScroll}>
+          <div className="messages" ref={messagesContainerRef} onScroll={handleScroll} onWheel={handleWheel}>
           {messages.length === 0 && (
             <div className="welcome">
               <h2>Welcome to OllieBot</h2>
@@ -1160,20 +1382,40 @@ function App() {
             ) : (
             <div key={msg.id} className={`message ${msg.role}${msg.isError ? ' error' : ''}${msg.isStreaming ? ' streaming' : ''}`}>
               <div className="message-avatar">
-                {msg.isError ? '⚠️' : msg.role === 'user' ? '👤' : (msg.agentEmoji || '🤖')}
+                {msg.isError ? '⚠️' : msg.role === 'user' ? '👤' : (msg.agentEmoji || '🐙')}
               </div>
               <div className="message-content">
                 {msg.agentName && msg.role === 'assistant' && (
                   <div className="agent-name">{msg.agentName}</div>
                 )}
                 {renderContent(msg.content, msg.html)}
-                {msg.isStreaming && (
-                          <span className="typing-indicator">
-                            <span className="dot"></span>
-                            <span className="dot"></span>
-                            <span className="dot"></span>
-                          </span>
-                        )}
+                {msg.attachments && msg.attachments.length > 0 && (
+                  <div className="message-attachments">
+                    {msg.attachments.map((att, index) => (
+                      <div key={index} className="message-attachment-chip">
+                        <span className="attachment-icon">
+                          {att.type?.startsWith('image/') ? '🖼️' : '📎'}
+                        </span>
+                        <span className="attachment-name" title={att.name}>
+                          {att.name?.length > 25 ? att.name.slice(0, 22) + '...' : att.name}
+                        </span>
+                        <span className="attachment-size">
+                          {formatFileSize(att.size)}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {msg.isStreaming && !msg.content && (
+                  <span className="typing-indicator">
+                    <span className="dot"></span>
+                    <span className="dot"></span>
+                    <span className="dot"></span>
+                  </span>
+                )}
+                {msg.isStreaming && msg.content && (
+                  <span className="streaming-cursor"></span>
+                )}
                 {msg.buttons && (
                   <div className="message-buttons">
                     {msg.buttons.map((btn) => (
@@ -1282,18 +1524,61 @@ function App() {
             </div>
           </div>
         )}
+
+        {/* Browser Preview Modal */}
+        {selectedBrowserSession && (
+          <BrowserPreview
+            session={selectedBrowserSession}
+            screenshot={browserScreenshots[selectedBrowserSessionId]}
+            clickMarkers={clickMarkers}
+            onClose={handleCloseBrowserPreview}
+            onCloseSession={handleCloseBrowserSession}
+          />
+        )}
         </main>
 
         <footer className="input-container">
           <form onSubmit={handleSubmit}>
-            <input
-              type="text"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder="Type a message..."
-              disabled={!isConnected}
-            />
-            <button type="submit" disabled={!isConnected || !input.trim()}>
+            <div
+              className={`input-wrapper ${isDragOver ? 'drag-over' : ''}`}
+              onDrop={handleDrop}
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+            >
+              {/* Attachment chips */}
+              {attachments.length > 0 && (
+                <div className="attachments-bar">
+                  {attachments.map((file, index) => (
+                    <div key={index} className="attachment-chip">
+                      <span className="attachment-icon">
+                        {file.type.startsWith('image/') ? '🖼️' : '📎'}
+                      </span>
+                      <span className="attachment-name" title={file.name}>
+                        {file.name.length > 20 ? file.name.slice(0, 17) + '...' : file.name}
+                      </span>
+                      <button
+                        type="button"
+                        className="attachment-remove"
+                        onClick={() => removeAttachment(index)}
+                        title="Remove attachment"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <textarea
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+                onPaste={handlePaste}
+                placeholder="Type a message... (Shift+Enter for new line, drag & drop or paste images)"
+                disabled={!isConnected}
+                rows={3}
+              />
+            </div>
+            <button type="submit" disabled={!isConnected || (!input.trim() && attachments.length === 0)}>
               Send
             </button>
           </form>
