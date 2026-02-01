@@ -1,10 +1,18 @@
 // Communication channel abstraction types
 
+export interface MessageAttachment {
+  name: string;
+  type: string;
+  size: number;
+  data: string; // base64 encoded
+}
+
 export interface Message {
   id: string;
   channel: string;
   role: 'user' | 'assistant' | 'system';
   content: string;
+  attachments?: MessageAttachment[];
   metadata?: Record<string, unknown>;
   createdAt: Date;
 }

@@ -68,6 +68,7 @@ export class WebChannel implements Channel {
   }
 
   private newConversationHandler: (() => void) | null = null;
+  private browserActionHandler: ((action: string, sessionId: string) => Promise<void>) | null = null;
 
   private async handleClientMessage(clientId: string, data: unknown): Promise<void> {
     const msg = data as {
@@ -77,14 +78,17 @@ export class WebChannel implements Channel {
       data?: unknown;
       conversationId?: string;
       requestId?: string;
+      sessionId?: string;
+      attachments?: Array<{ name: string; type: string; size: number; data: string }>;
     };
 
-    if (msg.type === 'message' && msg.content && this.messageHandler) {
+    if (msg.type === 'message' && (msg.content || msg.attachments?.length) && this.messageHandler) {
       const message: Message = {
         id: uuid(),
         channel: this.id,
         role: 'user',
-        content: msg.content,
+        content: msg.content || '',
+        attachments: msg.attachments,
         metadata: { clientId, conversationId: msg.conversationId },
         createdAt: new Date(),
       };
@@ -96,6 +100,8 @@ export class WebChannel implements Channel {
       await this.interactionHandler(msg.requestId!, msg.data, msg.conversationId);
     } else if (msg.type === 'new-conversation' && this.newConversationHandler) {
       this.newConversationHandler();
+    } else if (msg.type === 'browser-action' && msg.action && msg.sessionId && this.browserActionHandler) {
+      await this.browserActionHandler(msg.action, msg.sessionId);
     }
   }
 
@@ -224,6 +230,10 @@ export class WebChannel implements Channel {
 
   onInteraction(handler: (requestId: string, response: unknown, conversationId?: string) => Promise<void>): void {
     this.interactionHandler = handler;
+  }
+
+  onBrowserAction(handler: (action: string, sessionId: string) => Promise<void>): void {
+    this.browserActionHandler = handler;
   }
 
   isConnected(): boolean {

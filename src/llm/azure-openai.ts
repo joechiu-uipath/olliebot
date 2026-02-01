@@ -108,12 +108,16 @@ export class AzureOpenAIProvider implements LLMProvider {
   private convertMessages(
     messages: LLMMessage[],
     systemPrompt?: string
-  ): Array<{ role: string; content: string }> {
-    const openaiMessages: Array<{ role: string; content: string }> = [];
+  ): Array<{ role: string; content: string | Array<{ type: string; text?: string; image_url?: { url: string } }> }> {
+    const openaiMessages: Array<{ role: string; content: string | Array<{ type: string; text?: string; image_url?: { url: string } }> }> = [];
 
     // Add system prompt if provided
     const systemMessage = messages.find((m) => m.role === 'system');
-    const effectiveSystemPrompt = systemPrompt || systemMessage?.content;
+    const effectiveSystemPrompt = typeof systemPrompt === 'string'
+      ? systemPrompt
+      : typeof systemMessage?.content === 'string'
+        ? systemMessage.content
+        : undefined;
 
     if (effectiveSystemPrompt) {
       openaiMessages.push({
@@ -128,10 +132,31 @@ export class AzureOpenAIProvider implements LLMProvider {
         continue; // Already handled
       }
 
-      openaiMessages.push({
-        role: msg.role,
-        content: msg.content,
-      });
+      // Handle multimodal content
+      if (Array.isArray(msg.content)) {
+        const parts = msg.content.map((block) => {
+          if (block.type === 'text') {
+            return { type: 'text' as const, text: block.text || '' };
+          } else if (block.type === 'image' && block.source) {
+            return {
+              type: 'image_url' as const,
+              image_url: {
+                url: `data:${block.source.media_type};base64,${block.source.data}`,
+              },
+            };
+          }
+          return { type: 'text' as const, text: '' };
+        });
+        openaiMessages.push({
+          role: msg.role,
+          content: parts,
+        });
+      } else {
+        openaiMessages.push({
+          role: msg.role,
+          content: msg.content,
+        });
+      }
     }
 
     return openaiMessages;
