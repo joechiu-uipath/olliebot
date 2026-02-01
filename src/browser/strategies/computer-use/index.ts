@@ -130,11 +130,6 @@ export class ComputerUseBrowserStrategy extends BaseBrowserStrategy {
         this.lastCallId = cuResponse.callId;
       }
 
-      // Log reasoning if available
-      if (cuResponse.reasoning) {
-        console.log(`[ComputerUseStrategy] Model reasoning: ${cuResponse.reasoning.substring(0, 200)}...`);
-      }
-
       // Check if task is complete
       if (cuResponse.isComplete) {
         console.log(`[ComputerUseStrategy] Task completed in ${stepCount} steps`);
@@ -155,7 +150,9 @@ export class ComputerUseBrowserStrategy extends BaseBrowserStrategy {
         continue;
       }
 
-      console.log(`[ComputerUseStrategy] Step ${stepCount}: ${cuResponse.action.type}`);
+      // Log reasoning if available
+      const reasoningInfo = cuResponse.reasoning ? `Reasoning: ${cuResponse.reasoning}` : '';
+      console.log(`[ComputerUseStrategy] Step ${stepCount}: ${cuResponse.action.type} ${reasoningInfo}`);
 
       // Convert CU action to BrowserAction
       const browserAction = this.convertToBrowserAction(cuResponse.action);

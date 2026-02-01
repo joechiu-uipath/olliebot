@@ -1,6 +1,7 @@
 import 'dotenv/config';
 import { join } from 'path';
 import { initDb, closeDb } from './db/index.js';
+import { ensureWellKnownConversations, WellKnownConversations } from './db/well-known-conversations.js';
 import { SupervisorAgentImpl, getAgentRegistry } from './agents/index.js';
 import {
   LLMService,
@@ -290,6 +291,7 @@ async function main(): Promise<void> {
   // Initialize database
   console.log('[Init] Initializing database...');
   await initDb(CONFIG.dbPath);
+  ensureWellKnownConversations();
 
   // Initialize LLM service with Main and Fast providers
   console.log('[Init] Initializing LLM service...');
@@ -453,7 +455,8 @@ async function main(): Promise<void> {
 
   // Create supervisor agent (multi-agent architecture)
   console.log('[Init] Creating supervisor agent...');
-  const supervisor = new SupervisorAgentImpl(llmService);
+  const registry = getAgentRegistry();
+  const supervisor = new SupervisorAgentImpl(llmService, registry);
 
   // Set tool runner, memory service, and skill manager on supervisor
   supervisor.setToolRunner(toolRunner);
@@ -461,7 +464,6 @@ async function main(): Promise<void> {
   supervisor.setSkillManager(skillManager);
 
   // Register with global agent registry
-  const registry = getAgentRegistry();
   registry.registerAgent(supervisor);
 
   // Initialize supervisor
@@ -497,6 +499,7 @@ async function main(): Promise<void> {
         const taskDescription = (task.jsonConfig as { description?: string }).description || '';
 
         // Create a task message for the supervisor
+        // Route to the well-known :feed: conversation for background tasks
         const taskMessage = {
           id: crypto.randomUUID(),
           channel: 'web-main',  // Use web channel so responses are visible in UI
@@ -509,6 +512,7 @@ async function main(): Promise<void> {
             taskName: task.name,
             taskDescription,
             scheduled: true,
+            conversationId: WellKnownConversations.FEED,  // Route to feed conversation
           },
         };
 

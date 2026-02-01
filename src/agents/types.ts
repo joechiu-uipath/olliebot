@@ -90,7 +90,7 @@ export interface BaseAgent {
 
 export interface SupervisorAgent extends BaseAgent {
   // Sub-agent management
-  spawnAgent(config: Partial<AgentConfig>): Promise<string>;
+  spawnAgent(config: Partial<AgentConfig>, agentType?: string): Promise<string>;
   terminateAgent(agentId: string): Promise<void>;
   getSubAgents(): string[];
 

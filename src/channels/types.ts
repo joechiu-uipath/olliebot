@@ -53,9 +53,9 @@ export interface Channel {
   sendError(error: string, details?: string): Promise<void>;
 
   // Streaming support (optional)
-  startStream?(streamId: string, agentInfo?: { agentId?: string; agentName?: string; agentEmoji?: string }): void;
-  sendStreamChunk?(streamId: string, chunk: string): void;
-  endStream?(streamId: string): void;
+  startStream?(streamId: string, agentInfo?: { agentId?: string; agentName?: string; agentEmoji?: string; conversationId?: string }): void;
+  sendStreamChunk?(streamId: string, chunk: string, conversationId?: string): void;
+  endStream?(streamId: string, conversationId?: string): void;
 
   // Register message handler
   onMessage(handler: (message: Message) => Promise<void>): void;

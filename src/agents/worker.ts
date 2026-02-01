@@ -156,12 +156,13 @@ export class WorkerAgent extends AbstractAgent {
     }
 
     try {
-      // Start stream with agent info
+      // Start stream with agent info and conversation context
       if (typeof channel.startStream === 'function') {
         channel.startStream(streamId, {
           agentId: this.identity.id,
           agentName: this.identity.name,
           agentEmoji: this.identity.emoji,
+          conversationId: this.conversationId || undefined,
         });
       }
 
@@ -192,7 +193,7 @@ export class WorkerAgent extends AbstractAgent {
             onChunk: (chunk) => {
               fullResponse += chunk;
               if (typeof channel.sendStreamChunk === 'function') {
-                channel.sendStreamChunk(streamId, chunk);
+                channel.sendStreamChunk(streamId, chunk, this.conversationId || undefined);
               }
             },
             onComplete: () => {
@@ -254,7 +255,7 @@ export class WorkerAgent extends AbstractAgent {
       }
 
       if (typeof channel.endStream === 'function') {
-        channel.endStream(streamId);
+        channel.endStream(streamId, this.conversationId || undefined);
       }
 
       // Save and report

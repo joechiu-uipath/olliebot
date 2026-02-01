@@ -180,7 +180,7 @@ export class WebChannel implements Channel {
   }
 
   // Streaming support
-  startStream(streamId: string, agentInfo?: { agentId?: string; agentName?: string; agentEmoji?: string }): void {
+  startStream(streamId: string, agentInfo?: { agentId?: string; agentName?: string; agentEmoji?: string; conversationId?: string }): void {
     const payload = {
       type: 'stream_start',
       id: streamId,
@@ -190,19 +190,21 @@ export class WebChannel implements Channel {
     this.broadcast(payload);
   }
 
-  sendStreamChunk(streamId: string, chunk: string): void {
+  sendStreamChunk(streamId: string, chunk: string, conversationId?: string): void {
     const payload = {
       type: 'stream_chunk',
       streamId,
       chunk,
+      conversationId,
     };
     this.broadcast(payload);
   }
 
-  endStream(streamId: string): void {
+  endStream(streamId: string, conversationId?: string): void {
     const payload = {
       type: 'stream_end',
       streamId,
+      conversationId,
       timestamp: new Date().toISOString(),
     };
     this.broadcast(payload);

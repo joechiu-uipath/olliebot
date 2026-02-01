@@ -5,6 +5,7 @@ import { WebSocketServer } from 'ws';
 import type { SupervisorAgent } from '../agents/types.js';
 import { WebChannel } from '../channels/index.js';
 import { getDb } from '../db/index.js';
+import { isWellKnownConversation, getWellKnownConversationMeta } from '../db/well-known-conversations.js';
 import type { MCPClient } from '../mcp/index.js';
 import type { SkillManager } from '../skills/index.js';
 import type { ToolRunner } from '../tools/index.js';
@@ -208,7 +209,27 @@ export class OllieBotServer {
       try {
         const db = getDb();
         const conversations = db.conversations.findAll({ limit: 50 });
-        res.json(conversations);
+
+        // Enhance conversations with well-known metadata and sort
+        const enhanced = conversations.map((c) => {
+          const wellKnownMeta = getWellKnownConversationMeta(c.id);
+          return {
+            ...c,
+            isWellKnown: !!wellKnownMeta,
+            icon: wellKnownMeta?.icon,
+            // Well-known conversations use their fixed title
+            title: wellKnownMeta?.title ?? c.title,
+          };
+        });
+
+        // Sort: well-known conversations first, then by updatedAt
+        enhanced.sort((a, b) => {
+          if (a.isWellKnown && !b.isWellKnown) return -1;
+          if (!a.isWellKnown && b.isWellKnown) return 1;
+          return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+        });
+
+        res.json(enhanced);
       } catch (error) {
         console.error('[API] Failed to fetch conversations:', error);
         res.status(500).json({ error: 'Failed to fetch conversations' });
@@ -229,8 +250,9 @@ export class OllieBotServer {
           agentEmoji: m.metadata?.agentEmoji,
           // Attachments
           attachments: m.metadata?.attachments,
-          // Task run metadata
+          // Message type (task_run, tool_event, delegation, etc.)
           messageType: m.metadata?.type,
+          // Task run metadata
           taskId: m.metadata?.taskId,
           taskName: m.metadata?.taskName,
           taskDescription: m.metadata?.taskDescription,
@@ -242,6 +264,11 @@ export class OllieBotServer {
           toolError: m.metadata?.error,
           toolParameters: m.metadata?.parameters,
           toolResult: m.metadata?.result,
+          // Delegation metadata
+          delegationAgentId: m.metadata?.agentId,
+          delegationAgentType: m.metadata?.agentType,
+          delegationMission: m.metadata?.mission,
+          delegationRationale: m.metadata?.rationale,
         })));
       } catch (error) {
         console.error('[API] Failed to fetch messages:', error);
@@ -274,11 +301,19 @@ export class OllieBotServer {
       }
     });
 
-    // Soft delete a conversation
+    // Soft delete a conversation (well-known conversations cannot be deleted)
     this.app.delete('/api/conversations/:id', (req: Request, res: Response) => {
       try {
+        const id = req.params.id as string;
+
+        // Prevent deletion of well-known conversations
+        if (isWellKnownConversation(id)) {
+          res.status(403).json({ error: 'Well-known conversations cannot be deleted' });
+          return;
+        }
+
         const db = getDb();
-        db.conversations.softDelete(req.params.id as string);
+        db.conversations.softDelete(id);
         res.json({ success: true });
       } catch (error) {
         console.error('[API] Failed to delete conversation:', error);
@@ -310,8 +345,9 @@ export class OllieBotServer {
           agentEmoji: m.metadata?.agentEmoji,
           // Attachments
           attachments: m.metadata?.attachments,
-          // Task run metadata
+          // Message type (task_run, tool_event, delegation, etc.)
           messageType: m.metadata?.type,
+          // Task run metadata
           taskId: m.metadata?.taskId,
           taskName: m.metadata?.taskName,
           taskDescription: m.metadata?.taskDescription,
@@ -323,6 +359,11 @@ export class OllieBotServer {
           toolError: m.metadata?.error,
           toolParameters: m.metadata?.parameters,
           toolResult: m.metadata?.result,
+          // Delegation metadata
+          delegationAgentId: m.metadata?.agentId,
+          delegationAgentType: m.metadata?.agentType,
+          delegationMission: m.metadata?.mission,
+          delegationRationale: m.metadata?.rationale,
         })));
       } catch (error) {
         console.error('[API] Failed to fetch messages:', error);

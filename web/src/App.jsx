@@ -59,8 +59,24 @@ function App() {
   const messagesEndRef = useRef(null);
   const messagesContainerRef = useRef(null);
 
+  // Ref to track current conversation ID for use in callbacks
+  const currentConversationIdRef = useRef(currentConversationId);
+  currentConversationIdRef.current = currentConversationId;
+
   const handleMessage = useCallback((data) => {
+    // Helper to check if message belongs to current conversation
+    const isForCurrentConversation = (msgConversationId) => {
+      // If no conversationId specified, assume it's for current conversation
+      if (!msgConversationId) return true;
+      // If no current conversation, accept all messages
+      if (!currentConversationIdRef.current) return true;
+      // Otherwise, check if it matches
+      return msgConversationId === currentConversationIdRef.current;
+    };
     if (data.type === 'message') {
+      // Only show messages for current conversation
+      if (!isForCurrentConversation(data.conversationId)) return;
+
       const messageId = data.id || `msg-${Date.now()}`;
       setMessages((prev) => {
         // Deduplicate by ID
@@ -82,6 +98,9 @@ function App() {
         ];
       });
     } else if (data.type === 'stream_start') {
+      // Only show streams for current conversation
+      if (!isForCurrentConversation(data.conversationId)) return;
+
       // Start a new streaming message
       setMessages((prev) => [
         ...prev,
@@ -96,6 +115,9 @@ function App() {
         },
       ]);
     } else if (data.type === 'stream_chunk') {
+      // Only process chunks for current conversation
+      if (!isForCurrentConversation(data.conversationId)) return;
+
       // Append chunk to streaming message
       setMessages((prev) =>
         prev.map((m) =>
@@ -105,6 +127,9 @@ function App() {
         )
       );
     } else if (data.type === 'stream_end') {
+      // Only process stream end for current conversation
+      if (!isForCurrentConversation(data.conversationId)) return;
+
       // Mark streaming as complete
       setMessages((prev) =>
         prev.map((m) =>
@@ -115,6 +140,9 @@ function App() {
       );
       setIsResponsePending(false);
     } else if (data.type === 'error') {
+      // Only show errors for current conversation
+      if (!isForCurrentConversation(data.conversationId)) return;
+
       const errorId = data.id || `err-${Date.now()}`;
       setMessages((prev) => {
         // Deduplicate by ID
@@ -139,6 +167,9 @@ function App() {
       // A2UI interaction request
       setPendingInteraction(data.request);
     } else if (data.type === 'tool_requested') {
+      // Only show tool requests for current conversation
+      if (!isForCurrentConversation(data.conversationId)) return;
+
       // Tool invocation - show compact system message
       const toolId = `tool-${data.requestId}`;
       setMessages((prev) => {
@@ -157,6 +188,9 @@ function App() {
         ];
       });
     } else if (data.type === 'tool_execution_finished') {
+      // Only process tool results for current conversation
+      if (!isForCurrentConversation(data.conversationId)) return;
+
       // Update tool message with result
       setMessages((prev) =>
         prev.map((m) =>
@@ -173,6 +207,9 @@ function App() {
         )
       );
     } else if (data.type === 'delegation') {
+      // Only show delegations for current conversation
+      if (!isForCurrentConversation(data.conversationId)) return;
+
       // Agent delegation event - show compact system message
       const delegationId = `delegation-${data.agentId}`;
       setMessages((prev) => {
@@ -213,11 +250,15 @@ function App() {
       setConversations((prev) => {
         // Don't add if already exists
         if (prev.some((c) => c.id === conv.id)) return prev;
-        return [{
+        const newConv = {
           id: conv.id,
           title: conv.title,
           updatedAt: conv.updatedAt,
-        }, ...prev];
+          isWellKnown: false,
+        };
+        // Insert after well-known conversations
+        const wellKnownCount = prev.filter((c) => c.isWellKnown).length;
+        return [...prev.slice(0, wellKnownCount), newConv, ...prev.slice(wellKnownCount)];
       });
       setCurrentConversationId(conv.id);
     } else if (data.type === 'conversation_updated') {
@@ -291,7 +332,12 @@ function App() {
   // Load current conversation messages
   const loadMessages = useCallback(async () => {
     try {
-      const res = await fetch('/api/messages?limit=50');
+      // Load messages for Feed well-known conversation by default
+      const res = await fetch('/api/conversations/:feed:/messages');
+      if (!res.ok) {
+        setMessages([]);
+        return;
+      }
       const data = await res.json();
       setMessages(
         data.map((msg) => {
@@ -301,6 +347,8 @@ function App() {
             role = 'task_run';
           } else if (msg.messageType === 'tool_event' || msg.role === 'tool') {
             role = 'tool';
+          } else if (msg.messageType === 'delegation') {
+            role = 'delegation';
           }
 
           return {
@@ -308,7 +356,7 @@ function App() {
             role,
             content: msg.content,
             timestamp: msg.createdAt,
-            agentName: msg.agentName,
+            agentName: msg.agentName || msg.delegationAgentId,
             agentEmoji: msg.agentEmoji,
             attachments: msg.attachments,
             // Task metadata
@@ -323,6 +371,9 @@ function App() {
             error: msg.toolError,
             parameters: msg.toolParameters,
             result: msg.toolResult,
+            // Delegation metadata
+            agentType: msg.delegationAgentType,
+            mission: msg.delegationMission,
           };
         })
       );
@@ -342,9 +393,15 @@ function App() {
         id: c.id,
         title: c.title,
         updatedAt: c.updatedAt || c.updated_at,
+        isWellKnown: c.isWellKnown || false,
+        icon: c.icon,
       }));
       setConversations(mapped);
-      if (mapped.length > 0) {
+      // Default to Feed well-known conversation on startup
+      const feedConversation = mapped.find(c => c.id === ':feed:');
+      if (feedConversation) {
+        setCurrentConversationId(feedConversation.id);
+      } else if (mapped.length > 0) {
         setCurrentConversationId(mapped[0].id);
       }
     } catch {
@@ -477,6 +534,12 @@ function App() {
     }, 500);
   }, []);
 
+  // Helper to insert a new conversation after well-known ones
+  const insertConversation = useCallback((prev, newConv) => {
+    const wellKnownCount = prev.filter((c) => c.isWellKnown).length;
+    return [...prev.slice(0, wellKnownCount), newConv, ...prev.slice(wellKnownCount)];
+  }, []);
+
   // Start a new conversation
   const handleNewConversation = useCallback(async () => {
     try {
@@ -489,11 +552,12 @@ function App() {
 
       if (res.ok) {
         const newConv = await res.json();
-        setConversations((prev) => [{
+        setConversations((prev) => insertConversation(prev, {
           id: newConv.id,
           title: newConv.title,
           updatedAt: newConv.updatedAt || new Date().toISOString(),
-        }, ...prev]);
+          isWellKnown: false,
+        }));
         setCurrentConversationId(newConv.id);
       }
 
@@ -509,15 +573,16 @@ function App() {
       console.error('Failed to create new conversation:', error);
       // Fallback to local-only
       const newId = `conv-${Date.now()}`;
-      setConversations((prev) => [{
+      setConversations((prev) => insertConversation(prev, {
         id: newId,
         title: 'New Conversation',
         updatedAt: new Date().toISOString(),
-      }, ...prev]);
+        isWellKnown: false,
+      }));
       setCurrentConversationId(newId);
       setMessages([]);
     }
-  }, [sendMessage]);
+  }, [sendMessage, insertConversation]);
 
   // Delete conversation (soft delete)
   const handleDeleteConversation = useCallback(async (convId, e) => {
@@ -549,6 +614,8 @@ function App() {
                     role = 'task_run';
                   } else if (msg.messageType === 'tool_event' || msg.role === 'tool') {
                     role = 'tool';
+                  } else if (msg.messageType === 'delegation') {
+                    role = 'delegation';
                   }
 
                   return {
@@ -556,7 +623,7 @@ function App() {
                     role,
                     content: msg.content,
                     timestamp: msg.createdAt || msg.created_at,
-                    agentName: msg.agentName,
+                    agentName: msg.agentName || msg.delegationAgentId,
                     agentEmoji: msg.agentEmoji,
                     attachments: msg.attachments,
                     taskId: msg.taskId,
@@ -569,6 +636,9 @@ function App() {
                     error: msg.toolError,
                     parameters: msg.toolParameters,
                     result: msg.toolResult,
+                    // Delegation metadata
+                    agentType: msg.delegationAgentType,
+                    mission: msg.delegationMission,
                   };
                 })
               );
@@ -619,6 +689,8 @@ function App() {
               role = 'task_run';
             } else if (msg.messageType === 'tool_event' || msg.role === 'tool') {
               role = 'tool';
+            } else if (msg.messageType === 'delegation') {
+              role = 'delegation';
             }
 
             return {
@@ -626,7 +698,7 @@ function App() {
               role,
               content: msg.content,
               timestamp: msg.createdAt || msg.created_at,
-              agentName: msg.agentName,
+              agentName: msg.agentName || msg.delegationAgentId,
               agentEmoji: msg.agentEmoji,
               attachments: msg.attachments,
               taskId: msg.taskId,
@@ -640,6 +712,9 @@ function App() {
               error: msg.toolError,
               parameters: msg.toolParameters,
               result: msg.toolResult,
+              // Delegation metadata
+              agentType: msg.delegationAgentType,
+              mission: msg.delegationMission,
             };
           })
         );
@@ -1080,32 +1155,38 @@ function App() {
             {!conversationsLoading && conversations.map((conv) => (
               <div
                 key={conv.id}
-                className={`conversation-item ${conv.id === currentConversationId ? 'active' : ''}`}
+                className={`conversation-item ${conv.id === currentConversationId ? 'active' : ''} ${conv.isWellKnown ? 'well-known' : ''}`}
                 onClick={() => handleSelectConversation(conv.id)}
               >
                 <div className="conversation-info">
-                  <div className="conversation-title">{conv.title}</div>
+                  <div className="conversation-title">
+                    {conv.icon && <span className="conversation-icon">{conv.icon}</span>}
+                    {conv.title}
+                  </div>
                   <div className="conversation-date">{formatDate(conv.updatedAt)}</div>
                 </div>
-                <div className="conversation-actions">
-                  <button
-                    className="actions-menu-btn"
-                    onClick={(e) => toggleActionsMenu(conv.id, e)}
-                    title="Actions"
-                  >
-                    ⋯
-                  </button>
-                  {openMenuId === conv.id && (
-                    <div className="actions-menu">
-                      <button
-                        className="actions-menu-item delete"
-                        onClick={(e) => handleDeleteConversation(conv.id, e)}
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  )}
-                </div>
+                {/* Hide actions menu for well-known conversations */}
+                {!conv.isWellKnown && (
+                  <div className="conversation-actions">
+                    <button
+                      className="actions-menu-btn"
+                      onClick={(e) => toggleActionsMenu(conv.id, e)}
+                      title="Actions"
+                    >
+                      ⋯
+                    </button>
+                    {openMenuId === conv.id && (
+                      <div className="actions-menu">
+                        <button
+                          className="actions-menu-item delete"
+                          onClick={(e) => handleDeleteConversation(conv.id, e)}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             ))}
 
