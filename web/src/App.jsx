@@ -19,9 +19,24 @@ import { BrowserPreview } from './components/BrowserPreview';
 
 // Code block component with copy button and language header
 // Memoized to prevent unnecessary re-renders
+// Uses deferred rendering for faster initial display
 const CodeBlock = memo(function CodeBlock({ language, children }) {
   const [copied, setCopied] = useState(false);
+  const [isReady, setIsReady] = useState(false);
   const hasLanguage = language && language !== 'text';
+
+  // Defer syntax highlighting until browser is idle
+  useEffect(() => {
+    const scheduleRender = window.requestIdleCallback || ((cb) => setTimeout(cb, 1));
+    const id = scheduleRender(() => setIsReady(true), { timeout: 100 });
+    return () => {
+      if (window.cancelIdleCallback) {
+        window.cancelIdleCallback(id);
+      } else {
+        clearTimeout(id);
+      }
+    };
+  }, []);
 
   const handleCopy = async () => {
     try {
@@ -47,19 +62,39 @@ const CodeBlock = memo(function CodeBlock({ language, children }) {
       >
         {copied ? '✓' : '⧉'}
       </button>
-      <SyntaxHighlighter
-        style={oneDark}
-        language={language || 'text'}
-        PreTag="div"
-        className="code-block-highlighted"
-        customStyle={{
-          margin: 0,
-          borderRadius: hasLanguage ? '0 0 6px 6px' : '6px',
-          fontSize: '13px',
-        }}
-      >
-        {children}
-      </SyntaxHighlighter>
+      {isReady ? (
+        <SyntaxHighlighter
+          style={oneDark}
+          language={language || 'text'}
+          PreTag="div"
+          className="code-block-highlighted"
+          customStyle={{
+            margin: 0,
+            borderRadius: hasLanguage ? '0 0 6px 6px' : '6px',
+            fontSize: '13px',
+          }}
+        >
+          {children}
+        </SyntaxHighlighter>
+      ) : (
+        <div
+          className="code-block-placeholder"
+          style={{
+            margin: 0,
+            padding: '1em',
+            borderRadius: hasLanguage ? '0 0 6px 6px' : '6px',
+            fontSize: '13px',
+            background: '#282c34',
+            color: '#abb2bf',
+            fontFamily: 'monospace',
+            whiteSpace: 'pre-wrap',
+            overflow: 'hidden',
+            maxHeight: '200px',
+          }}
+        >
+          {children}
+        </div>
+      )}
     </div>
   );
 });

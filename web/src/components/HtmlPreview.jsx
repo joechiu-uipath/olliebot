@@ -20,6 +20,7 @@ const HtmlPreview = memo(function HtmlPreview({ html, className = '', isStreamin
   const [viewMode, setViewMode] = useState(isStreaming ? 'raw' : 'preview');
   const [height, setHeight] = useState(DEFAULT_HEIGHT);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isReady, setIsReady] = useState(false);
   const prevStreamingRef = useRef(isStreaming);
   const codeRef = useRef(null);
   const iframeRef = useRef(null);
@@ -32,6 +33,19 @@ const HtmlPreview = memo(function HtmlPreview({ html, className = '', isStreamin
 
   const increaseHeight = () => setHeight((h) => h + HEIGHT_STEP);
   const decreaseHeight = () => setHeight((h) => Math.max(MIN_HEIGHT, h - HEIGHT_STEP));
+
+  // Defer heavy rendering until browser is idle
+  useEffect(() => {
+    const scheduleRender = window.requestIdleCallback || ((cb) => setTimeout(cb, 1));
+    const id = scheduleRender(() => setIsReady(true), { timeout: 100 });
+    return () => {
+      if (window.cancelIdleCallback) {
+        window.cancelIdleCallback(id);
+      } else {
+        clearTimeout(id);
+      }
+    };
+  }, []);
 
   // Auto-switch to preview when streaming ends
   useEffect(() => {
@@ -108,9 +122,9 @@ const HtmlPreview = memo(function HtmlPreview({ html, className = '', isStreamin
   }, []);
 
   // Update iframe content when in preview mode - only if html actually changed
-  // Also write if iframe is empty (e.g., after switching from raw mode)
+  // Also write if iframe is empty (e.g., after switching from raw mode or when isReady becomes true)
   useEffect(() => {
-    if (viewMode === 'preview') {
+    if (isReady && viewMode === 'preview') {
       const iframe = iframeRef.current;
       const needsWrite = html !== lastWrittenHtmlRef.current ||
         !iframe?.contentDocument?.body?.innerHTML;
@@ -119,11 +133,11 @@ const HtmlPreview = memo(function HtmlPreview({ html, className = '', isStreamin
         lastWrittenHtmlRef.current = html;
       }
     }
-  }, [viewMode, html, writeToIframe]);
+  }, [isReady, viewMode, html, writeToIframe]);
 
   // Update modal iframe content when fullscreen is open - only if html actually changed
   useEffect(() => {
-    if (isFullscreen && viewMode === 'preview') {
+    if (isReady && isFullscreen && viewMode === 'preview') {
       const iframe = modalIframeRef.current;
       const needsWrite = html !== lastWrittenModalHtmlRef.current ||
         !iframe?.contentDocument?.body?.innerHTML;
@@ -132,7 +146,7 @@ const HtmlPreview = memo(function HtmlPreview({ html, className = '', isStreamin
         lastWrittenModalHtmlRef.current = html;
       }
     }
-  }, [isFullscreen, viewMode, html, writeToIframe]);
+  }, [isReady, isFullscreen, viewMode, html, writeToIframe]);
 
   // Close modal on Escape key
   useEffect(() => {
@@ -196,7 +210,11 @@ const HtmlPreview = memo(function HtmlPreview({ html, className = '', isStreamin
       </div>
 
       <div className="html-preview-content" style={{ height: `${height}px` }}>
-        {effectiveViewMode === 'preview' ? (
+        {!isReady ? (
+          <div className="html-preview-placeholder">
+            <span className="html-preview-placeholder-text">Loading preview...</span>
+          </div>
+        ) : effectiveViewMode === 'preview' ? (
           <div className="html-preview-iframe-wrapper">
             <iframe
               ref={iframeRef}
