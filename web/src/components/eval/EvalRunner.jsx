@@ -1,8 +1,8 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, memo, useCallback } from 'react';
 import { EvalResults } from './EvalResults';
 import { EvalJsonEditor } from './EvalJsonEditor';
 
-export function EvalRunner({ evaluation, suite, viewingResults, onBack }) {
+export const EvalRunner = memo(function EvalRunner({ evaluation, suite, viewingResults, onBack }) {
   const [loading, setLoading] = useState(false);
   const [evalDetails, setEvalDetails] = useState(null);
   const [runConfig, setRunConfig] = useState({
@@ -199,9 +199,9 @@ export function EvalRunner({ evaluation, suite, viewingResults, onBack }) {
   };
 
   // Handle save from JSON editor
-  const handleSave = (updatedEval) => {
+  const handleSave = useCallback((updatedEval) => {
     setEvalDetails(updatedEval);
-  };
+  }, []);
 
   // Show results if available (from a fresh run)
   if (results) {
@@ -358,4 +358,4 @@ export function EvalRunner({ evaluation, suite, viewingResults, onBack }) {
       </div>
     </div>
   );
-}
+});

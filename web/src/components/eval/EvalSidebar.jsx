@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, memo, useCallback } from 'react';
 
-export function EvalSidebar({
+export const EvalSidebar = memo(function EvalSidebar({
   onSelectEvaluation,
   onSelectSuite,
   onSelectResult,
@@ -49,24 +49,27 @@ export function EvalSidebar({
     }
   };
 
-  const toggleSection = (section) => {
+  const toggleSection = useCallback((section) => {
     setExpandedSections(prev => ({
       ...prev,
       [section]: !prev[section],
     }));
-  };
+  }, []);
 
-  const toggleSuite = (suiteId) => {
+  const toggleSuite = useCallback((suiteId) => {
     setExpandedSuites(prev => ({
       ...prev,
       [suiteId]: !prev[suiteId],
     }));
-  };
+  }, []);
 
-  const handleSuiteClick = (suite, e) => {
+  const handleSuiteClick = useCallback((suite, e) => {
     // If clicking the expand icon, just toggle
     if (e.target.classList.contains('suite-expand-icon')) {
-      toggleSuite(suite.id);
+      setExpandedSuites(prev => ({
+        ...prev,
+        [suite.id]: !prev[suite.id],
+      }));
       return;
     }
     // Otherwise select the suite and expand it
@@ -75,9 +78,9 @@ export function EvalSidebar({
       ...prev,
       [suite.id]: true,
     }));
-  };
+  }, [onSelectSuite]);
 
-  const handleDeleteResult = async (result, e) => {
+  const handleDeleteResult = useCallback(async (result, e) => {
     e.stopPropagation();
 
     if (!confirm(`Delete result for "${result.evaluationName}"?`)) {
@@ -102,7 +105,7 @@ export function EvalSidebar({
     } catch (error) {
       console.error('Failed to delete result:', error);
     }
-  };
+  }, [selectedResult, onSelectResult]);
 
   // Count total evaluations across all suites
   const totalEvaluations = suites.reduce((sum, suite) => sum + (suite.evaluations?.length || 0), 0);
@@ -236,4 +239,4 @@ export function EvalSidebar({
       </div>
     </div>
   );
-}
+});

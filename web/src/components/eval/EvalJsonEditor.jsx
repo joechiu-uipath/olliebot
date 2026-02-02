@@ -1,8 +1,58 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, memo } from 'react';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 
-export function EvalJsonEditor({ evaluation, evalDetails, onSave }) {
+/**
+ * Memoized SyntaxHighlighter wrapper with deferred rendering
+ */
+const DeferredSyntaxHighlighter = memo(function DeferredSyntaxHighlighter({ language, children, customStyle }) {
+  const [isReady, setIsReady] = useState(false);
+
+  useEffect(() => {
+    const scheduleRender = window.requestIdleCallback || ((cb) => setTimeout(cb, 1));
+    const id = scheduleRender(() => setIsReady(true), { timeout: 100 });
+    return () => {
+      if (window.cancelIdleCallback) {
+        window.cancelIdleCallback(id);
+      } else {
+        clearTimeout(id);
+      }
+    };
+  }, []);
+
+  if (!isReady) {
+    return (
+      <pre style={{
+        ...customStyle,
+        color: '#d4d4d4',
+        whiteSpace: 'pre-wrap',
+        wordBreak: 'break-word',
+      }}>
+        {children}
+      </pre>
+    );
+  }
+
+  return (
+    <SyntaxHighlighter
+      language={language}
+      style={vscDarkPlus}
+      customStyle={customStyle}
+    >
+      {children}
+    </SyntaxHighlighter>
+  );
+});
+
+// Custom comparison for memo - checks if props are equal
+const areJsonEditorPropsEqual = (prevProps, nextProps) => {
+  if (prevProps.evaluation !== nextProps.evaluation) return false;
+  if (prevProps.evalDetails !== nextProps.evalDetails) return false;
+  if (prevProps.onSave !== nextProps.onSave) return false;
+  return true;
+};
+
+export const EvalJsonEditor = memo(function EvalJsonEditor({ evaluation, evalDetails, onSave }) {
   const [jsonText, setJsonText] = useState('');
   const [parseError, setParseError] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -236,9 +286,8 @@ export function EvalJsonEditor({ evaluation, evalDetails, onSave }) {
             <div className="eval-prompt-loading">Loading prompt...</div>
           ) : (
             <div className="eval-prompt-viewer">
-              <SyntaxHighlighter
+              <DeferredSyntaxHighlighter
                 language="markdown"
-                style={vscDarkPlus}
                 customStyle={{
                   margin: 0,
                   padding: '1rem',
@@ -251,7 +300,7 @@ export function EvalJsonEditor({ evaluation, evalDetails, onSave }) {
                 }}
               >
                 {promptContent || ''}
-              </SyntaxHighlighter>
+              </DeferredSyntaxHighlighter>
             </div>
           )
         ) : (
@@ -269,9 +318,8 @@ export function EvalJsonEditor({ evaluation, evalDetails, onSave }) {
 
             {/* Syntax highlighted preview overlay */}
             <div ref={previewRef} className="eval-json-preview" aria-hidden="true">
-              <SyntaxHighlighter
+              <DeferredSyntaxHighlighter
                 language="json"
-                style={vscDarkPlus}
                 customStyle={{
                   margin: 0,
                   padding: '1rem',
@@ -282,7 +330,7 @@ export function EvalJsonEditor({ evaluation, evalDetails, onSave }) {
                 }}
               >
                 {jsonText || ' '}
-              </SyntaxHighlighter>
+              </DeferredSyntaxHighlighter>
             </div>
           </>
         )}
@@ -340,4 +388,4 @@ export function EvalJsonEditor({ evaluation, evalDetails, onSave }) {
       )}
     </div>
   );
-}
+}, areJsonEditorPropsEqual);

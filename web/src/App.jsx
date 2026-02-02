@@ -1271,6 +1271,49 @@ function App() {
     return date.toLocaleDateString();
   };
 
+  // Eval mode handlers - memoized to prevent EvalSidebar re-renders
+  const handleSelectEvaluation = useCallback((evaluation) => {
+    setSelectedEvaluation(evaluation);
+    setSelectedSuite(null);
+    setSelectedResult(null);
+    setViewingResults(null);
+  }, []);
+
+  const handleSelectSuite = useCallback((suite) => {
+    setSelectedSuite(suite);
+    setSelectedEvaluation(null);
+    setSelectedResult(null);
+    setViewingResults(null);
+  }, []);
+
+  const handleSelectResult = useCallback(async (resultInfo) => {
+    if (!resultInfo) {
+      setSelectedResult(null);
+      setViewingResults(null);
+      return;
+    }
+    setSelectedResult(resultInfo);
+    setSelectedEvaluation(null);
+    setSelectedSuite(null);
+    // Fetch full result data
+    try {
+      const res = await fetch(`/api/eval/result/${encodeURIComponent(resultInfo.filePath)}`);
+      if (res.ok) {
+        const data = await res.json();
+        setViewingResults(data.result);
+      }
+    } catch (err) {
+      console.error('Failed to load result:', err);
+    }
+  }, []);
+
+  const handleEvalBack = useCallback(() => {
+    setSelectedEvaluation(null);
+    setSelectedSuite(null);
+    setSelectedResult(null);
+    setViewingResults(null);
+  }, []);
+
   // Handle browser session selection
   const handleSelectBrowserSession = useCallback((sessionId) => {
     setSelectedBrowserSessionId(sessionId);
@@ -1331,33 +1374,9 @@ function App() {
 
         {sidebarOpen && mode === MODES.EVAL && (
           <EvalSidebar
-            onSelectEvaluation={(evaluation) => {
-              setSelectedEvaluation(evaluation);
-              setSelectedSuite(null);
-              setSelectedResult(null);
-              setViewingResults(null);
-            }}
-            onSelectSuite={(suite) => {
-              setSelectedSuite(suite);
-              setSelectedEvaluation(null);
-              setSelectedResult(null);
-              setViewingResults(null);
-            }}
-            onSelectResult={async (resultInfo) => {
-              setSelectedResult(resultInfo);
-              setSelectedEvaluation(null);
-              setSelectedSuite(null);
-              // Fetch full result data
-              try {
-                const res = await fetch(`/api/eval/result/${encodeURIComponent(resultInfo.filePath)}`);
-                if (res.ok) {
-                  const data = await res.json();
-                  setViewingResults(data.result);
-                }
-              } catch (err) {
-                console.error('Failed to load result:', err);
-              }
-            }}
+            onSelectEvaluation={handleSelectEvaluation}
+            onSelectSuite={handleSelectSuite}
+            onSelectResult={handleSelectResult}
             selectedEvaluation={selectedEvaluation}
             selectedSuite={selectedSuite}
             selectedResult={selectedResult}
@@ -1742,12 +1761,7 @@ function App() {
               evaluation={selectedEvaluation}
               suite={selectedSuite}
               viewingResults={viewingResults}
-              onBack={() => {
-                setSelectedEvaluation(null);
-                setSelectedSuite(null);
-                setSelectedResult(null);
-                setViewingResults(null);
-              }}
+              onBack={handleEvalBack}
             />
           </main>
         )}
