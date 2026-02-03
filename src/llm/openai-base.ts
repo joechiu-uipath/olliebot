@@ -117,6 +117,10 @@ export abstract class OpenAIBaseProvider implements LLMProvider {
       requestBody.stop = options.stopSequences;
     }
 
+    if (options?.reasoningEffort) {
+      requestBody.reasoning_effort = options.reasoningEffort;
+    }
+
     const response = await this.fetchWithRetry(config.url, {
       method: 'POST',
       headers: config.headers,
@@ -170,6 +174,10 @@ export abstract class OpenAIBaseProvider implements LLMProvider {
 
     if (options?.stopSequences) {
       requestBody.stop = options.stopSequences;
+    }
+
+    if (options?.reasoningEffort) {
+      requestBody.reasoning_effort = options.reasoningEffort;
     }
 
     try {
@@ -282,6 +290,10 @@ export abstract class OpenAIBaseProvider implements LLMProvider {
       requestBody.stop = options.stopSequences;
     }
 
+    if (options?.reasoningEffort) {
+      requestBody.reasoning_effort = options.reasoningEffort;
+    }
+
     const response = await this.fetchWithRetry(config.url, {
       method: 'POST',
       headers: config.headers,
@@ -360,6 +372,10 @@ export abstract class OpenAIBaseProvider implements LLMProvider {
 
     if (options?.stopSequences) {
       requestBody.stop = options.stopSequences;
+    }
+
+    if (options?.reasoningEffort) {
+      requestBody.reasoning_effort = options.reasoningEffort;
     }
 
     const response = await this.fetchWithRetry(config.url, {

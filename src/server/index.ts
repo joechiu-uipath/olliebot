@@ -10,6 +10,7 @@ import type { MCPClient } from '../mcp/index.js';
 import type { SkillManager } from '../skills/index.js';
 import type { ToolRunner } from '../tools/index.js';
 import type { LLMService } from '../llm/service.js';
+import { getModelCapabilities } from '../llm/model-capabilities.js';
 import { setupEvalRoutes } from './eval-routes.js';
 import type { BrowserSessionManager } from '../browser/index.js';
 import type { TaskManager } from '../tasks/index.js';
@@ -23,6 +24,9 @@ export interface ServerConfig {
   llmService?: LLMService;
   browserManager?: BrowserSessionManager;
   taskManager?: TaskManager;
+  // LLM configuration for model capabilities endpoint
+  mainProvider?: string;
+  mainModel?: string;
 }
 
 export class OllieBotServer {
@@ -38,6 +42,8 @@ export class OllieBotServer {
   private llmService?: LLMService;
   private browserManager?: BrowserSessionManager;
   private taskManager?: TaskManager;
+  private mainProvider?: string;
+  private mainModel?: string;
 
   constructor(config: ServerConfig) {
     this.port = config.port;
@@ -48,6 +54,8 @@ export class OllieBotServer {
     this.llmService = config.llmService;
     this.browserManager = config.browserManager;
     this.taskManager = config.taskManager;
+    this.mainProvider = config.mainProvider;
+    this.mainModel = config.mainModel;
 
     // Create Express app
     this.app = express();
@@ -80,6 +88,177 @@ export class OllieBotServer {
     // Health check
     this.app.get('/health', (_req: Request, res: Response) => {
       res.json({ status: 'ok', timestamp: new Date().toISOString() });
+    });
+
+    // Get model capabilities (for reasoning mode support)
+    this.app.get('/api/model-capabilities', (_req: Request, res: Response) => {
+      const caps = getModelCapabilities(this.mainProvider || '', this.mainModel || '');
+      res.json({
+        provider: this.mainProvider,
+        model: this.mainModel,
+        ...caps,
+      });
+    });
+
+    // Consolidated startup endpoint - returns all data needed for initial page load
+    this.app.get('/api/startup', (_req: Request, res: Response) => {
+      try {
+        const db = getDb();
+
+        // 1. Model capabilities
+        const modelCaps = getModelCapabilities(this.mainProvider || '', this.mainModel || '');
+        const modelCapabilities = {
+          provider: this.mainProvider,
+          model: this.mainModel,
+          ...modelCaps,
+        };
+
+        // 2. Conversations
+        const rawConversations = db.conversations.findAll({ limit: 50 });
+        const conversations = rawConversations.map((c) => {
+          const wellKnownMeta = getWellKnownConversationMeta(c.id);
+          return {
+            ...c,
+            isWellKnown: !!wellKnownMeta,
+            icon: wellKnownMeta?.icon,
+            title: wellKnownMeta?.title ?? c.title,
+          };
+        });
+        conversations.sort((a, b) => {
+          if (a.isWellKnown && !b.isWellKnown) return -1;
+          if (!a.isWellKnown && b.isWellKnown) return 1;
+          return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+        });
+
+        // 3. Messages for default :feed: conversation
+        const rawMessages = db.messages.findByConversationId(':feed:');
+        const messages = rawMessages.map(m => ({
+          id: m.id,
+          role: m.role,
+          content: m.content,
+          createdAt: m.createdAt,
+          agentName: m.metadata?.agentName,
+          agentEmoji: m.metadata?.agentEmoji,
+          attachments: m.metadata?.attachments,
+          messageType: m.metadata?.type,
+          taskId: m.metadata?.taskId,
+          taskName: m.metadata?.taskName,
+          taskDescription: m.metadata?.taskDescription,
+          toolName: m.metadata?.toolName,
+          toolSource: m.metadata?.source,
+          toolSuccess: m.metadata?.success,
+          toolDurationMs: m.metadata?.durationMs,
+          toolError: m.metadata?.error,
+          toolParameters: m.metadata?.parameters,
+          toolResult: m.metadata?.result,
+          delegationAgentId: m.metadata?.agentId,
+          delegationAgentType: m.metadata?.agentType,
+          delegationMission: m.metadata?.mission,
+          delegationRationale: m.metadata?.rationale,
+          // Reasoning mode (vendor-neutral)
+          reasoningMode: m.metadata?.reasoningMode,
+        }));
+
+        // 4. Tasks
+        const rawTasks = db.tasks.findAll({ limit: 20 });
+        const tasks = rawTasks.map(t => {
+          const config = t.jsonConfig as { description?: string; trigger?: { schedule?: string } };
+          return {
+            id: t.id,
+            name: t.name,
+            description: config.description || '',
+            schedule: config.trigger?.schedule || null,
+            status: t.status,
+            lastRun: t.lastRun,
+            nextRun: t.nextRun,
+          };
+        });
+
+        // 5. Skills
+        const skills = this.skillManager
+          ? this.skillManager.getAllMetadata().map(skill => ({
+              id: skill.id,
+              name: skill.name,
+              description: skill.description,
+              location: skill.filePath,
+            }))
+          : [];
+
+        // 6. MCP servers
+        let mcps: Array<{ id: string; name: string; enabled: boolean; transport: string; toolCount: number }> = [];
+        if (this.mcpClient) {
+          const servers = this.mcpClient.getServers();
+          const mcpTools = this.mcpClient.getTools();
+          mcps = servers.map(server => ({
+            id: server.id,
+            name: server.name,
+            enabled: server.enabled,
+            transport: server.transport || (server.command ? 'stdio' : 'http'),
+            toolCount: mcpTools.filter(t => t.serverId === server.id).length,
+          }));
+        }
+
+        // 7. Tools (organized as tree structure)
+        interface ToolInfo {
+          name: string;
+          description: string;
+          inputs: Array<{ name: string; type: string; description: string; required: boolean }>;
+        }
+        const extractInputs = (schema: Record<string, unknown>): Array<{ name: string; type: string; description: string; required: boolean }> => {
+          const properties = schema.properties as Record<string, { type?: string; description?: string }> | undefined;
+          const required = (schema.required as string[]) || [];
+          if (!properties) return [];
+          return Object.entries(properties).map(([name, prop]) => ({
+            name,
+            type: String(prop.type || 'any'),
+            description: prop.description || '',
+            required: required.includes(name),
+          }));
+        };
+
+        const builtin: ToolInfo[] = [];
+        const user: ToolInfo[] = [];
+        const mcp: Record<string, ToolInfo[]> = {};
+
+        if (this.toolRunner) {
+          const allTools = this.toolRunner.getToolsForLLM();
+          const mcpServers = this.mcpClient?.getServers() || [];
+          const serverNames: Record<string, string> = {};
+          for (const server of mcpServers) {
+            serverNames[server.id] = server.name;
+          }
+
+          for (const tool of allTools) {
+            const toolName = tool.name;
+            const inputs = extractInputs(tool.input_schema);
+
+            if (toolName.startsWith('user__')) {
+              user.push({ name: toolName.replace('user__', ''), description: tool.description, inputs });
+            } else if (toolName.startsWith('native__')) {
+              builtin.push({ name: toolName.replace('native__', ''), description: tool.description, inputs });
+            } else if (toolName.includes('__')) {
+              const [serverId, ...rest] = toolName.split('__');
+              const mcpToolName = rest.join('__');
+              const serverName = serverNames[serverId] || serverId;
+              if (!mcp[serverName]) mcp[serverName] = [];
+              mcp[serverName].push({ name: mcpToolName, description: tool.description, inputs });
+            }
+          }
+        }
+
+        res.json({
+          modelCapabilities,
+          conversations,
+          messages,
+          tasks,
+          skills,
+          mcps,
+          tools: { builtin, user, mcp },
+        });
+      } catch (error) {
+        console.error('[API] Startup data fetch failed:', error);
+        res.status(500).json({ error: 'Failed to fetch startup data' });
+      }
     });
 
     // Get agent state
@@ -274,6 +453,8 @@ export class OllieBotServer {
           delegationAgentType: m.metadata?.agentType,
           delegationMission: m.metadata?.mission,
           delegationRationale: m.metadata?.rationale,
+          // Reasoning mode (vendor-neutral)
+          reasoningMode: m.metadata?.reasoningMode,
         })));
       } catch (error) {
         console.error('[API] Failed to fetch messages:', error);

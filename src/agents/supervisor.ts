@@ -115,7 +115,7 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
           await this.handleDelegation(delegationMatch[1], message, channel);
         } else {
           await this.sendToChannel(channel, response, { markdown: true });
-          this.saveAssistantMessage(message.channel, response);
+          this.saveAssistantMessage(message.channel, response, message.metadata?.reasoningMode as string | undefined);
         }
       }
     } catch (error) {
@@ -344,15 +344,16 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
 
       // Check for delegation in complete response
       const delegationMatch = fullResponse.match(/```delegate\s*([\s\S]*?)```/);
+      const reasoningMode = message.metadata?.reasoningMode as string | undefined;
       if (delegationMatch) {
         // Remove the delegation block from saved response (it's not useful for conversation history)
         const cleanedResponse = fullResponse.replace(/```delegate\s*[\s\S]*?```/, '').trim();
         if (cleanedResponse) {
-          this.saveAssistantMessage(message.channel, cleanedResponse);
+          this.saveAssistantMessage(message.channel, cleanedResponse, reasoningMode);
         }
         await this.handleDelegation(delegationMatch[1], message, channel);
       } else {
-        this.saveAssistantMessage(message.channel, fullResponse);
+        this.saveAssistantMessage(message.channel, fullResponse, reasoningMode);
       }
     } catch (error) {
       channel.endStream!(streamId, this.currentConversationId || undefined);
@@ -711,13 +712,17 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
     }
   }
 
-  private saveAssistantMessage(channelId: string, content: string): void {
+  private saveAssistantMessage(channelId: string, content: string, reasoningMode?: string): void {
     const message: Message = {
       id: uuid(),
       channel: channelId,
       role: 'assistant',
       content,
-      metadata: { agentId: this.identity.id, agentName: this.identity.name },
+      metadata: {
+        agentId: this.identity.id,
+        agentName: this.identity.name,
+        ...(reasoningMode && { reasoningMode }),
+      },
       createdAt: new Date(),
     };
     this.conversationHistory.push(message);

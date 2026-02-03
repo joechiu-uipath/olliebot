@@ -617,6 +617,8 @@ async function main(): Promise<void> {
       llmService,
       browserManager,
       taskManager,
+      mainProvider: CONFIG.mainProvider,
+      mainModel: CONFIG.mainModel,
     });
     await server.start();
 

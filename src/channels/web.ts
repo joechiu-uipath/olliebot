@@ -80,6 +80,7 @@ export class WebChannel implements Channel {
       requestId?: string;
       sessionId?: string;
       attachments?: Array<{ name: string; type: string; size: number; data: string }>;
+      reasoningEffort?: 'medium' | 'high' | 'xhigh';
     };
 
     if (msg.type === 'message' && (msg.content || msg.attachments?.length) && this.messageHandler) {
@@ -89,7 +90,12 @@ export class WebChannel implements Channel {
         role: 'user',
         content: msg.content || '',
         attachments: msg.attachments,
-        metadata: { clientId, conversationId: msg.conversationId },
+        metadata: {
+          clientId,
+          conversationId: msg.conversationId,
+          // Store as vendor-neutral 'reasoningMode' in DB (mapped from client's reasoningEffort)
+          reasoningMode: msg.reasoningEffort,
+        },
         createdAt: new Date(),
       };
       await this.messageHandler(message);

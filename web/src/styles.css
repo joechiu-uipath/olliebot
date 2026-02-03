@@ -883,6 +883,37 @@ html, body {
   color: var(--text-secondary);
 }
 
+/* Message reasoning mode chip */
+.message-reasoning-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.125rem 0.5rem;
+  margin-top: 0.5rem;
+  background: rgba(233, 69, 96, 0.15);
+  border: 1px solid var(--accent);
+  border-radius: 1rem;
+  font-size: 0.7rem;
+}
+
+.message.user .message-reasoning-chip {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+.reasoning-chip-icon {
+  font-size: 0.75rem;
+}
+
+.reasoning-chip-label {
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.message.user .reasoning-chip-label {
+  color: rgba(255, 255, 255, 0.9);
+}
+
 /* Typing indicator - 3 bouncing dots */
 .typing-indicator {
   display: inline-flex;
@@ -1397,6 +1428,87 @@ html, body {
 .attachment-remove:hover {
   background: var(--error);
   color: white;
+}
+
+/* Hashtag reasoning mode chip (accent color, distinct from attachment chips) */
+.hashtag-chip {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.25rem 0.5rem;
+  background: rgba(233, 69, 96, 0.15);
+  border: 1px solid var(--accent);
+  border-radius: 1rem;
+  font-size: 0.75rem;
+  max-width: 120px;
+}
+
+.hashtag-chip-icon {
+  flex-shrink: 0;
+}
+
+.hashtag-chip-label {
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.hashtag-chip-remove {
+  flex-shrink: 0;
+  width: 1.25rem;
+  height: 1.25rem;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--accent);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s, color 0.2s;
+}
+
+.hashtag-chip-remove:hover {
+  background: var(--accent);
+  color: white;
+}
+
+/* Hashtag context menu */
+.hashtag-menu {
+  position: fixed;
+  z-index: 1000;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 0.5rem;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  padding: 0.25rem 0;
+  min-width: 180px;
+  transform: translateY(-100%);
+}
+
+.hashtag-menu-item {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  padding: 0.5rem 0.75rem;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
+  gap: 0.125rem;
+}
+
+.hashtag-menu-item:hover,
+.hashtag-menu-item.selected {
+  background: var(--bg-tertiary);
+}
+
+.hashtag-menu-item-desc {
+  font-size: 0.7rem;
+  color: var(--text-secondary);
 }
 
 .input-container button[type="submit"] {

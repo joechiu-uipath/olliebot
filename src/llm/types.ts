@@ -45,6 +45,9 @@ export interface LLMOptions {
     input_schema: Record<string, unknown>;
   }>;
   toolChoice?: 'auto' | 'none' | { type: 'tool'; name: string };
+  // Reasoning effort (for models that support it)
+  // See: https://platform.openai.com/docs/guides/reasoning
+  reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
 }
 
 export interface LLMResponse {

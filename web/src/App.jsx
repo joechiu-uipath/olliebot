@@ -162,6 +162,10 @@ const MessageContent = memo(function MessageContent({ content, html = false, isS
   );
 });
 
+// Module-level flag to prevent double-fetching in React Strict Mode
+// (Strict Mode unmounts/remounts component, so refs don't persist)
+let appInitialLoadDone = false;
+
 function App() {
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
@@ -223,8 +227,16 @@ function App() {
   // Response pending state (disable input while waiting)
   const [isResponsePending, setIsResponsePending] = useState(false);
 
+  // Reasoning mode state
+  const [reasoningMode, setReasoningMode] = useState(null); // null | 'high' | 'xhigh'
+  const [hashtagMenuOpen, setHashtagMenuOpen] = useState(false);
+  const [hashtagMenuPosition, setHashtagMenuPosition] = useState({ top: 0, left: 0 });
+  const [modelCapabilities, setModelCapabilities] = useState({ reasoningEfforts: [] });
+  const [hashtagMenuIndex, setHashtagMenuIndex] = useState(0);
+
   const messagesEndRef = useRef(null);
   const messagesContainerRef = useRef(null);
+  const textareaRef = useRef(null);
 
   // Ref to track current conversation ID for use in callbacks
   const currentConversationIdRef = useRef(currentConversationId);
@@ -269,18 +281,23 @@ function App() {
       if (!isForCurrentConversation(data.conversationId)) return;
 
       // Start a new streaming message
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: data.id,
-          role: 'assistant',
-          content: '',
-          timestamp: data.timestamp,
-          isStreaming: true,
-          agentName: data.agentName,
-          agentEmoji: data.agentEmoji,
-        },
-      ]);
+      setMessages((prev) => {
+        // Find the most recent user message to get reasoning mode
+        const lastUserMsg = [...prev].reverse().find(m => m.role === 'user');
+        return [
+          ...prev,
+          {
+            id: data.id,
+            role: 'assistant',
+            content: '',
+            timestamp: data.timestamp,
+            isStreaming: true,
+            agentName: data.agentName,
+            agentEmoji: data.agentEmoji,
+            reasoningMode: lastUserMsg?.reasoningMode || null,
+          },
+        ];
+      });
     } else if (data.type === 'stream_chunk') {
       // Only process chunks for current conversation
       if (!isForCurrentConversation(data.conversationId)) return;
@@ -504,137 +521,108 @@ function App() {
     }
   }, []);
 
-  // Load current conversation messages
-  const loadMessages = useCallback(async () => {
-    try {
-      // Load messages for Feed well-known conversation by default
-      const res = await fetch('/api/conversations/:feed:/messages');
-      if (!res.ok) {
-        setMessages([]);
-        return;
+  // Helper to transform message data from API format
+  const transformMessages = useCallback((data) => {
+    return data.map((msg) => {
+      // Determine the role based on message type
+      let role = msg.role;
+      if (msg.messageType === 'task_run') {
+        role = 'task_run';
+      } else if (msg.messageType === 'tool_event' || msg.role === 'tool') {
+        role = 'tool';
+      } else if (msg.messageType === 'delegation') {
+        role = 'delegation';
       }
-      const data = await res.json();
-      setMessages(
-        data.map((msg) => {
-          // Determine the role based on message type
-          let role = msg.role;
-          if (msg.messageType === 'task_run') {
-            role = 'task_run';
-          } else if (msg.messageType === 'tool_event' || msg.role === 'tool') {
-            role = 'tool';
-          } else if (msg.messageType === 'delegation') {
-            role = 'delegation';
-          }
 
-          return {
-            id: msg.id,
-            role,
-            content: msg.content,
-            timestamp: msg.createdAt,
-            agentName: msg.agentName || msg.delegationAgentId,
-            agentEmoji: msg.agentEmoji,
-            attachments: msg.attachments,
-            // Task metadata
-            taskId: msg.taskId,
-            taskName: msg.taskName,
-            taskDescription: msg.taskDescription,
-            // Tool event metadata
-            toolName: msg.toolName,
-            source: msg.toolSource,
-            status: msg.toolSuccess === true ? 'completed' : msg.toolSuccess === false ? 'failed' : undefined,
-            durationMs: msg.toolDurationMs,
-            error: msg.toolError,
-            parameters: msg.toolParameters,
-            result: msg.toolResult,
-            // Delegation metadata
-            agentType: msg.delegationAgentType,
-            mission: msg.delegationMission,
-          };
-        })
-      );
-    } catch (error) {
-      console.error('Failed to load messages:', error);
-    }
+      return {
+        id: msg.id,
+        role,
+        content: msg.content,
+        timestamp: msg.createdAt,
+        agentName: msg.agentName || msg.delegationAgentId,
+        agentEmoji: msg.agentEmoji,
+        attachments: msg.attachments,
+        // Task metadata
+        taskId: msg.taskId,
+        taskName: msg.taskName,
+        taskDescription: msg.taskDescription,
+        // Tool event metadata
+        toolName: msg.toolName,
+        source: msg.toolSource,
+        status: msg.toolSuccess === true ? 'completed' : msg.toolSuccess === false ? 'failed' : undefined,
+        durationMs: msg.toolDurationMs,
+        error: msg.toolError,
+        parameters: msg.toolParameters,
+        result: msg.toolResult,
+        // Delegation metadata
+        agentType: msg.delegationAgentType,
+        mission: msg.delegationMission,
+        // Reasoning mode (from DB, vendor-neutral)
+        reasoningMode: msg.reasoningMode,
+      };
+    });
   }, []);
 
-  // Load conversation history
-  const loadConversations = useCallback(async () => {
+  // Load all startup data in a single request
+  const loadStartupData = useCallback(async () => {
     try {
-      const res = await fetch('/api/conversations');
-      if (!res.ok) throw new Error('API not available');
+      const res = await fetch('/api/startup');
+      if (!res.ok) throw new Error('Startup API not available');
       const data = await res.json();
-      // Map API response to consistent format
-      const mapped = data.map(c => ({
+
+      // Model capabilities
+      setModelCapabilities(data.modelCapabilities);
+
+      // Conversations
+      const mappedConversations = data.conversations.map(c => ({
         id: c.id,
         title: c.title,
         updatedAt: c.updatedAt || c.updated_at,
         isWellKnown: c.isWellKnown || false,
         icon: c.icon,
       }));
-      setConversations(mapped);
-      // Default to Feed well-known conversation on startup
-      const feedConversation = mapped.find(c => c.id === ':feed:');
+      setConversations(mappedConversations);
+
+      // Set default conversation
+      const feedConversation = mappedConversations.find(c => c.id === ':feed:');
       if (feedConversation) {
         setCurrentConversationId(feedConversation.id);
-      } else if (mapped.length > 0) {
-        setCurrentConversationId(mapped[0].id);
+      } else if (mappedConversations.length > 0) {
+        setCurrentConversationId(mappedConversations[0].id);
       }
-    } catch {
-      // API might not exist yet, use empty state
+
+      // Messages
+      setMessages(transformMessages(data.messages));
+
+      // Sidebar data
+      setAgentTasks(data.tasks);
+      setSkills(data.skills);
+      setMcps(data.mcps);
+      setTools(data.tools);
+    } catch (error) {
+      console.error('Failed to load startup data:', error);
+      // Set empty states on failure
       setConversations([]);
       setCurrentConversationId(null);
+      setMessages([]);
     } finally {
       setConversationsLoading(false);
       setShowSkeleton(false);
     }
-  }, []);
+  }, [transformMessages]);
 
-  // Load agent tasks, skills, MCPs, and tools
-  const loadSidebarData = useCallback(async () => {
-    try {
-      const [tasksRes, skillsRes, mcpsRes, toolsRes] = await Promise.all([
-        fetch('/api/tasks').catch(() => ({ ok: false })),
-        fetch('/api/skills').catch(() => ({ ok: false })),
-        fetch('/api/mcps').catch(() => ({ ok: false })),
-        fetch('/api/tools').catch(() => ({ ok: false })),
-      ]);
-
-      if (tasksRes.ok) {
-        const tasks = await tasksRes.json();
-        setAgentTasks(tasks);
-      }
-
-      if (skillsRes.ok) {
-        const skillsData = await skillsRes.json();
-        setSkills(skillsData);
-      }
-
-      if (mcpsRes.ok) {
-        const mcpsData = await mcpsRes.json();
-        setMcps(mcpsData);
-      }
-
-      if (toolsRes.ok) {
-        const toolsData = await toolsRes.json();
-        setTools(toolsData);
-      }
-    } catch {
-      // APIs might not be available
-    }
-  }, []);
-
-  // Refresh all data (called on reconnect)
-  const refreshAllData = useCallback(() => {
-    loadMessages();
-    loadConversations();
-    loadSidebarData();
-  }, [loadMessages, loadConversations, loadSidebarData]);
+  // Track if this is the first connection (to avoid refreshing on initial connect)
+  const hasConnectedOnce = useRef(false);
 
   const handleOpen = useCallback(() => {
     setIsConnected(true);
-    // Refresh all data when connection is (re)established
-    refreshAllData();
-  }, [refreshAllData]);
+    // Only refresh data on REconnection, not initial connection
+    // (initial data load is handled by the mount useEffect)
+    if (hasConnectedOnce.current) {
+      loadStartupData();
+    }
+    hasConnectedOnce.current = true;
+  }, [loadStartupData]);
   const handleClose = useCallback(() => setIsConnected(false), []);
 
   const { sendMessage, connectionState } = useWebSocket({
@@ -643,19 +631,22 @@ function App() {
     onClose: handleClose,
   });
 
-  // Load history and conversations on mount (async, non-blocking)
+  // Load all startup data on mount (single consolidated API call)
   useEffect(() => {
+    // Guard against React Strict Mode double-invocation
+    if (appInitialLoadDone) return;
+    appInitialLoadDone = true;
+
     // Show skeleton after 500ms if still loading
     const skeletonTimer = setTimeout(() => {
       setShowSkeleton(true);
     }, 500);
 
-    loadMessages();
-    loadConversations().finally(() => clearTimeout(skeletonTimer));
-    loadSidebarData();
+    loadStartupData().finally(() => clearTimeout(skeletonTimer));
 
     return () => clearTimeout(skeletonTimer);
-  }, [loadMessages, loadConversations, loadSidebarData]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Smart auto-scroll - only scroll if user hasn't manually scrolled up
   // Uses instant scroll (not smooth) so it doesn't create ongoing animations that fight with user input
@@ -782,41 +773,7 @@ function App() {
             const msgRes = await fetch(`/api/conversations/${remaining[0].id}/messages`);
             if (msgRes.ok) {
               const data = await msgRes.json();
-              setMessages(
-                data.map((msg) => {
-                  let role = msg.role;
-                  if (msg.messageType === 'task_run') {
-                    role = 'task_run';
-                  } else if (msg.messageType === 'tool_event' || msg.role === 'tool') {
-                    role = 'tool';
-                  } else if (msg.messageType === 'delegation') {
-                    role = 'delegation';
-                  }
-
-                  return {
-                    id: msg.id,
-                    role,
-                    content: msg.content,
-                    timestamp: msg.createdAt || msg.created_at,
-                    agentName: msg.agentName || msg.delegationAgentId,
-                    agentEmoji: msg.agentEmoji,
-                    attachments: msg.attachments,
-                    taskId: msg.taskId,
-                    taskName: msg.taskName,
-                    taskDescription: msg.taskDescription,
-                    toolName: msg.toolName,
-                    source: msg.toolSource,
-                    status: msg.toolSuccess === true ? 'completed' : msg.toolSuccess === false ? 'failed' : undefined,
-                    durationMs: msg.toolDurationMs,
-                    error: msg.toolError,
-                    parameters: msg.toolParameters,
-                    result: msg.toolResult,
-                    // Delegation metadata
-                    agentType: msg.delegationAgentType,
-                    mission: msg.delegationMission,
-                  };
-                })
-              );
+              setMessages(transformMessages(data));
             }
           } else {
             setCurrentConversationId(null);
@@ -914,6 +871,15 @@ function App() {
     }
   }, [openMenuId]);
 
+  // Close hashtag menu when clicking outside
+  useEffect(() => {
+    const handleClickOutside = () => setHashtagMenuOpen(false);
+    if (hashtagMenuOpen) {
+      document.addEventListener('click', handleClickOutside);
+      return () => document.removeEventListener('click', handleClickOutside);
+    }
+  }, [hashtagMenuOpen]);
+
   // Switch conversation
   const handleSelectConversation = useCallback(async (convId) => {
     if (convId === currentConversationId) return;
@@ -926,43 +892,7 @@ function App() {
       const res = await fetch(`/api/conversations/${convId}/messages`);
       if (res.ok) {
         const data = await res.json();
-        setMessages(
-          data.map((msg) => {
-            // Determine the role based on message type
-            let role = msg.role;
-            if (msg.messageType === 'task_run') {
-              role = 'task_run';
-            } else if (msg.messageType === 'tool_event' || msg.role === 'tool') {
-              role = 'tool';
-            } else if (msg.messageType === 'delegation') {
-              role = 'delegation';
-            }
-
-            return {
-              id: msg.id,
-              role,
-              content: msg.content,
-              timestamp: msg.createdAt || msg.created_at,
-              agentName: msg.agentName || msg.delegationAgentId,
-              agentEmoji: msg.agentEmoji,
-              attachments: msg.attachments,
-              taskId: msg.taskId,
-              taskName: msg.taskName,
-              taskDescription: msg.taskDescription,
-              // Tool event metadata
-              toolName: msg.toolName,
-              source: msg.toolSource,
-              status: msg.toolSuccess === true ? 'completed' : msg.toolSuccess === false ? 'failed' : undefined,
-              durationMs: msg.toolDurationMs,
-              error: msg.toolError,
-              parameters: msg.toolParameters,
-              result: msg.toolResult,
-              // Delegation metadata
-              agentType: msg.delegationAgentType,
-              mission: msg.delegationMission,
-            };
-          })
-        );
+        setMessages(transformMessages(data));
       } else {
         setMessages([]);
       }
@@ -1005,18 +935,21 @@ function App() {
       content: input,
       attachments: attachments.map(f => ({ name: f.name, type: f.type, size: f.size })),
       timestamp: new Date().toISOString(),
+      reasoningMode: reasoningMode, // Track reasoning mode used for this message
     };
     setMessages((prev) => [...prev, userMessage]);
 
-    // Send via WebSocket with conversation ID and attachments
+    // Send via WebSocket with conversation ID, attachments, and reasoning effort
     sendMessage({
       type: 'message',
       content: input,
       attachments: processedAttachments,
-      conversationId: currentConversationId
+      conversationId: currentConversationId,
+      reasoningEffort: reasoningMode,
     });
     setInput('');
     setAttachments([]);
+    setReasoningMode(null);
     setIsResponsePending(true);
   };
 
@@ -1078,15 +1011,86 @@ function App() {
     setAttachments((prev) => prev.filter((_, i) => i !== index));
   }, []);
 
+  // Handle input change - detect # trigger for reasoning mode menu
+  const handleInputChange = useCallback((e) => {
+    const newValue = e.target.value;
+    const cursorPos = e.target.selectionStart;
+
+    // Check if user just typed # at start or after a space
+    if (newValue.length > input.length && modelCapabilities.reasoningEfforts?.length > 0) {
+      const charJustTyped = newValue[cursorPos - 1];
+      const charBefore = cursorPos > 1 ? newValue[cursorPos - 2] : '';
+
+      if (charJustTyped === '#' && (cursorPos === 1 || charBefore === ' ' || charBefore === '\n')) {
+        // Calculate position for menu
+        const textarea = textareaRef.current;
+        if (textarea) {
+          const rect = textarea.getBoundingClientRect();
+          setHashtagMenuPosition({
+            top: rect.top - 8, // Position above the textarea
+            left: rect.left + 12,
+          });
+          setHashtagMenuOpen(true);
+          setHashtagMenuIndex(0);
+        }
+      }
+    }
+
+    setInput(newValue);
+  }, [input, modelCapabilities.reasoningEfforts]);
+
+  // Handle reasoning mode selection
+  const handleSelectReasoningMode = useCallback((mode) => {
+    setReasoningMode(mode);
+    setHashtagMenuOpen(false);
+    // Remove the # from input
+    const cursorPos = textareaRef.current?.selectionStart || 0;
+    setInput(prev => {
+      // Find the # before cursor and remove it
+      const before = prev.slice(0, cursorPos);
+      const after = prev.slice(cursorPos);
+      const hashIndex = before.lastIndexOf('#');
+      if (hashIndex >= 0) {
+        return before.slice(0, hashIndex) + after;
+      }
+      return prev;
+    });
+    textareaRef.current?.focus();
+  }, []);
+
   // Handle textarea key down (submit on Enter, newline on Shift+Enter)
   const handleKeyDown = useCallback((e) => {
+    // Handle hashtag menu navigation
+    if (hashtagMenuOpen) {
+      const availableModes = modelCapabilities.reasoningEfforts || [];
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        setHashtagMenuIndex(prev => Math.min(prev + 1, availableModes.length - 1));
+        return;
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        setHashtagMenuIndex(prev => Math.max(prev - 1, 0));
+        return;
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        if (availableModes[hashtagMenuIndex]) {
+          handleSelectReasoningMode(availableModes[hashtagMenuIndex]);
+        }
+        return;
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        setHashtagMenuOpen(false);
+        return;
+      }
+    }
+
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       if (input.trim() || attachments.length > 0) {
         handleSubmit(e);
       }
     }
-  }, [input, attachments]);
+  }, [input, attachments, hashtagMenuOpen, hashtagMenuIndex, modelCapabilities.reasoningEfforts, handleSelectReasoningMode]);
 
   const handleAction = (action, data) => {
     sendMessage({ type: 'action', action, data, conversationId: currentConversationId });
@@ -1874,6 +1878,14 @@ function App() {
                     ))}
                   </div>
                 )}
+                {msg.reasoningMode && (
+                  <div className="message-reasoning-chip">
+                    <span className="reasoning-chip-icon">🧠</span>
+                    <span className="reasoning-chip-label">
+                      {msg.reasoningMode === 'xhigh' ? 'Think+' : 'Think'}
+                    </span>
+                  </div>
+                )}
                 {msg.isStreaming && !msg.content && (
                   <span className="typing-indicator">
                     <span className="dot"></span>
@@ -2013,9 +2025,10 @@ function App() {
               onDragOver={handleDragOver}
               onDragLeave={handleDragLeave}
             >
-              {/* Attachment chips */}
-              {attachments.length > 0 && (
+              {/* Chips bar - show if attachments OR reasoning mode */}
+              {(attachments.length > 0 || reasoningMode) && (
                 <div className="attachments-bar">
+                  {/* Attachment chips first */}
                   {attachments.map((file, index) => (
                     <div key={index} className="attachment-chip">
                       <span className="attachment-icon">
@@ -2034,14 +2047,65 @@ function App() {
                       </button>
                     </div>
                   ))}
+
+                  {/* Reasoning mode chip last, accent color */}
+                  {reasoningMode && (
+                    <div className="hashtag-chip">
+                      <span className="hashtag-chip-icon">🧠</span>
+                      <span className="hashtag-chip-label">
+                        {reasoningMode === 'xhigh' ? 'Think+' : 'Think'}
+                      </span>
+                      <button
+                        type="button"
+                        className="hashtag-chip-remove"
+                        onClick={() => setReasoningMode(null)}
+                        title="Remove reasoning mode"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  )}
                 </div>
               )}
+
+              {/* Hashtag context menu */}
+              {hashtagMenuOpen && (
+                <div
+                  className="hashtag-menu"
+                  style={{ top: hashtagMenuPosition.top, left: hashtagMenuPosition.left }}
+                >
+                  {modelCapabilities.reasoningEfforts?.includes('high') && (
+                    <button
+                      type="button"
+                      className={`hashtag-menu-item ${hashtagMenuIndex === 0 ? 'selected' : ''}`}
+                      onClick={() => handleSelectReasoningMode('high')}
+                      onMouseEnter={() => setHashtagMenuIndex(0)}
+                    >
+                      <span>🧠 Think</span>
+                      <span className="hashtag-menu-item-desc">High effort reasoning</span>
+                    </button>
+                  )}
+                  {modelCapabilities.reasoningEfforts?.includes('xhigh') && (
+                    <button
+                      type="button"
+                      className={`hashtag-menu-item ${hashtagMenuIndex === (modelCapabilities.reasoningEfforts?.includes('high') ? 1 : 0) ? 'selected' : ''}`}
+                      onClick={() => handleSelectReasoningMode('xhigh')}
+                      onMouseEnter={() => setHashtagMenuIndex(modelCapabilities.reasoningEfforts?.includes('high') ? 1 : 0)}
+                    >
+                      <span>🧠 Think+</span>
+                      <span className="hashtag-menu-item-desc">Maximum effort reasoning</span>
+                    </button>
+                  )}
+                </div>
+              )}
+
               <textarea
+                ref={textareaRef}
                 value={input}
-                onChange={(e) => setInput(e.target.value)}
+                onChange={handleInputChange}
                 onKeyDown={handleKeyDown}
                 onPaste={handlePaste}
-                placeholder={isResponsePending ? "Waiting for response..." : "Type a message... (Shift+Enter for new line, drag & drop or paste images)"}
+                placeholder={isResponsePending ? "Waiting for response..." : "Type a message... (Shift + Enter for new line)"}
                 disabled={!isConnected || isResponsePending}
                 rows={3}
               />
