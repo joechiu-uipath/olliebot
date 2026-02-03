@@ -6,6 +6,7 @@
  * - Integrates with MCP client and skill manager
  * - Handles sequential and parallel execution
  * - Emits events for UI updates
+ * - Extracts citations from tool outputs
  */
 
 import { v4 as uuid } from 'uuid';
@@ -20,6 +21,17 @@ import type {
 } from './types.js';
 import type { NativeTool } from './native/types.js';
 import type { MCPClient } from '../mcp/client.js';
+import { initializeCitationServiceSync } from '../citations/service.js';
+import { getDefaultExtractors } from '../citations/extractors.js';
+import type { CitationSource } from '../citations/types.js';
+
+/**
+ * Result of tool execution with citations
+ */
+export interface ToolExecutionResult {
+  results: ToolResult[];
+  citations: CitationSource[];
+}
 
 export interface ToolRunnerConfig {
   mcpClient?: MCPClient;
@@ -271,6 +283,24 @@ export class ToolRunner {
     }
 
     return results;
+  }
+
+  /**
+   * Execute multiple tools and extract citations from results
+   * This is the preferred method for agents that need citation support
+   */
+  async executeToolsWithCitations(requests: ToolRequest[]): Promise<ToolExecutionResult> {
+    const results = await this.executeTools(requests);
+
+    // Extract citations from successful tool results
+    const citationService = initializeCitationServiceSync(getDefaultExtractors());
+    const citations = citationService.extractSources(results);
+
+    if (citations.length > 0) {
+      console.log(`[ToolRunner] Extracted ${citations.length} citation source(s)`);
+    }
+
+    return { results, citations };
   }
 
   /**

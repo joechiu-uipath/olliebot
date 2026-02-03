@@ -4256,3 +4256,139 @@ html, body {
 .click-marker-scroll {
   --marker-color: #22c55e;
 }
+
+/* ===================================
+   Citation Source Panel Styles
+   =================================== */
+
+.source-panel {
+  margin-top: 1rem;
+  border: 1px solid var(--border-color);
+  border-radius: 0.5rem;
+  overflow: hidden;
+  background: var(--bg-secondary);
+}
+
+.source-panel-toggle {
+  width: 100%;
+  padding: 0.75rem 1rem;
+  background: var(--bg-tertiary);
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  transition: background-color 0.15s, color 0.15s;
+}
+
+.source-panel-toggle:hover {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+.source-panel-icon {
+  font-size: 1rem;
+}
+
+.source-panel-text {
+  flex: 1;
+  text-align: left;
+}
+
+.source-panel-arrow {
+  font-size: 0.75rem;
+  opacity: 0.6;
+}
+
+.source-list {
+  padding: 0.5rem;
+}
+
+.source-card {
+  padding: 0.75rem;
+  margin: 0.5rem 0;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 0.375rem;
+  transition: border-color 0.15s;
+}
+
+.source-card:hover {
+  border-color: var(--accent);
+}
+
+.source-card:first-child {
+  margin-top: 0;
+}
+
+.source-card:last-child {
+  margin-bottom: 0;
+}
+
+.source-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.375rem;
+  flex-wrap: wrap;
+}
+
+.source-index {
+  font-weight: 600;
+  color: var(--accent);
+  font-size: 0.875rem;
+}
+
+.source-icon {
+  font-size: 0.875rem;
+}
+
+.source-domain {
+  color: var(--text-secondary);
+  font-size: 0.8125rem;
+}
+
+.source-link {
+  margin-left: auto;
+  font-size: 0.75rem;
+  color: var(--accent);
+  text-decoration: none;
+  padding: 0.125rem 0.375rem;
+  border: 1px solid var(--accent);
+  border-radius: 0.25rem;
+  transition: background-color 0.15s, color 0.15s;
+}
+
+.source-link:hover {
+  background: var(--accent);
+  color: var(--bg-primary);
+}
+
+.source-page {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  background: var(--bg-tertiary);
+  padding: 0.125rem 0.375rem;
+  border-radius: 0.25rem;
+}
+
+.source-title {
+  font-weight: 500;
+  font-size: 0.875rem;
+  color: var(--text-primary);
+  margin-bottom: 0.25rem;
+  line-height: 1.4;
+}
+
+.source-snippet {
+  color: var(--text-secondary);
+  font-size: 0.8125rem;
+  font-style: italic;
+  line-height: 1.5;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+}

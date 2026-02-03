@@ -12,6 +12,7 @@ import type { LLMMessage } from '../llm/types.js';
 import { getDb } from '../db/index.js';
 import type { WebChannel } from '../channels/web.js';
 import { formatToolResultBlocks } from '../utils/index.js';
+import type { CitationSource, StoredCitationData } from '../citations/types.js';
 
 export class WorkerAgent extends AbstractAgent {
   private currentTaskId?: string;
@@ -140,6 +141,9 @@ export class WorkerAgent extends AbstractAgent {
     const streamId = uuid();
     let fullResponse = '';
 
+    // Citation tracking - sources collected from tool executions
+    const collectedSources: CitationSource[] = [];
+
     console.log(`[${this.identity.name}] Starting task (${tools.length} tools)`);
 
     // Setup tool event broadcasting
@@ -215,18 +219,23 @@ export class WorkerAgent extends AbstractAgent {
 
         // Check if LLM requested tool use
         if (response.toolUse && response.toolUse.length > 0) {
-          // Execute requested tools
+          // Execute requested tools with citation extraction
           const toolRequests = response.toolUse.map((tu) =>
             this.toolRunner!.createRequest(tu.id, tu.name, tu.input)
           );
 
-          const results = await this.toolRunner!.executeTools(toolRequests);
+          const { results, citations } = await this.toolRunner!.executeToolsWithCitations(toolRequests);
 
           // Log tool results concisely
           for (const result of results) {
             const status = result.success ? '✓' : '✗';
             const info = result.success ? `${result.durationMs}ms` : result.error;
             console.log(`[${this.identity.name}] ${status} ${result.toolName} (${info})`);
+          }
+
+          // Collect citations from this execution
+          if (citations.length > 0) {
+            collectedSources.push(...citations);
           }
 
           // Add assistant message with tool use to conversation
@@ -252,12 +261,14 @@ export class WorkerAgent extends AbstractAgent {
         console.warn(`[${this.identity.name}] Max iterations reached`);
       }
 
-      if (typeof channel.endStream === 'function') {
-        channel.endStream(streamId, this.conversationId || undefined);
-      }
+      // Build citation data (only includes sources actually referenced in response)
+      const citationData = this.buildCitationData(streamId, fullResponse, collectedSources);
+
+      // End stream with citations
+      this.endStreamWithCitations(channel, streamId, this.conversationId || undefined, citationData);
 
       // Save and report
-      this.saveAssistantMessage(channel.id, fullResponse);
+      this.saveAssistantMessage(channel.id, fullResponse, citationData);
       console.log(`[${this.identity.name}] Task done (${iterationCount} iter, ${fullResponse.length} chars)`);
 
       await this.sendToAgent(this.parentId, {
@@ -300,17 +311,24 @@ export class WorkerAgent extends AbstractAgent {
     }
   }
 
-  private saveAssistantMessage(channelId: string, content: string): void {
+  private saveAssistantMessage(channelId: string, content: string, citations?: StoredCitationData): void {
+    const metadata: Record<string, unknown> = {
+      agentId: this.identity.id,
+      agentName: this.identity.name,
+      agentEmoji: this.identity.emoji,
+    };
+
+    // Include citations in metadata if present
+    if (citations && citations.sources.length > 0) {
+      metadata.citations = citations;
+    }
+
     const message: Message = {
       id: uuid(),
       channel: channelId,
       role: 'assistant',
       content,
-      metadata: {
-        agentId: this.identity.id,
-        agentName: this.identity.name,
-        agentEmoji: this.identity.emoji,
-      },
+      metadata,
       createdAt: new Date(),
     };
     this.conversationHistory.push(message);

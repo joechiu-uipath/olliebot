@@ -18,6 +18,7 @@ const MODES = {
 import { BrowserSessions } from './components/BrowserSessions';
 import { BrowserPreview } from './components/BrowserPreview';
 import RAGProjects from './components/RAGProjects';
+import { SourcePanel } from './components/SourcePanel';
 
 // Code block component with copy button and language header
 // Memoized to prevent unnecessary re-renders
@@ -329,11 +330,18 @@ function App() {
       // Only process stream end for current conversation
       if (!isForCurrentConversation(data.conversationId)) return;
 
-      // Mark streaming as complete
+      // Debug: log citation data
+      if (data.citations) {
+        console.log('[Citations] Received in stream_end:', data.citations);
+      } else {
+        console.log('[Citations] No citations in stream_end');
+      }
+
+      // Mark streaming as complete and attach citations if present
       setMessages((prev) =>
         prev.map((m) =>
           m.id === data.streamId
-            ? { ...m, isStreaming: false }
+            ? { ...m, isStreaming: false, citations: data.citations }
             : m
         )
       );
@@ -644,6 +652,8 @@ function App() {
         mission: msg.delegationMission,
         // Reasoning mode (from DB, vendor-neutral)
         reasoningMode: msg.reasoningMode,
+        // Citations
+        citations: msg.citations,
       };
     });
   }, []);
@@ -2063,6 +2073,9 @@ function App() {
                   <div className="agent-name">{msg.agentName}</div>
                 )}
                 <MessageContent content={msg.content} html={msg.html} isStreaming={msg.isStreaming} />
+                {msg.role === 'assistant' && msg.citations && !msg.isStreaming && (
+                  <SourcePanel citations={msg.citations} />
+                )}
                 {msg.attachments && msg.attachments.length > 0 && (
                   <div className="message-attachments">
                     {msg.attachments.map((att, index) => (

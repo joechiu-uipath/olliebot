@@ -161,6 +161,8 @@ export class OllieBotServer {
           delegationRationale: m.metadata?.rationale,
           // Reasoning mode (vendor-neutral)
           reasoningMode: m.metadata?.reasoningMode,
+          // Citations
+          citations: m.metadata?.citations,
         }));
 
         // 4. Tasks
@@ -487,6 +489,8 @@ export class OllieBotServer {
           delegationRationale: m.metadata?.rationale,
           // Reasoning mode (vendor-neutral)
           reasoningMode: m.metadata?.reasoningMode,
+          // Citations
+          citations: m.metadata?.citations,
         })));
       } catch (error) {
         console.error('[API] Failed to fetch messages:', error);
@@ -628,6 +632,8 @@ export class OllieBotServer {
           delegationAgentType: m.metadata?.agentType,
           delegationMission: m.metadata?.mission,
           delegationRationale: m.metadata?.rationale,
+          // Citations
+          citations: m.metadata?.citations,
         })));
       } catch (error) {
         console.error('[API] Failed to fetch messages:', error);

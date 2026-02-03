@@ -212,13 +212,25 @@ export class WebChannel implements Channel {
     this.broadcast(payload);
   }
 
-  endStream(streamId: string, conversationId?: string): void {
-    const payload = {
+  endStream(streamId: string, conversationId?: string, citations?: { sources: unknown[]; references: unknown[] }): void {
+    const payload: {
+      type: string;
+      streamId: string;
+      conversationId?: string;
+      citations?: { sources: unknown[]; references: unknown[] };
+      timestamp: string;
+    } = {
       type: 'stream_end',
       streamId,
       conversationId,
       timestamp: new Date().toISOString(),
     };
+
+    // Include citations if provided
+    if (citations && citations.sources.length > 0) {
+      payload.citations = citations;
+    }
+
     this.broadcast(payload);
   }
 

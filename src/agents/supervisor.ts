@@ -17,6 +17,7 @@ import { getDb } from '../db/index.js';
 import type { WebChannel } from '../channels/web.js';
 import type { ToolEvent } from '../tools/types.js';
 import { formatToolResultBlocks } from '../utils/index.js';
+import type { CitationSource, StoredCitationData } from '../citations/types.js';
 
 export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAgent {
   private subAgents: Map<string, WorkerAgent> = new Map();
@@ -129,6 +130,9 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
   private async generateStreamingResponse(message: Message, channel: Channel): Promise<void> {
     const streamId = uuid();
     let fullResponse = '';
+
+    // Citation tracking - sources collected from tool executions
+    const collectedSources: CitationSource[] = [];
 
     // Refresh RAG data cache before generating response
     await this.refreshRagDataCache();
@@ -246,12 +250,17 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
 
           // Check if LLM requested tool use
           if (response.toolUse && response.toolUse.length > 0) {
-            // Execute requested tools
+            // Execute requested tools with citation extraction
             const toolRequests = response.toolUse.map((tu) =>
               this.toolRunner!.createRequest(tu.id, tu.name, tu.input)
             );
 
-            const results = await this.toolRunner.executeTools(toolRequests);
+            const { results, citations } = await this.toolRunner.executeToolsWithCitations(toolRequests);
+
+            // Collect citations from this execution
+            if (citations.length > 0) {
+              collectedSources.push(...citations);
+            }
 
             // Check if delegate tool was called
             const delegateResult = results.find(r => r.toolName === 'native__delegate' && r.success);
@@ -265,8 +274,8 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
                 customEmoji?: string;
               };
 
-              // End the stream before delegation
-              channel.endStream!(streamId, this.currentConversationId || undefined);
+              // End the stream before delegation (no citations for delegated tasks)
+              this.endStreamWithCitations(channel, streamId, this.currentConversationId || undefined, undefined);
 
               // Save any response content before delegation
               const reasoningMode = message.metadata?.reasoningMode as string | undefined;
@@ -325,15 +334,19 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
         }
       }
 
-      channel.endStream!(streamId, this.currentConversationId || undefined);
+      // Build citation data (only includes sources actually referenced in response)
+      const citationData = this.buildCitationData(streamId, fullResponse, collectedSources);
+
+      // End stream with citations
+      this.endStreamWithCitations(channel, streamId, this.currentConversationId || undefined, citationData);
 
       // Save the response (delegation is now handled via tool use, not markdown blocks)
       const reasoningMode = message.metadata?.reasoningMode as string | undefined;
       if (fullResponse.trim()) {
-        this.saveAssistantMessage(message.channel, fullResponse, reasoningMode);
+        this.saveAssistantMessage(message.channel, fullResponse, reasoningMode, citationData);
       }
     } catch (error) {
-      channel.endStream!(streamId, this.currentConversationId || undefined);
+      this.endStreamWithCitations(channel, streamId, this.currentConversationId || undefined, undefined);
       // Log full error details server-side, send sanitized error to client
       let safeDetails = 'An internal error occurred. Please try again.';
       if (error instanceof Error) {
@@ -805,17 +818,24 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
     }
   }
 
-  private saveAssistantMessage(channelId: string, content: string, reasoningMode?: string): void {
+  private saveAssistantMessage(channelId: string, content: string, reasoningMode?: string, citations?: StoredCitationData): void {
+    const metadata: Record<string, unknown> = {
+      agentId: this.identity.id,
+      agentName: this.identity.name,
+      ...(reasoningMode && { reasoningMode }),
+    };
+
+    // Include citations in metadata if present
+    if (citations && citations.sources.length > 0) {
+      metadata.citations = citations;
+    }
+
     const message: Message = {
       id: uuid(),
       channel: channelId,
       role: 'assistant',
       content,
-      metadata: {
-        agentId: this.identity.id,
-        agentName: this.identity.name,
-        ...(reasoningMode && { reasoningMode }),
-      },
+      metadata,
       createdAt: new Date(),
     };
     this.conversationHistory.push(message);
