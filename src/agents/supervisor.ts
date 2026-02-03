@@ -351,21 +351,18 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
       }
     } catch (error) {
       channel.endStream!(streamId, this.currentConversationId || undefined);
-      // Extract full error details including API error bodies
-      let errorDetails = '';
+      // Log full error details server-side, send sanitized error to client
+      let safeDetails = 'An internal error occurred. Please try again.';
       if (error instanceof Error) {
-        errorDetails = error.message;
-        // Check for API error response body (Anthropic SDK includes it)
-        const apiError = error as Error & { status?: number; error?: { type?: string; message?: string } };
+        const apiError = error as Error & { status?: number };
         if (apiError.status) {
-          errorDetails = `${apiError.status} ${JSON.stringify(apiError.error || error.message)}`;
+          safeDetails = `Upstream API error (status ${apiError.status}).`;
         }
-        // Also log the full error for debugging
         console.error('[Supervisor] Full streaming error:', JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
       } else {
-        errorDetails = String(error);
+        console.error('[Supervisor] Full streaming error:', error);
       }
-      await this.sendError(channel, 'Streaming error', errorDetails);
+      await this.sendError(channel, 'Streaming error', safeDetails);
     } finally {
       // Cleanup tool event subscription
       if (unsubscribeTool) {
