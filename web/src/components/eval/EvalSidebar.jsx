@@ -147,7 +147,7 @@ export const EvalSidebar = memo(function EvalSidebar({
               <div key={suite.id} className="eval-tree-suite">
                 {/* Suite header (expandable root node) */}
                 <div
-                  className={`eval-tree-suite-header ${selectedSuite?.id === suite.id ? 'selected' : ''}`}
+                  className={`eval-tree-suite-header ${selectedSuite?.suitePath === suite.suitePath ? 'selected' : ''}`}
                   onClick={(e) => handleSuiteClick(suite, e)}
                 >
                   <span
@@ -167,7 +167,7 @@ export const EvalSidebar = memo(function EvalSidebar({
                     {suite.evaluations.map(evaluation => (
                       <div
                         key={evaluation.id}
-                        className={`eval-tree-item ${selectedEvaluation?.id === evaluation.id ? 'selected' : ''}`}
+                        className={`eval-tree-item ${selectedEvaluation?.path === evaluation.path ? 'selected' : ''}`}
                         onClick={() => onSelectEvaluation(evaluation)}
                       >
                         <span className="eval-tree-item-icon">📄</span>

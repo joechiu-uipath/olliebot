@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, memo, useMemo } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 import rehypeSanitize from 'rehype-sanitize';
@@ -167,6 +168,13 @@ const MessageContent = memo(function MessageContent({ content, html = false, isS
 let appInitialLoadDone = false;
 
 function App() {
+  // Router hooks
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  // Derive mode from URL path
+  const mode = location.pathname.startsWith('/eval') ? MODES.EVAL : MODES.CHAT;
+
   const [messages, setMessages] = useState([]);
   const [input, setInput] = useState('');
   const [attachments, setAttachments] = useState([]);
@@ -216,9 +224,6 @@ function App() {
   // Expanded tool events
   const [expandedTools, setExpandedTools] = useState(new Set());
 
-  // Mode state (chat or eval)
-  const [mode, setMode] = useState(MODES.CHAT);
-
   // Eval mode state
   const [selectedEvaluation, setSelectedEvaluation] = useState(null);
   const [selectedSuite, setSelectedSuite] = useState(null);
@@ -241,6 +246,10 @@ function App() {
   // Ref to track current conversation ID for use in callbacks
   const currentConversationIdRef = useRef(currentConversationId);
   currentConversationIdRef.current = currentConversationId;
+
+  // Ref to track navigate function for use in callbacks
+  const navigateRef = useRef(navigate);
+  navigateRef.current = navigate;
 
   const handleMessage = useCallback((data) => {
     // Helper to check if message belongs to current conversation
@@ -445,6 +454,8 @@ function App() {
         return [...prev.slice(0, wellKnownCount), newConv, ...prev.slice(wellKnownCount)];
       });
       setCurrentConversationId(conv.id);
+      // Navigate to the new conversation URL
+      navigateRef.current(`/chat/${encodeURIComponent(conv.id)}`, { replace: true });
     } else if (data.type === 'conversation_updated') {
       // Conversation title or metadata was updated
       const { id, title, updatedAt, manuallyNamed } = data.conversation;
@@ -656,6 +667,88 @@ function App() {
     }
   }, [messages, isUserScrolled]);
 
+  // Sync URL to state for chat mode deep linking
+  // Ref to prevent re-triggering when we programmatically set state
+  const isNavigatingRef = useRef(false);
+
+  useEffect(() => {
+    if (isNavigatingRef.current) {
+      isNavigatingRef.current = false;
+      return;
+    }
+
+    const path = location.pathname;
+
+    // Handle chat routes
+    if (path === '/' || path === '/chat') {
+      // Default to feed view
+      if (currentConversationId !== ':feed:' && conversations.some(c => c.id === ':feed:')) {
+        setCurrentConversationId(':feed:');
+        // Load feed messages
+        fetch('/api/conversations/:feed:/messages')
+          .then(res => res.ok ? res.json() : [])
+          .then(data => setMessages(transformMessages(data)))
+          .catch(() => setMessages([]));
+      }
+    } else if (path.startsWith('/chat/')) {
+      const convId = decodeURIComponent(path.slice(6)); // Remove '/chat/'
+      if (convId && convId !== currentConversationId) {
+        setCurrentConversationId(convId);
+        // Load conversation messages
+        fetch(`/api/conversations/${encodeURIComponent(convId)}/messages`)
+          .then(res => res.ok ? res.json() : [])
+          .then(data => setMessages(transformMessages(data)))
+          .catch(() => setMessages([]));
+      }
+    }
+
+    // Handle eval routes
+    if (path === '/eval') {
+      setSelectedEvaluation(null);
+      setSelectedSuite(null);
+      setSelectedResult(null);
+      setViewingResults(null);
+    } else if (path.startsWith('/eval/result/')) {
+      const resultPath = decodeURIComponent(path.slice(13)); // Remove '/eval/result/'
+      if (resultPath && (!selectedResult || selectedResult.filePath !== resultPath)) {
+        const resultInfo = { filePath: resultPath };
+        setSelectedResult(resultInfo);
+        setSelectedEvaluation(null);
+        setSelectedSuite(null);
+        // Fetch full result data
+        fetch(`/api/eval/result/${encodeURIComponent(resultPath)}`)
+          .then(res => res.ok ? res.json() : null)
+          .then(data => {
+            if (data?.result) setViewingResults(data.result);
+          })
+          .catch(err => console.error('Failed to load result:', err));
+      }
+    } else if (path.startsWith('/eval/suite/')) {
+      const suitePath = decodeURIComponent(path.slice(12)); // Remove '/eval/suite/'
+      if (suitePath && (!selectedSuite || selectedSuite.suitePath !== suitePath)) {
+        setSelectedSuite({ suitePath });
+        setSelectedEvaluation(null);
+        setSelectedResult(null);
+        setViewingResults(null);
+      }
+    } else if (path.startsWith('/eval/')) {
+      const evalPath = decodeURIComponent(path.slice(6)); // Remove '/eval/'
+      if (evalPath && (!selectedEvaluation || selectedEvaluation.path !== evalPath)) {
+        setSelectedEvaluation({ path: evalPath });
+        setSelectedSuite(null);
+        setSelectedResult(null);
+        setViewingResults(null);
+      }
+    }
+  }, [location.pathname, conversations, currentConversationId, selectedEvaluation, selectedResult, selectedSuite, transformMessages]);
+
+  // Redirect root to /chat
+  useEffect(() => {
+    if (location.pathname === '/') {
+      navigate('/chat', { replace: true });
+    }
+  }, [location.pathname, navigate]);
+
   // Track if we're programmatically scrolling (to avoid scroll event interference)
   const isScrollingToBottom = useRef(false);
 
@@ -725,6 +818,8 @@ function App() {
           isWellKnown: false,
         }));
         setCurrentConversationId(newConv.id);
+        // Navigate to the new conversation URL
+        navigate(`/chat/${encodeURIComponent(newConv.id)}`, { replace: true });
       }
 
       // Tell server to start new conversation context
@@ -747,8 +842,10 @@ function App() {
       }));
       setCurrentConversationId(newId);
       setMessages([]);
+      // Navigate to the new conversation URL
+      navigate(`/chat/${encodeURIComponent(newId)}`, { replace: true });
     }
-  }, [sendMessage, insertConversation]);
+  }, [sendMessage, insertConversation, navigate]);
 
   // Delete conversation (soft delete)
   const handleDeleteConversation = useCallback(async (convId, e) => {
@@ -768,9 +865,16 @@ function App() {
         if (convId === currentConversationId) {
           const remaining = conversations.filter((c) => c.id !== convId);
           if (remaining.length > 0) {
-            setCurrentConversationId(remaining[0].id);
+            const nextConv = remaining[0];
+            setCurrentConversationId(nextConv.id);
+            // Navigate to the next conversation
+            if (nextConv.id === ':feed:') {
+              navigate('/chat');
+            } else {
+              navigate(`/chat/${encodeURIComponent(nextConv.id)}`);
+            }
             // Load messages for new current conversation
-            const msgRes = await fetch(`/api/conversations/${remaining[0].id}/messages`);
+            const msgRes = await fetch(`/api/conversations/${encodeURIComponent(nextConv.id)}/messages`);
             if (msgRes.ok) {
               const data = await msgRes.json();
               setMessages(transformMessages(data));
@@ -778,13 +882,14 @@ function App() {
           } else {
             setCurrentConversationId(null);
             setMessages([]);
+            navigate('/chat');
           }
         }
       }
     } catch (error) {
       console.error('Failed to delete conversation:', error);
     }
-  }, [conversations, currentConversationId]);
+  }, [conversations, currentConversationId, navigate, transformMessages]);
 
   // Start inline rename
   const handleRenameConversation = useCallback((convId, e) => {
@@ -880,26 +985,30 @@ function App() {
     }
   }, [hashtagMenuOpen]);
 
-  // Switch conversation
-  const handleSelectConversation = useCallback(async (convId) => {
+  // Switch conversation - navigates to the conversation URL
+  const handleSelectConversation = useCallback((convId) => {
     if (convId === currentConversationId) return;
 
-    setCurrentConversationId(convId);
+    // Mark that we're navigating to prevent URL sync effect from re-triggering
+    isNavigatingRef.current = true;
     setIsUserScrolled(false);
     setShowScrollButton(false);
 
-    try {
-      const res = await fetch(`/api/conversations/${convId}/messages`);
-      if (res.ok) {
-        const data = await res.json();
-        setMessages(transformMessages(data));
-      } else {
-        setMessages([]);
-      }
-    } catch {
-      setMessages([]);
+    // Navigate to the conversation URL
+    // Special handling for :feed: - use /chat without ID
+    if (convId === ':feed:') {
+      navigate('/chat');
+    } else {
+      navigate(`/chat/${encodeURIComponent(convId)}`);
     }
-  }, [currentConversationId]);
+
+    // Update state and load messages
+    setCurrentConversationId(convId);
+    fetch(`/api/conversations/${encodeURIComponent(convId)}/messages`)
+      .then(res => res.ok ? res.json() : [])
+      .then(data => setMessages(transformMessages(data)))
+      .catch(() => setMessages([]));
+  }, [currentConversationId, navigate, transformMessages]);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -1277,46 +1386,32 @@ function App() {
 
   // Eval mode handlers - memoized to prevent EvalSidebar re-renders
   const handleSelectEvaluation = useCallback((evaluation) => {
-    setSelectedEvaluation(evaluation);
-    setSelectedSuite(null);
-    setSelectedResult(null);
-    setViewingResults(null);
-  }, []);
+    if (evaluation) {
+      navigate(`/eval/${encodeURIComponent(evaluation.path)}`);
+    } else {
+      navigate('/eval');
+    }
+  }, [navigate]);
 
   const handleSelectSuite = useCallback((suite) => {
-    setSelectedSuite(suite);
-    setSelectedEvaluation(null);
-    setSelectedResult(null);
-    setViewingResults(null);
-  }, []);
+    if (suite) {
+      navigate(`/eval/suite/${encodeURIComponent(suite.suitePath)}`);
+    } else {
+      navigate('/eval');
+    }
+  }, [navigate]);
 
-  const handleSelectResult = useCallback(async (resultInfo) => {
-    if (!resultInfo) {
-      setSelectedResult(null);
-      setViewingResults(null);
-      return;
+  const handleSelectResult = useCallback((resultInfo) => {
+    if (resultInfo) {
+      navigate(`/eval/result/${encodeURIComponent(resultInfo.filePath)}`);
+    } else {
+      navigate('/eval');
     }
-    setSelectedResult(resultInfo);
-    setSelectedEvaluation(null);
-    setSelectedSuite(null);
-    // Fetch full result data
-    try {
-      const res = await fetch(`/api/eval/result/${encodeURIComponent(resultInfo.filePath)}`);
-      if (res.ok) {
-        const data = await res.json();
-        setViewingResults(data.result);
-      }
-    } catch (err) {
-      console.error('Failed to load result:', err);
-    }
-  }, []);
+  }, [navigate]);
 
   const handleEvalBack = useCallback(() => {
-    setSelectedEvaluation(null);
-    setSelectedSuite(null);
-    setSelectedResult(null);
-    setViewingResults(null);
-  }, []);
+    navigate('/eval');
+  }, [navigate]);
 
   // Handle browser session selection
   const handleSelectBrowserSession = useCallback((sessionId) => {
@@ -1739,14 +1834,14 @@ function App() {
             <div className="mode-switcher">
               <button
                 className={`mode-btn ${mode === MODES.CHAT ? 'active' : ''}`}
-                onClick={() => setMode(MODES.CHAT)}
+                onClick={() => navigate('/chat')}
               >
                 <span className="mode-icon">💬</span>
                 Chat
               </button>
               <button
                 className={`mode-btn ${mode === MODES.EVAL ? 'active' : ''}`}
-                onClick={() => setMode(MODES.EVAL)}
+                onClick={() => navigate('/eval')}
               >
                 <span className="mode-icon">📊</span>
                 Eval
