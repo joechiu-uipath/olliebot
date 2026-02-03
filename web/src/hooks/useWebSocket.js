@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 
 // Use relative WebSocket URL to go through Vite's proxy (works with port forwarding)
-const BACKEND_WS_URL = import.meta.env.VITE_WS_URL || `ws://${window.location.host}/ws`;
+const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+const BACKEND_WS_URL = import.meta.env.VITE_WS_URL || `${wsProtocol}://${window.location.host}/ws`;
 
 export function useWebSocket({ onMessage, onOpen, onClose, onError }) {
   const [connectionState, setConnectionState] = useState('disconnected');
