@@ -201,7 +201,7 @@ export class OpenAIComputerUseProvider implements IComputerUseProvider {
 
     this.pendingSafetyChecks = computerCall.pending_safety_checks;
 
-    const action = this.parseComputerAction(computerCall.action, screenSize);
+    const action = this.parseComputerAction(computerCall.action);
 
     return {
       action,
@@ -216,10 +216,7 @@ export class OpenAIComputerUseProvider implements IComputerUseProvider {
   /**
    * Parses a computer action from the API response.
    */
-  private parseComputerAction(
-    apiAction: OpenAIComputerAction,
-    _screenSize: { width: number; height: number }
-  ): ComputerUseAction {
+  private parseComputerAction(apiAction: OpenAIComputerAction): ComputerUseAction {
     switch (apiAction.type) {
       case 'click':
         return {
