@@ -4,7 +4,30 @@
  */
 
 import { Router, type Request, type Response } from 'express';
+import multer from 'multer';
+import { existsSync, mkdirSync } from 'fs';
+import { copyFile, unlink } from 'fs/promises';
+import { join, extname } from 'path';
 import type { RAGProjectService } from './service.js';
+
+// Supported file extensions for upload
+const SUPPORTED_UPLOAD_EXTENSIONS = new Set(['.pdf', '.txt', '.md', '.json', '.csv', '.html']);
+
+// Configure multer for file upload (temp storage)
+const upload = multer({
+  dest: 'uploads/',
+  limits: {
+    fileSize: 50 * 1024 * 1024, // 50MB limit
+  },
+  fileFilter: (_req, file, cb) => {
+    const ext = extname(file.originalname).toLowerCase();
+    if (SUPPORTED_UPLOAD_EXTENSIONS.has(ext)) {
+      cb(null, true);
+    } else {
+      cb(new Error(`Unsupported file type: ${ext}. Supported: ${[...SUPPORTED_UPLOAD_EXTENSIONS].join(', ')}`));
+    }
+  },
+});
 
 /**
  * Create Express router for RAG project endpoints.
@@ -127,6 +150,87 @@ export function createRAGProjectRoutes(ragService: RAGProjectService): Router {
     res.json({
       extensions: ragService.getSupportedExtensions(),
     });
+  });
+
+  /**
+   * POST /api/rag/projects/:id/upload
+   * Upload files to a project's documents folder.
+   * Query param: ?index=true to trigger indexing after upload
+   */
+  router.post('/projects/:id/upload', upload.array('files', 20), async (req: Request, res: Response) => {
+    const uploadedFiles: string[] = [];
+    const tempFiles: string[] = [];
+
+    try {
+      const projectId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+      const triggerIndex = req.query.index === 'true';
+
+      // Check if project exists
+      const project = await ragService.getProjectDetails(projectId);
+      if (!project) {
+        res.status(404).json({ error: 'Project not found' });
+        return;
+      }
+
+      const files = req.files as Express.Multer.File[];
+      if (!files || files.length === 0) {
+        res.status(400).json({ error: 'No files provided' });
+        return;
+      }
+
+      // Get project documents path
+      const docsPath = join(project.path, 'documents');
+      if (!existsSync(docsPath)) {
+        mkdirSync(docsPath, { recursive: true });
+      }
+
+      // Copy each file to documents folder
+      for (const file of files) {
+        tempFiles.push(file.path);
+        const destPath = join(docsPath, file.originalname);
+        await copyFile(file.path, destPath);
+        uploadedFiles.push(file.originalname);
+        console.log(`[RAGProjects] Uploaded file: ${file.originalname} to ${projectId}`);
+      }
+
+      // Clean up temp files
+      for (const tempPath of tempFiles) {
+        try {
+          await unlink(tempPath);
+        } catch {
+          // Ignore cleanup errors
+        }
+      }
+
+      // Trigger indexing if requested (async - don't wait)
+      if (triggerIndex && !ragService.isIndexing(projectId)) {
+        ragService.indexProject(projectId, false).catch((error) => {
+          console.error(`[RAGProjects] Indexing error for ${projectId}:`, error);
+        });
+      }
+
+      res.json({
+        success: true,
+        projectId,
+        uploadedFiles,
+        indexingStarted: triggerIndex && !ragService.isIndexing(projectId),
+      });
+    } catch (error) {
+      // Clean up temp files on error
+      for (const tempPath of tempFiles) {
+        try {
+          await unlink(tempPath);
+        } catch {
+          // Ignore cleanup errors
+        }
+      }
+
+      console.error(`[RAGProjects] Upload error:`, error);
+      res.status(500).json({
+        error: error instanceof Error ? error.message : 'Upload failed',
+        uploadedFiles,
+      });
+    }
   });
 
   return router;

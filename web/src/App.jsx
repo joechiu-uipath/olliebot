@@ -1552,6 +1552,29 @@ function App() {
     }
   }, []);
 
+  // Handle file upload to RAG project via drag-and-drop
+  const handleUploadToProject = useCallback(async (projectId, files) => {
+    try {
+      const formData = new FormData();
+      for (const file of files) {
+        formData.append('files', file);
+      }
+      const res = await fetch(`/api/rag/projects/${projectId}/upload?index=true`, {
+        method: 'POST',
+        body: formData,
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        console.error('Failed to upload files:', data.error);
+      } else {
+        const data = await res.json();
+        console.log('Upload successful:', data);
+      }
+    } catch (error) {
+      console.error('Failed to upload files:', error);
+    }
+  }, []);
+
   // Get selected browser session object
   const selectedBrowserSession = browserSessions.find(
     (s) => s.id === selectedBrowserSessionId
@@ -1763,6 +1786,7 @@ function App() {
               expanded={expandedAccordions.ragProjects}
               onToggle={handleToggleRagProjects}
               onIndex={handleIndexProject}
+              onUpload={handleUploadToProject}
             />
 
             {/* Agent Skills Accordion */}

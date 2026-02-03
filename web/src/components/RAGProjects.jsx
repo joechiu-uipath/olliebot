@@ -1,8 +1,9 @@
-import React, { memo } from 'react';
+import React, { memo, useState, useCallback } from 'react';
 
 /**
  * RAG Projects Accordion
  * Displays a list of RAG projects from user/rag/ with indexing controls.
+ * Supports drag-and-drop file upload to projects.
  */
 const RAGProjects = memo(function RAGProjects({
   projects = [],
@@ -10,7 +11,44 @@ const RAGProjects = memo(function RAGProjects({
   expanded = false,
   onToggle,
   onIndex,
+  onUpload, // (projectId, files) => Promise<void>
 }) {
+  // Track which project is being dragged over
+  const [dragOverProjectId, setDragOverProjectId] = useState(null);
+  const [uploadingProjectId, setUploadingProjectId] = useState(null);
+
+  // Handle drag over on a project item
+  const handleDragOver = useCallback((e, projectId) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOverProjectId(projectId);
+  }, []);
+
+  // Handle drag leave
+  const handleDragLeave = useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOverProjectId(null);
+  }, []);
+
+  // Handle file drop
+  const handleDrop = useCallback(async (e, projectId) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOverProjectId(null);
+
+    if (!onUpload) return;
+
+    const files = Array.from(e.dataTransfer.files);
+    if (files.length === 0) return;
+
+    setUploadingProjectId(projectId);
+    try {
+      await onUpload(projectId, files);
+    } finally {
+      setUploadingProjectId(null);
+    }
+  }, [onUpload]);
   return (
     <div className="accordion">
       <button
@@ -48,13 +86,21 @@ const RAGProjects = memo(function RAGProjects({
                     )
                   : null;
 
+              const isDragOver = dragOverProjectId === project.id;
+              const isUploading = uploadingProjectId === project.id;
+
               return (
                 <div
                   key={project.id}
-                  className={`accordion-item rag-project-item ${isProjectIndexing ? 'indexing' : ''}`}
-                  title={`${project.documentCount} documents, ${project.vectorCount} vectors`}
+                  className={`accordion-item rag-project-item ${isProjectIndexing ? 'indexing' : ''} ${isDragOver ? 'drag-over' : ''} ${isUploading ? 'uploading' : ''}`}
+                  title={`${project.documentCount} documents, ${project.vectorCount} vectors\nDrop files here to upload`}
+                  onDragOver={(e) => handleDragOver(e, project.id)}
+                  onDragLeave={handleDragLeave}
+                  onDrop={(e) => handleDrop(e, project.id)}
                 >
-                  <span className="rag-project-icon">📁</span>
+                  <span className="rag-project-icon">
+                    {isUploading ? '⬆️' : isDragOver ? '📥' : '📁'}
+                  </span>
                   <div className="rag-project-info">
                     <span className="rag-project-name">{project.name}</span>
                     <span className="rag-project-stats">
