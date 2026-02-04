@@ -1074,8 +1074,11 @@ function App() {
 
     setEditingConversationId(convId);
     setEditingTitle(conversation.title);
-    // Focus the input after render
-    setTimeout(() => renameInputRef.current?.focus(), 0);
+    // Focus and select the input text after render
+    setTimeout(() => {
+      renameInputRef.current?.focus();
+      renameInputRef.current?.select();
+    }, 0);
   };
 
   // Save the rename
@@ -1176,8 +1179,23 @@ function App() {
   };
 
   // Handle chat submission - receives input text from ChatInput component
-  const handleSubmit = async (inputText) => {
-    if (!inputText.trim() && attachments.length === 0) return;
+  // Uses refs to avoid dependencies that would cause callback recreation
+  const attachmentsRef = useRef(attachments);
+  const reasoningModeRef = useRef(reasoningMode);
+  const messageTypeRef = useRef(messageType);
+
+  // Keep refs in sync (currentConversationIdRef is already synced above)
+  useEffect(() => { attachmentsRef.current = attachments; }, [attachments]);
+  useEffect(() => { reasoningModeRef.current = reasoningMode; }, [reasoningMode]);
+  useEffect(() => { messageTypeRef.current = messageType; }, [messageType]);
+
+  const handleSubmit = useCallback(async (inputText) => {
+    const currentAttachments = attachmentsRef.current;
+    const currentReasoningMode = reasoningModeRef.current;
+    const currentMessageType = messageTypeRef.current;
+    const convId = currentConversationIdRef.current;
+
+    if (!inputText.trim() && currentAttachments.length === 0) return;
 
     // If user is near the bottom when sending, re-enable auto-scroll
     const container = messagesContainerRef.current;
@@ -1191,7 +1209,7 @@ function App() {
 
     // Process attachments to base64
     const processedAttachments = await Promise.all(
-      attachments.map(async (file) => {
+      currentAttachments.map(async (file) => {
         const base64 = await fileToBase64(file);
         return {
           name: file.name,
@@ -1213,10 +1231,10 @@ function App() {
       id: messageId,
       role: 'user',
       content: inputText,
-      attachments: attachments.map(f => ({ name: f.name, type: f.type, size: f.size })),
+      attachments: currentAttachments.map(f => ({ name: f.name, type: f.type, size: f.size })),
       timestamp: new Date().toISOString(),
-      reasoningMode: reasoningMode,
-      messageType: messageType,
+      reasoningMode: currentReasoningMode,
+      messageType: currentMessageType,
     };
     setMessages((prev) => [...prev, userMessage]);
 
@@ -1226,15 +1244,15 @@ function App() {
       messageId: messageId,
       content: inputText,
       attachments: processedAttachments,
-      conversationId: currentConversationId,
-      reasoningEffort: reasoningMode,
-      messageType: messageType,
+      conversationId: convId,
+      reasoningEffort: currentReasoningMode,
+      messageType: currentMessageType,
     });
     setAttachments([]);
     setReasoningMode(null);
     setMessageType(null);
     setIsResponsePending(true);
-  };
+  }, [sendMessage]);
 
   // Convert file to base64
   const fileToBase64 = (file) => {
@@ -1268,7 +1286,7 @@ function App() {
   };
 
   // Handle paste - extract images from clipboard
-  const handlePaste = (e) => {
+  const handlePaste = useCallback((e) => {
     const items = e.clipboardData?.items;
     if (!items) return;
 
@@ -1287,12 +1305,12 @@ function App() {
     if (imageFiles.length > 0) {
       setAttachments((prev) => [...prev, ...imageFiles]);
     }
-  };
+  }, []);
 
   // Remove attachment
-  const removeAttachment = (index) => {
+  const removeAttachment = useCallback((index) => {
     setAttachments((prev) => prev.filter((_, i) => i !== index));
-  };
+  }, []);
 
   const handleAction = (action, data) => {
     sendMessage({ type: 'action', action, data, conversationId: currentConversationId });
@@ -1491,34 +1509,34 @@ function App() {
     return date.toLocaleDateString();
   };
 
-  // Eval mode handlers
-  const handleSelectEvaluation = (evaluation) => {
+  // Eval mode handlers - memoized for EvalSidebar/EvalRunner
+  const handleSelectEvaluation = useCallback((evaluation) => {
     if (evaluation) {
       navigate(`/eval/${encodeURIComponent(evaluation.path)}`);
     } else {
       navigate('/eval');
     }
-  };
+  }, [navigate]);
 
-  const handleSelectSuite = (suite) => {
+  const handleSelectSuite = useCallback((suite) => {
     if (suite) {
       navigate(`/eval/suite/${encodeURIComponent(suite.suitePath)}`);
     } else {
       navigate('/eval');
     }
-  };
+  }, [navigate]);
 
-  const handleSelectResult = (resultInfo) => {
+  const handleSelectResult = useCallback((resultInfo) => {
     if (resultInfo) {
       navigate(`/eval/result/${encodeURIComponent(resultInfo.filePath)}`);
     } else {
       navigate('/eval');
     }
-  };
+  }, [navigate]);
 
-  const handleEvalBack = () => {
+  const handleEvalBack = useCallback(() => {
     navigate('/eval');
-  };
+  }, [navigate]);
 
   // Handle browser session selection - memoized
   const handleSelectBrowserSession = useCallback((sessionId) => {
@@ -1526,9 +1544,9 @@ function App() {
   }, []);
 
   // Close browser preview
-  const handleCloseBrowserPreview = () => {
+  const handleCloseBrowserPreview = useCallback(() => {
     setSelectedBrowserSessionId(null);
-  };
+  }, []);
 
   // Close browser session (terminate the browser process) - memoized
   const handleCloseBrowserSession = useCallback((sessionId) => {

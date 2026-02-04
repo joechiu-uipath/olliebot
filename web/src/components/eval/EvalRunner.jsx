@@ -1,14 +1,11 @@
-import { useState, useEffect, useRef, memo } from 'react';
+import { useState, useEffect, useRef, memo, useCallback } from 'react';
 import { EvalResults } from './EvalResults';
 import { EvalJsonEditor } from './EvalJsonEditor';
+import { EvalInputBar } from './EvalInputBar';
 
 export const EvalRunner = memo(function EvalRunner({ evaluation, suite, viewingResults, onBack }) {
   const [loading, setLoading] = useState(false);
   const [evalDetails, setEvalDetails] = useState(null);
-  const [runConfig, setRunConfig] = useState({
-    runs: 5,
-    alternativePrompt: '',
-  });
   const [jobId, setJobId] = useState(null);
   const [progress, setProgress] = useState(null);
   const [results, setResults] = useState(null);
@@ -122,7 +119,7 @@ export const EvalRunner = memo(function EvalRunner({ evaluation, suite, viewingR
     checkActiveJobs();
   }, []);
 
-  const loadEvaluationDetails = async (path) => {
+  const loadEvaluationDetails = useCallback(async (path) => {
     try {
       const res = await fetch(`/api/eval/${encodeURIComponent(path)}`);
       if (res.ok) {
@@ -132,7 +129,7 @@ export const EvalRunner = memo(function EvalRunner({ evaluation, suite, viewingR
     } catch (err) {
       console.error('Failed to load evaluation details:', err);
     }
-  };
+  }, []);
 
   // Load evaluation details when selected
   useEffect(() => {
@@ -143,22 +140,27 @@ export const EvalRunner = memo(function EvalRunner({ evaluation, suite, viewingR
     }
   }, [evaluation, loadEvaluationDetails]);
 
-  const runEvaluation = async () => {
-    if (!evaluation) return;
+  // Use ref for evaluation path to keep callback stable
+  const evaluationRef = useRef(evaluation);
+  useEffect(() => { evaluationRef.current = evaluation; }, [evaluation]);
+
+  const runEvaluation = useCallback(async (config) => {
+    const currentEvaluation = evaluationRef.current;
+    if (!currentEvaluation) return;
 
     setLoading(true);
     setError(null);
     setResults(null);
-    setProgress({ current: 0, total: runConfig.runs });
+    setProgress({ current: 0, total: config.runs });
 
     try {
       const res = await fetch('/api/eval/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          evaluationPath: evaluation.path,
-          runs: runConfig.runs,
-          alternativePrompt: runConfig.alternativePrompt,
+          evaluationPath: currentEvaluation.path,
+          runs: config.runs,
+          alternativePrompt: config.alternativePrompt,
         }),
       });
 
@@ -176,7 +178,7 @@ export const EvalRunner = memo(function EvalRunner({ evaluation, suite, viewingR
       setError(err.message);
       setLoading(false);
     }
-  };
+  }, []);
 
   const runSuite = async () => {
     if (!suite) return;
@@ -210,20 +212,23 @@ export const EvalRunner = memo(function EvalRunner({ evaluation, suite, viewingR
     }
   };
 
-  // Handle save from JSON editor
-  const handleSave = (updatedEval) => {
+  // Handle save from JSON editor - memoized for EvalJsonEditor
+  const handleSave = useCallback((updatedEval) => {
     setEvalDetails(updatedEval);
-  };
+  }, []);
+
+  // Handle close results - memoized for EvalResults
+  const handleCloseResults = useCallback(() => {
+    setResults(null);
+    setJobId(null);
+  }, []);
 
   // Show results if available (from a fresh run)
   if (results) {
     return (
       <EvalResults
         results={results}
-        onClose={() => {
-          setResults(null);
-          setJobId(null);
-        }}
+        onClose={handleCloseResults}
       />
     );
   }
@@ -309,50 +314,11 @@ export const EvalRunner = memo(function EvalRunner({ evaluation, suite, viewingR
         </div>
 
         {/* Bottom bar - anchored like chat input */}
-        <div className="eval-input-bar">
-          {loading ? (
-            <div className="eval-progress-inline">
-              <div className="progress-bar">
-                <div
-                  className="progress-fill"
-                  style={{ width: progress ? `${(progress.current / progress.total) * 100}%` : '0%' }}
-                />
-              </div>
-              <span className="progress-text">
-                {progress ? `${progress.current} / ${progress.total} runs` : 'Starting evaluation...'}
-              </span>
-            </div>
-          ) : (
-            <>
-              <div className="eval-config-inline">
-                <label>
-                  Runs:
-                  <input
-                    type="number"
-                    min="1"
-                    max="20"
-                    value={runConfig.runs}
-                    onChange={(e) => setRunConfig(prev => ({ ...prev, runs: parseInt(e.target.value) || 5 }))}
-                  />
-                </label>
-                <input
-                  type="text"
-                  className="alt-prompt-input"
-                  placeholder="Alternative prompt path (optional)"
-                  value={runConfig.alternativePrompt}
-                  onChange={(e) => setRunConfig(prev => ({ ...prev, alternativePrompt: e.target.value }))}
-                />
-              </div>
-              <button
-                className="run-btn primary"
-                onClick={runEvaluation}
-                disabled={loading}
-              >
-                {loading ? 'Running...' : 'Run Evaluation'}
-              </button>
-            </>
-          )}
-        </div>
+        <EvalInputBar
+          onRun={runEvaluation}
+          loading={loading}
+          progress={progress}
+        />
       </div>
     );
   }
@@ -369,5 +335,13 @@ export const EvalRunner = memo(function EvalRunner({ evaluation, suite, viewingR
         </p>
       </div>
     </div>
+  );
+}, (prevProps, nextProps) => {
+  // Custom comparison - only re-render when value props change
+  // Callbacks are not compared since they may have new references but same behavior
+  return (
+    prevProps.evaluation === nextProps.evaluation &&
+    prevProps.suite === nextProps.suite &&
+    prevProps.viewingResults === nextProps.viewingResults
   );
 });

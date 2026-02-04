@@ -112,9 +112,12 @@ export const ChatInput = memo(function ChatInput({
       setInput(newInput);
     }
 
+    // Only one think mode at a time (reasoning OR deep research, not both)
     if (option.type === 'message_type') {
+      onReasoningModeChange(null); // Clear reasoning mode
       onMessageTypeChange(option.id);
     } else if (option.type === 'reasoning') {
+      onMessageTypeChange(null); // Clear message type (deep research)
       onReasoningModeChange(option.id);
     }
 
@@ -176,31 +179,28 @@ export const ChatInput = memo(function ChatInput({
 
   return (
     <form className="input-form" onSubmit={handleLocalSubmit}>
-      {/* Attachments preview */}
-      {attachments.length > 0 && (
-        <div className="attachments-preview">
-          {attachments.map((attachment, index) => (
-            <div key={index} className="attachment-chip">
-              <span className="attachment-icon">
-                {attachment.type.startsWith('image/') ? '🖼️' : '📎'}
-              </span>
-              <span className="attachment-name">{attachment.name}</span>
-              <button
-                type="button"
-                className="attachment-remove"
-                onClick={() => onRemoveAttachment(index)}
-              >
-                ×
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-
       <div className="input-wrapper">
-        {/* Hashtag chips for active modes */}
-        {(messageType || reasoningMode) && (
-          <div className="hashtag-chips">
+        {/* Chips bar - show if attachments OR reasoning mode OR message type */}
+        {(attachments.length > 0 || reasoningMode || messageType) && (
+          <div className="attachments-bar">
+            {/* Attachment chips first */}
+            {attachments.map((attachment, index) => (
+              <div key={index} className="attachment-chip">
+                <span className="attachment-icon">
+                  {attachment.type.startsWith('image/') ? '🖼️' : '📎'}
+                </span>
+                <span className="attachment-name">{attachment.name}</span>
+                <button
+                  type="button"
+                  className="attachment-remove"
+                  onClick={() => onRemoveAttachment(index)}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+
+            {/* Message type chip (e.g., Deep Research) */}
             {messageType && (
               <div className="hashtag-chip hashtag-chip-research">
                 <span className="hashtag-chip-icon">🔬</span>
@@ -218,6 +218,7 @@ export const ChatInput = memo(function ChatInput({
               </div>
             )}
 
+            {/* Reasoning mode chip, accent color */}
             {reasoningMode && (
               <div className="hashtag-chip">
                 <span className="hashtag-chip-icon">🧠</span>
@@ -273,5 +274,16 @@ export const ChatInput = memo(function ChatInput({
         {isResponsePending ? 'Waiting...' : 'Send'}
       </button>
     </form>
+  );
+}, (prevProps, nextProps) => {
+  // Custom comparison - only re-render when these value props change
+  // Callbacks are not compared since they may have new references but same behavior
+  return (
+    prevProps.attachments === nextProps.attachments &&
+    prevProps.isConnected === nextProps.isConnected &&
+    prevProps.isResponsePending === nextProps.isResponsePending &&
+    prevProps.reasoningMode === nextProps.reasoningMode &&
+    prevProps.messageType === nextProps.messageType &&
+    prevProps.modelCapabilities === nextProps.modelCapabilities
   );
 });

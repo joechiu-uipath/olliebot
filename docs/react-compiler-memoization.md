@@ -161,6 +161,14 @@ const [expandedAccordions, setExpandedAccordions] = useState({});
 | `RAGProjects` | Renders list of projects, receives callback props |
 | `BrowserSessions` | Renders list of sessions, receives callback props |
 | `MessageContent` | Rendered in a list of messages |
+| `SourcePanel` | Receives citations prop |
+| `SourceCard` | Rendered in a list of sources |
+| `ChatInput` | Receives many callback props |
+| `EvalSidebar` | Receives callback props for selection |
+| `EvalRunner` | Receives callback props, renders EvalJsonEditor |
+| `EvalJsonEditor` | Receives onSave callback |
+| `EvalResults` | Receives onClose callback |
+| `EvalInputBar` | Manages local input state (same pattern as ChatInput) |
 
 ### Callbacks Wrapped with useCallback()
 
@@ -174,6 +182,18 @@ const [expandedAccordions, setExpandedAccordions] = useState({});
 | `handleIndexProject` | App.jsx | `[]` |
 | `handleUploadToProject` | App.jsx | `[]` |
 | `sendMessage` | useWebSocket.js | `[]` |
+| `handleSubmit` | App.jsx | `[sendMessage]` (uses refs for other deps) |
+| `handlePaste` | App.jsx | `[]` |
+| `removeAttachment` | App.jsx | `[]` |
+| `handleSelectEvaluation` | App.jsx | `[navigate]` |
+| `handleSelectSuite` | App.jsx | `[navigate]` |
+| `handleSelectResult` | App.jsx | `[navigate]` |
+| `handleEvalBack` | App.jsx | `[navigate]` |
+| `handleCloseBrowserPreview` | App.jsx | `[]` |
+| `loadEvaluationDetails` | EvalRunner.jsx | `[]` |
+| `handleSave` | EvalRunner.jsx | `[]` |
+| `handleCloseResults` | EvalRunner.jsx | `[]` |
+| `runEvaluation` | EvalRunner.jsx | `[]` (uses ref for evaluation) |
 
 ### Key Technique: Functional State Updates
 
@@ -240,6 +260,13 @@ function SourcePanel({ citations }) {
 3. Interact with the app - components that re-render will flash
 
 Or skip to **Step 2** (comparison function logging) which always works.
+
+**⚠️ HMR Warning:** Hot Module Replacement can cause false positives when debugging memoization. HMR may:
+- Keep old component instances with stale comparison functions
+- Hold references to old callback versions
+- Not properly update memo() wrappers
+
+**Always do a full build + page refresh** before concluding that memoization isn't working. Many "bugs" are actually HMR artifacts that disappear after a fresh load.
 
 ### Step 2: Add Debug Comparison Function
 
@@ -370,6 +397,111 @@ When a memoized component still re-renders:
 ### React DevTools Profiler
 
 Enable "Highlight updates when components render" to visually see re-renders.
+
+---
+
+## Case Study: Fixing Eval Tab Re-renders
+
+This section documents the systematic fix of re-render issues in the Eval tab components.
+
+### Problem
+
+When typing in the EvalJsonEditor text box, all Eval components (EvalSidebar, EvalRunner, EvalJsonEditor) were re-rendering unnecessarily.
+
+### Analysis
+
+| Component | Had memo() | Had Custom Comparison | Issues Found |
+|-----------|------------|----------------------|--------------|
+| EvalSidebar | ✓ | ✗ | Missing custom comparison |
+| EvalRunner | ✓ | ✗ | Missing custom comparison, inline callbacks, non-memoized functions |
+| EvalJsonEditor | ✓ | ✗ | Missing custom comparison |
+| EvalResults | ✓ | ✗ | Missing custom comparison |
+
+### Fixes Applied
+
+**1. Added custom comparison functions to all components:**
+
+```jsx
+// EvalSidebar - only compare selection state, not callbacks
+}, (prevProps, nextProps) => {
+  return (
+    prevProps.selectedEvaluation === nextProps.selectedEvaluation &&
+    prevProps.selectedSuite === nextProps.selectedSuite &&
+    prevProps.selectedResult === nextProps.selectedResult
+  );
+});
+
+// EvalRunner - only compare value props
+}, (prevProps, nextProps) => {
+  return (
+    prevProps.evaluation === nextProps.evaluation &&
+    prevProps.suite === nextProps.suite &&
+    prevProps.viewingResults === nextProps.viewingResults
+  );
+});
+
+// EvalJsonEditor - only compare data props
+}, (prevProps, nextProps) => {
+  return (
+    prevProps.evaluation === nextProps.evaluation &&
+    prevProps.evalDetails === nextProps.evalDetails
+  );
+});
+
+// EvalResults - only compare results
+}, (prevProps, nextProps) => {
+  return prevProps.results === nextProps.results;
+});
+```
+
+**2. Wrapped callbacks in useCallback (EvalRunner):**
+
+```jsx
+// loadEvaluationDetails - used in useEffect deps
+const loadEvaluationDetails = useCallback(async (path) => {
+  // ... fetch logic
+}, []);
+
+// handleSave - passed to EvalJsonEditor
+const handleSave = useCallback((updatedEval) => {
+  setEvalDetails(updatedEval);
+}, []);
+
+// handleCloseResults - passed to EvalResults
+const handleCloseResults = useCallback(() => {
+  setResults(null);
+  setJobId(null);
+}, []);
+```
+
+**3. Fixed inline callback:**
+
+```jsx
+// BEFORE: Inline function creates new reference every render
+<EvalResults
+  results={results}
+  onClose={() => {
+    setResults(null);
+    setJobId(null);
+  }}
+/>
+
+// AFTER: Stable callback reference
+<EvalResults
+  results={results}
+  onClose={handleCloseResults}
+/>
+```
+
+### Key Takeaways
+
+1. **Custom comparison functions should NOT compare callback props** - callbacks may have new references but same behavior, and comparing them defeats the purpose of memoization.
+
+2. **Look for functions used in useEffect dependency arrays** - these need useCallback to prevent infinite re-render loops or unnecessary effect triggers.
+
+3. **Look for inline callbacks passed to memoized children** - these break memoization and should be extracted to useCallback.
+
+4. **Apply fixes systematically** - check all memoized components in a feature area, not just the one you notice re-rendering.
 
 ---
 

@@ -391,4 +391,11 @@ export const EvalJsonEditor = memo(function EvalJsonEditor({ evaluation, evalDet
       )}
     </div>
   );
+}, (prevProps, nextProps) => {
+  // Custom comparison - only re-render when value props change
+  // Callbacks are not compared since they may have new references but same behavior
+  return (
+    prevProps.evaluation === nextProps.evaluation &&
+    prevProps.evalDetails === nextProps.evalDetails
+  );
 });

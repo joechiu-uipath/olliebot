@@ -259,4 +259,12 @@ export const EvalSidebar = memo(function EvalSidebar({
       </div>
     </div>
   );
+}, (prevProps, nextProps) => {
+  // Custom comparison - only re-render when value props change
+  // Callbacks are not compared since they may have new references but same behavior
+  return (
+    prevProps.selectedEvaluation === nextProps.selectedEvaluation &&
+    prevProps.selectedSuite === nextProps.selectedSuite &&
+    prevProps.selectedResult === nextProps.selectedResult
+  );
 });
