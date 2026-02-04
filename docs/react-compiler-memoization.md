@@ -217,14 +217,29 @@ This section shows how to debug and fix a component that's not memoizing correct
 - Component re-renders when scrolling
 - React DevTools Profiler shows unexpected renders
 
-**How to detect:** Add a console.log at the top of the component:
+**How to detect:**
+
+~~Add a console.log at the top of the component~~ - **This doesn't work with React Compiler!**
 
 ```jsx
+// DON'T DO THIS - React Compiler may optimize this away
 function SourcePanel({ citations }) {
-  console.log('[SourcePanel] render'); // Add this temporarily
+  console.log('[SourcePanel] render'); // May not log!
   // ...
 }
 ```
+
+**Why it doesn't work:** React Compiler transforms the component code. It may:
+- Move code around during optimization
+- Memoize sections so they don't run every render
+- Skip calling the function body entirely for cached renders
+
+**Instead, use React DevTools:**
+1. Open React DevTools → Profiler tab
+2. Click gear icon → Enable "Highlight updates when components render"
+3. Interact with the app - components that re-render will flash
+
+Or skip to **Step 2** (comparison function logging) which always works.
 
 ### Step 2: Add Debug Comparison Function
 
