@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, memo } from 'react';
 import Prism from 'prismjs';
 import 'prismjs/components/prism-markup';
 import 'prismjs/themes/prism-tomorrow.css';
@@ -14,7 +14,7 @@ const HEIGHT_STEP = 100;
  * When isStreaming is true, only raw HTML view is shown to prevent flashing.
  * When streaming ends, it auto-switches to preview mode.
  */
-function HtmlPreview({ html, className = '', isStreaming = false }) {
+const HtmlPreview = memo(function HtmlPreview({ html, className = '', isStreaming = false }) {
   const [viewMode, setViewMode] = useState(isStreaming ? 'raw' : 'preview');
   const [height, setHeight] = useState(DEFAULT_HEIGHT);
   const [isFullscreen, setIsFullscreen] = useState(false);
@@ -284,6 +284,6 @@ function HtmlPreview({ html, className = '', isStreaming = false }) {
       )}
     </div>
   );
-}
+});
 
 export default HtmlPreview;

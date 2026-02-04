@@ -1,10 +1,10 @@
-import { useState, useRef, useEffect, forwardRef, useImperativeHandle } from 'react';
+import { useState, useRef, useEffect, forwardRef, useImperativeHandle, memo } from 'react';
 
 /**
  * ChatInput component - manages local input state to prevent parent re-renders.
  * Attachments and other state remain in parent.
  */
-export const ChatInput = forwardRef(function ChatInput({
+export const ChatInput = memo(forwardRef(function ChatInput({
   onSubmit,
   onInputChange,
   onKeyDown: parentKeyDown,
@@ -266,4 +266,4 @@ export const ChatInput = forwardRef(function ChatInput({
       </button>
     </form>
   );
-});
+}));

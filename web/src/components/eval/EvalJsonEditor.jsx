@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, memo } from 'react';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 
@@ -44,7 +44,7 @@ function DeferredSyntaxHighlighter({ language, children, customStyle }) {
   );
 }
 
-export function EvalJsonEditor({ evaluation, evalDetails, onSave }) {
+export const EvalJsonEditor = memo(function EvalJsonEditor({ evaluation, evalDetails, onSave }) {
   const [jsonText, setJsonText] = useState('');
   const [parseError, setParseError] = useState(null);
   const [saving, setSaving] = useState(false);
@@ -391,4 +391,4 @@ export function EvalJsonEditor({ evaluation, evalDetails, onSave }) {
       )}
     </div>
   );
-}
+});

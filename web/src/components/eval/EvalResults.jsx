@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useState, memo } from 'react';
 
-export function EvalResults({ results, onClose }) {
+export const EvalResults = memo(function EvalResults({ results, onClose }) {
   const [activeTab, setActiveTab] = useState('summary');
   const [expandedRuns, setExpandedRuns] = useState(new Set());
 
@@ -333,4 +333,4 @@ export function EvalResults({ results, onClose }) {
       </div>
     </div>
   );
-}
+});

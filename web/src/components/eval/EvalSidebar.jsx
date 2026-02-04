@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, memo } from 'react';
 
-export function EvalSidebar({
+export const EvalSidebar = memo(function EvalSidebar({
   onSelectEvaluation,
   onSelectSuite,
   onSelectResult,
@@ -259,4 +259,4 @@ export function EvalSidebar({
       </div>
     </div>
   );
-}
+});

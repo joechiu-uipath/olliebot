@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, memo } from 'react';
 
 /**
  * Source type icons
@@ -53,7 +53,7 @@ function SourceCard({ index, source }) {
 /**
  * Source panel component - displays citation sources for a message
  */
-export function SourcePanel({ citations }) {
+export const SourcePanel = memo(function SourcePanel({ citations }) {
   const [expanded, setExpanded] = useState(false);
 
   // Don't render if no citations or no sources
@@ -93,6 +93,6 @@ export function SourcePanel({ citations }) {
       )}
     </div>
   );
-}
+});
 
 export default SourcePanel;
