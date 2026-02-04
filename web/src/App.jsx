@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback, memo, useMemo } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
@@ -21,9 +21,8 @@ import RAGProjects from './components/RAGProjects';
 import { SourcePanel } from './components/SourcePanel';
 
 // Code block component with copy button and language header
-// Memoized to prevent unnecessary re-renders
 // Uses deferred rendering for faster initial display
-const CodeBlock = memo(function CodeBlock({ language, children }) {
+function CodeBlock({ language, children }) {
   const [copied, setCopied] = useState(false);
   const [isReady, setIsReady] = useState(false);
   const hasLanguage = language && language !== 'text';
@@ -100,15 +99,13 @@ const CodeBlock = memo(function CodeBlock({ language, children }) {
       )}
     </div>
   );
-});
+}
 
 /**
- * Memoized message content component to prevent re-renders when parent state changes.
- * Only re-renders when content, html, or isStreaming props change.
+ * Message content component for rendering markdown messages.
  */
-const MessageContent = memo(function MessageContent({ content, html = false, isStreaming = false }) {
-  // Memoize the components object to prevent ReactMarkdown re-renders
-  const components = useMemo(() => ({
+function MessageContent({ content, html = false, isStreaming = false }) {
+  const components = {
     // Custom rendering for pre (code blocks)
     pre({ children }) {
       return <div className="code-block-wrapper">{children}</div>;
@@ -146,13 +143,9 @@ const MessageContent = memo(function MessageContent({ content, html = false, isS
         </div>
       );
     },
-  }), [isStreaming]);
+  };
 
-  // Memoize rehype plugins array
-  const rehypePlugins = useMemo(
-    () => html ? [rehypeRaw, rehypeSanitize] : [rehypeSanitize],
-    [html]
-  );
+  const rehypePlugins = html ? [rehypeRaw, rehypeSanitize] : [rehypeSanitize];
 
   return (
     <ReactMarkdown
@@ -163,7 +156,7 @@ const MessageContent = memo(function MessageContent({ content, html = false, isS
       {content}
     </ReactMarkdown>
   );
-});
+}
 
 // Module-level flag to prevent double-fetching in React Strict Mode
 // (Strict Mode unmounts/remounts component, so refs don't persist)
@@ -232,20 +225,20 @@ function App() {
   const [expandedTools, setExpandedTools] = useState(new Set());
 
   // Agent types that should have their responses collapsed by default
-  const COLLAPSE_BY_DEFAULT_AGENT_TYPES = useMemo(() => new Set([
+  const COLLAPSE_BY_DEFAULT_AGENT_TYPES = new Set([
     'research-worker',
     'research-reviewer',
-  ]), []);
+  ]);
 
   // Map display names to agent type IDs (for legacy messages without agentType)
-  const AGENT_NAME_TO_TYPE = useMemo(() => ({
+  const AGENT_NAME_TO_TYPE = {
     'Research Worker': 'research-worker',
     'Research Reviewer': 'research-reviewer',
     'Deep Research Lead': 'deep-research-lead',
-  }), []);
+  };
 
   // Helper function to check if an agent type should collapse by default
-  const shouldCollapseByDefault = useCallback((agentType, agentName) => {
+  const shouldCollapseByDefault = (agentType, agentName) => {
     // First try the explicit agentType
     if (agentType && COLLAPSE_BY_DEFAULT_AGENT_TYPES.has(agentType)) {
       return true;
@@ -258,7 +251,7 @@ function App() {
       }
     }
     return false;
-  }, [COLLAPSE_BY_DEFAULT_AGENT_TYPES, AGENT_NAME_TO_TYPE]);
+  };
 
   // Expanded agent messages (for agents that collapse by default, like research-worker)
   const [expandedAgentMessages, setExpandedAgentMessages] = useState(new Set());
@@ -291,7 +284,7 @@ function App() {
   const navigateRef = useRef(navigate);
   navigateRef.current = navigate;
 
-  const handleMessage = useCallback((data) => {
+  const handleMessage = (data) => {
     // Helper to check if message belongs to current conversation
     const isForCurrentConversation = (msgConversationId) => {
       // If no conversationId specified, assume it's for current conversation
@@ -647,10 +640,10 @@ function App() {
         .then((projects) => setRagProjects(projects))
         .catch(() => {});
     }
-  }, []);
+  };
 
   // Helper to transform message data from API format
-  const transformMessages = useCallback((data) => {
+  const transformMessages = (data) => {
     return data.map((msg) => {
       // Determine the role based on message type
       let role = msg.role;
@@ -694,10 +687,10 @@ function App() {
         citations: msg.citations,
       };
     });
-  }, []);
+  };
 
   // Load all startup data in a single request
-  const loadStartupData = useCallback(async () => {
+  const loadStartupData = async () => {
     try {
       const res = await fetch('/api/startup');
       if (!res.ok) throw new Error('Startup API not available');
@@ -743,12 +736,12 @@ function App() {
       setConversationsLoading(false);
       setShowSkeleton(false);
     }
-  }, [transformMessages]);
+  };
 
   // Track if this is the first connection (to avoid refreshing on initial connect)
   const hasConnectedOnce = useRef(false);
 
-  const handleOpen = useCallback(() => {
+  const handleOpen = () => {
     setIsConnected(true);
     // Only refresh data on REconnection, not initial connection
     // (initial data load is handled by the mount useEffect)
@@ -756,8 +749,8 @@ function App() {
       loadStartupData();
     }
     hasConnectedOnce.current = true;
-  }, [loadStartupData]);
-  const handleClose = useCallback(() => setIsConnected(false), []);
+  };
+  const handleClose = () => setIsConnected(false);
 
   const { sendMessage, connectionState } = useWebSocket({
     onMessage: handleMessage,
@@ -876,16 +869,16 @@ function App() {
   const isScrollingToBottom = useRef(false);
 
   // Handle wheel events - immediately disengage auto-scroll when user scrolls up
-  const handleWheel = useCallback((e) => {
+  const handleWheel = (e) => {
     if (e.deltaY < 0) {
       // User is scrolling UP - immediately disengage auto-scroll
       setIsUserScrolled(true);
       setShowScrollButton(true);
     }
-  }, []);
+  };
 
   // Handle scroll events to detect scroll position (only controls button visibility)
-  const handleScroll = useCallback(() => {
+  const handleScroll = () => {
     // Ignore scroll events during programmatic scroll
     if (isScrollingToBottom.current) return;
 
@@ -902,10 +895,10 @@ function App() {
     } else {
       setShowScrollButton(true);
     }
-  }, []);
+  };
 
   // Scroll to bottom handler
-  const scrollToBottom = useCallback(() => {
+  const scrollToBottom = () => {
     isScrollingToBottom.current = true;
     setIsUserScrolled(false);
     setShowScrollButton(false);
@@ -914,16 +907,16 @@ function App() {
     setTimeout(() => {
       isScrollingToBottom.current = false;
     }, 500);
-  }, []);
+  };
 
   // Helper to insert a new conversation after well-known ones
-  const insertConversation = useCallback((prev, newConv) => {
+  const insertConversation = (prev, newConv) => {
     const wellKnownCount = prev.filter((c) => c.isWellKnown).length;
     return [...prev.slice(0, wellKnownCount), newConv, ...prev.slice(wellKnownCount)];
-  }, []);
+  };
 
   // Start a new conversation
-  const handleNewConversation = useCallback(async () => {
+  const handleNewConversation = async () => {
     try {
       // Create conversation on server
       const res = await fetch('/api/conversations', {
@@ -968,10 +961,10 @@ function App() {
       // Navigate to the new conversation URL
       navigate(`/chat/${encodeURIComponent(newId)}`, { replace: true });
     }
-  }, [sendMessage, insertConversation, navigate]);
+  };
 
   // Delete conversation (soft delete)
-  const handleDeleteConversation = useCallback(async (convId, e) => {
+  const handleDeleteConversation = async (convId, e) => {
     e.stopPropagation(); // Prevent selecting the conversation
     setOpenMenuId(null);
 
@@ -1012,10 +1005,10 @@ function App() {
     } catch (error) {
       console.error('Failed to delete conversation:', error);
     }
-  }, [conversations, currentConversationId, navigate, transformMessages]);
+  };
 
   // Start inline rename
-  const handleRenameConversation = useCallback((convId, e) => {
+  const handleRenameConversation = (convId, e) => {
     e.stopPropagation();
     setOpenMenuId(null);
 
@@ -1026,10 +1019,10 @@ function App() {
     setEditingTitle(conversation.title);
     // Focus the input after render
     setTimeout(() => renameInputRef.current?.focus(), 0);
-  }, [conversations]);
+  };
 
   // Save the rename
-  const handleSaveRename = useCallback(async () => {
+  const handleSaveRename = async () => {
     if (!editingConversationId) return;
 
     const originalConv = conversations.find((c) => c.id === editingConversationId);
@@ -1065,16 +1058,16 @@ function App() {
 
     setEditingConversationId(null);
     setEditingTitle('');
-  }, [editingConversationId, editingTitle, conversations]);
+  };
 
   // Cancel the rename
-  const handleCancelRename = useCallback(() => {
+  const handleCancelRename = () => {
     setEditingConversationId(null);
     setEditingTitle('');
-  }, []);
+  };
 
   // Handle keydown in rename input
-  const handleRenameKeyDown = useCallback((e) => {
+  const handleRenameKeyDown = (e) => {
     if (e.key === 'Enter') {
       e.preventDefault();
       handleSaveRename();
@@ -1082,13 +1075,13 @@ function App() {
       e.preventDefault();
       handleCancelRename();
     }
-  }, [handleSaveRename, handleCancelRename]);
+  };
 
   // Toggle actions menu
-  const toggleActionsMenu = useCallback((convId, e) => {
+  const toggleActionsMenu = (convId, e) => {
     e.stopPropagation(); // Prevent selecting the conversation
     setOpenMenuId((prev) => (prev === convId ? null : convId));
-  }, []);
+  };
 
   // Close menu when clicking outside
   useEffect(() => {
@@ -1109,7 +1102,7 @@ function App() {
   }, [hashtagMenuOpen]);
 
   // Switch conversation - navigates to the conversation URL
-  const handleSelectConversation = useCallback((convId) => {
+  const handleSelectConversation = (convId) => {
     if (convId === currentConversationId) return;
 
     // Mark that we're navigating to prevent URL sync effect from re-triggering
@@ -1131,7 +1124,7 @@ function App() {
       .then(res => res.ok ? res.json() : [])
       .then(data => setMessages(transformMessages(data)))
       .catch(() => setMessages([]));
-  }, [currentConversationId, navigate, transformMessages]);
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -1210,25 +1203,25 @@ function App() {
   };
 
   // Handle file drop
-  const handleDrop = useCallback((e) => {
+  const handleDrop = (e) => {
     e.preventDefault();
     setIsDragOver(false);
     const files = Array.from(e.dataTransfer.files);
     setAttachments((prev) => [...prev, ...files]);
-  }, []);
+  };
 
-  const handleDragOver = useCallback((e) => {
+  const handleDragOver = (e) => {
     e.preventDefault();
     setIsDragOver(true);
-  }, []);
+  };
 
-  const handleDragLeave = useCallback((e) => {
+  const handleDragLeave = (e) => {
     e.preventDefault();
     setIsDragOver(false);
-  }, []);
+  };
 
   // Handle paste - extract images from clipboard
-  const handlePaste = useCallback((e) => {
+  const handlePaste = (e) => {
     const items = e.clipboardData?.items;
     if (!items) return;
 
@@ -1247,15 +1240,15 @@ function App() {
     if (imageFiles.length > 0) {
       setAttachments((prev) => [...prev, ...imageFiles]);
     }
-  }, []);
+  };
 
   // Remove attachment
-  const removeAttachment = useCallback((index) => {
+  const removeAttachment = (index) => {
     setAttachments((prev) => prev.filter((_, i) => i !== index));
-  }, []);
+  };
 
   // Handle input change - detect # trigger for hashtag menu (reasoning modes + deep research)
-  const handleInputChange = useCallback((e) => {
+  const handleInputChange = (e) => {
     const newValue = e.target.value;
     const cursorPos = e.target.selectionStart;
 
@@ -1281,10 +1274,10 @@ function App() {
     }
 
     setInput(newValue);
-  }, [input]);
+  };
 
   // Handle reasoning mode selection
-  const handleSelectReasoningMode = useCallback((mode) => {
+  const handleSelectReasoningMode = (mode) => {
     setReasoningMode(mode);
     setHashtagMenuOpen(false);
     // Remove the # from input
@@ -1300,10 +1293,10 @@ function App() {
       return prev;
     });
     textareaRef.current?.focus();
-  }, []);
+  };
 
   // Handle message type selection (e.g., deep research)
-  const handleSelectMessageType = useCallback((type) => {
+  const handleSelectMessageType = (type) => {
     setMessageType(type);
     setHashtagMenuOpen(false);
     // Remove the # from input
@@ -1319,10 +1312,10 @@ function App() {
       return prev;
     });
     textareaRef.current?.focus();
-  }, []);
+  };
 
   // Build available hashtag menu options
-  const hashtagMenuOptions = useMemo(() => {
+  const hashtagMenuOptions = (() => {
     const options = [];
     // Deep Research is always available
     options.push({ id: 'deep_research', type: 'messageType', icon: '🔬', label: 'Deep Research', desc: 'Comprehensive multi-source research' });
@@ -1334,19 +1327,19 @@ function App() {
       options.push({ id: 'xhigh', type: 'reasoningMode', icon: '🧠', label: 'Think+', desc: 'Maximum effort reasoning' });
     }
     return options;
-  }, [modelCapabilities.reasoningEfforts]);
+  })();
 
   // Handle hashtag menu item selection
-  const handleHashtagMenuSelect = useCallback((option) => {
+  const handleHashtagMenuSelect = (option) => {
     if (option.type === 'messageType') {
       handleSelectMessageType(option.id);
     } else if (option.type === 'reasoningMode') {
       handleSelectReasoningMode(option.id);
     }
-  }, [handleSelectMessageType, handleSelectReasoningMode]);
+  };
 
   // Handle textarea key down (submit on Enter, newline on Shift+Enter)
-  const handleKeyDown = useCallback((e) => {
+  const handleKeyDown = (e) => {
     // Handle hashtag menu navigation
     if (hashtagMenuOpen) {
       const optionCount = hashtagMenuOptions.length;
@@ -1377,7 +1370,7 @@ function App() {
         handleSubmit(e);
       }
     }
-  }, [input, attachments, hashtagMenuOpen, hashtagMenuIndex, hashtagMenuOptions, handleHashtagMenuSelect]);
+  };
 
   const handleAction = (action, data) => {
     sendMessage({ type: 'action', action, data, conversationId: currentConversationId });
@@ -1394,7 +1387,7 @@ function App() {
   };
 
   // Run a task immediately
-  const handleRunTask = useCallback(async (taskId) => {
+  const handleRunTask = async (taskId) => {
     try {
       const res = await fetch(`/api/tasks/${taskId}/run`, {
         method: 'POST',
@@ -1415,7 +1408,7 @@ function App() {
     } catch (error) {
       console.error('Error running task:', error);
     }
-  }, [currentConversationId]);
+  };
 
   // Helper to check if a value is a data URL image
   const isDataUrlImage = (value) => {
@@ -1514,15 +1507,15 @@ function App() {
   };
 
   // Toggle accordion
-  const toggleAccordion = useCallback((key) => {
+  const toggleAccordion = (key) => {
     setExpandedAccordions((prev) => ({
       ...prev,
       [key]: !prev[key],
     }));
-  }, []);
+  };
 
   // Format tool tooltip with description and inputs
-  const formatToolTooltip = useCallback((tool) => {
+  const formatToolTooltip = (tool) => {
     let tooltip = tool.description || tool.name;
     if (tool.inputs && tool.inputs.length > 0) {
       tooltip += '\n\nInputs:';
@@ -1535,10 +1528,10 @@ function App() {
       }
     }
     return tooltip;
-  }, []);
+  };
 
   // Toggle tool event expansion
-  const toggleToolExpand = useCallback((toolId) => {
+  const toggleToolExpand = (toolId) => {
     setExpandedTools((prev) => {
       const newSet = new Set(prev);
       if (newSet.has(toolId)) {
@@ -1548,10 +1541,10 @@ function App() {
       }
       return newSet;
     });
-  }, []);
+  };
 
   // Toggle agent message expansion (for messages that collapse by default)
-  const toggleAgentMessageExpand = useCallback((msgId) => {
+  const toggleAgentMessageExpand = (msgId) => {
     setExpandedAgentMessages((prev) => {
       const newSet = new Set(prev);
       if (newSet.has(msgId)) {
@@ -1561,7 +1554,7 @@ function App() {
       }
       return newSet;
     });
-  }, []);
+  };
 
   // Format date for conversation list
   const formatDate = (dateStr) => {
@@ -1575,47 +1568,47 @@ function App() {
     return date.toLocaleDateString();
   };
 
-  // Eval mode handlers - memoized to prevent EvalSidebar re-renders
-  const handleSelectEvaluation = useCallback((evaluation) => {
+  // Eval mode handlers
+  const handleSelectEvaluation = (evaluation) => {
     if (evaluation) {
       navigate(`/eval/${encodeURIComponent(evaluation.path)}`);
     } else {
       navigate('/eval');
     }
-  }, [navigate]);
+  };
 
-  const handleSelectSuite = useCallback((suite) => {
+  const handleSelectSuite = (suite) => {
     if (suite) {
       navigate(`/eval/suite/${encodeURIComponent(suite.suitePath)}`);
     } else {
       navigate('/eval');
     }
-  }, [navigate]);
+  };
 
-  const handleSelectResult = useCallback((resultInfo) => {
+  const handleSelectResult = (resultInfo) => {
     if (resultInfo) {
       navigate(`/eval/result/${encodeURIComponent(resultInfo.filePath)}`);
     } else {
       navigate('/eval');
     }
-  }, [navigate]);
+  };
 
-  const handleEvalBack = useCallback(() => {
+  const handleEvalBack = () => {
     navigate('/eval');
-  }, [navigate]);
+  };
 
   // Handle browser session selection
-  const handleSelectBrowserSession = useCallback((sessionId) => {
+  const handleSelectBrowserSession = (sessionId) => {
     setSelectedBrowserSessionId(sessionId);
-  }, []);
+  };
 
   // Close browser preview
-  const handleCloseBrowserPreview = useCallback(() => {
+  const handleCloseBrowserPreview = () => {
     setSelectedBrowserSessionId(null);
-  }, []);
+  };
 
   // Close browser session (terminate the browser process)
-  const handleCloseBrowserSession = useCallback((sessionId) => {
+  const handleCloseBrowserSession = (sessionId) => {
     // Optimistically remove from UI immediately
     setBrowserSessions((prev) => prev.filter((s) => s.id !== sessionId));
     setBrowserScreenshots((prev) => {
@@ -1628,20 +1621,20 @@ function App() {
     }
     // Send close request to server
     sendMessage({ type: 'browser-action', action: 'close', sessionId });
-  }, [sendMessage, selectedBrowserSessionId]);
+  };
 
-  // Toggle browser sessions accordion - memoized to prevent BrowserSessions re-render
-  const handleToggleBrowserSessions = useCallback(() => {
+  // Toggle browser sessions accordion
+  const handleToggleBrowserSessions = () => {
     toggleAccordion('browserSessions');
-  }, [toggleAccordion]);
+  };
 
   // Toggle RAG projects accordion
-  const handleToggleRagProjects = useCallback(() => {
+  const handleToggleRagProjects = () => {
     toggleAccordion('ragProjects');
-  }, [toggleAccordion]);
+  };
 
   // Handle RAG project indexing (force=true for full re-index)
-  const handleIndexProject = useCallback(async (projectId, force = false) => {
+  const handleIndexProject = async (projectId, force = false) => {
     try {
       const url = force
         ? `/api/rag/projects/${projectId}/index?force=true`
@@ -1656,10 +1649,10 @@ function App() {
     } catch (error) {
       console.error('Failed to start indexing:', error);
     }
-  }, []);
+  };
 
   // Handle file upload to RAG project via drag-and-drop
-  const handleUploadToProject = useCallback(async (projectId, files) => {
+  const handleUploadToProject = async (projectId, files) => {
     try {
       const formData = new FormData();
       for (const file of files) {
@@ -1679,7 +1672,7 @@ function App() {
     } catch (error) {
       console.error('Failed to upload files:', error);
     }
-  }, []);
+  };
 
   // Get selected browser session object
   const selectedBrowserSession = browserSessions.find(

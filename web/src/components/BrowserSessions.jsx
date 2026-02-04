@@ -6,7 +6,7 @@
  * Clicking a session opens a preview modal.
  */
 
-import React, { memo } from 'react';
+import React from 'react';
 
 /**
  * Status indicator colors
@@ -21,9 +21,8 @@ const STATUS_COLORS = {
 
 /**
  * Browser Sessions accordion component.
- * Memoized to prevent unnecessary re-renders from parent state changes.
  */
-export const BrowserSessions = memo(function BrowserSessions({
+export function BrowserSessions({
   sessions = [],
   screenshots = {},
   selectedSessionId,
@@ -120,7 +119,7 @@ export const BrowserSessions = memo(function BrowserSessions({
       )}
     </div>
   );
-});
+}
 
 /**
  * Extracts hostname from URL for display.

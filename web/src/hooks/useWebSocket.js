@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 // Use relative WebSocket URL to go through Vite's proxy (works with port forwarding)
 const wsProtocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
@@ -26,7 +26,7 @@ export function useWebSocket({ onMessage, onOpen, onClose, onError }) {
     onErrorRef.current = onError;
   }, [onMessage, onOpen, onClose, onError]);
 
-  const connect = useCallback(() => {
+  const connect = () => {
     // Connect directly to backend WebSocket server
     const wsUrl = BACKEND_WS_URL;
 
@@ -92,7 +92,7 @@ export function useWebSocket({ onMessage, onOpen, onClose, onError }) {
       console.error('[WebSocket] Failed to create connection:', error);
       setConnectionState('failed');
     }
-  }, []); // No dependencies - callbacks are accessed via refs
+  };
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -109,13 +109,13 @@ export function useWebSocket({ onMessage, onOpen, onClose, onError }) {
     };
   }, [connect]);
 
-  const sendMessage = useCallback((data) => {
+  const sendMessage = (data) => {
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
       wsRef.current.send(JSON.stringify(data));
     } else {
       console.warn('[WebSocket] Cannot send - not connected');
     }
-  }, []);
+  };
 
   return {
     sendMessage,

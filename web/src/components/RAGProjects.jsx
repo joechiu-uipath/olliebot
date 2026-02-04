@@ -1,11 +1,11 @@
-import React, { memo, useState, useCallback } from 'react';
+import React, { useState } from 'react';
 
 /**
  * RAG Projects Accordion
  * Displays a list of RAG projects from user/rag/ with indexing controls.
  * Supports drag-and-drop file upload to projects.
  */
-const RAGProjects = memo(function RAGProjects({
+function RAGProjects({
   projects = [],
   indexingProgress = {}, // { projectId: { status, totalDocuments, processedDocuments, ... } }
   expanded = false,
@@ -18,21 +18,21 @@ const RAGProjects = memo(function RAGProjects({
   const [uploadingProjectId, setUploadingProjectId] = useState(null);
 
   // Handle drag over on a project item
-  const handleDragOver = useCallback((e, projectId) => {
+  const handleDragOver = (e, projectId) => {
     e.preventDefault();
     e.stopPropagation();
     setDragOverProjectId(projectId);
-  }, []);
+  };
 
   // Handle drag leave
-  const handleDragLeave = useCallback((e) => {
+  const handleDragLeave = (e) => {
     e.preventDefault();
     e.stopPropagation();
     setDragOverProjectId(null);
-  }, []);
+  };
 
   // Handle file drop
-  const handleDrop = useCallback(async (e, projectId) => {
+  const handleDrop = async (e, projectId) => {
     e.preventDefault();
     e.stopPropagation();
     setDragOverProjectId(null);
@@ -48,7 +48,7 @@ const RAGProjects = memo(function RAGProjects({
     } finally {
       setUploadingProjectId(null);
     }
-  }, [onUpload]);
+  };
   return (
     <div className="accordion">
       <button
@@ -145,6 +145,6 @@ const RAGProjects = memo(function RAGProjects({
       )}
     </div>
   );
-});
+}
 
 export default RAGProjects;
