@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: [20, 22]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Build server
+        run: npm run build:server
+
+      - name: Build web
+        run: npm run build:web
+
+      - name: Build TUI
+        run: npm run build:tui
+
+      - name: Verify build outputs
+        run: |
+          test -f dist/index.js || (echo "Server build output missing" && exit 1)
+          test -d web/dist || (echo "Web build output missing" && exit 1)
+          test -f tui/dist/index.js || (echo "TUI build output missing" && exit 1)
+          echo "All build outputs verified successfully"
