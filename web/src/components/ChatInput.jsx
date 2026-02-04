@@ -148,11 +148,14 @@ export const ChatInput = memo(function ChatInput({
     };
 
     const handleKeyUp = (e) => {
-      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'V') {
+      // Stop recording when any part of the shortcut (Ctrl/Cmd, Shift, or V) is released
+      if (!isRecording) {
+        return;
+      }
+
+      if (e.key === 'Control' || e.key === 'Meta' || e.key === 'Shift' || e.key === 'V') {
         e.preventDefault();
-        if (isRecording) {
-          stopRecording();
-        }
+        stopRecording();
       }
     };
 
