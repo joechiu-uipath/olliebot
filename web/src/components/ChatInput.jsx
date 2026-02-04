@@ -29,14 +29,19 @@ export const ChatInput = memo(function ChatInput({
   const [voiceAutoSubmit, setVoiceAutoSubmit] = useState(false);
   const [voiceError, setVoiceError] = useState(null);
   const [voiceInputWasEmpty, setVoiceInputWasEmpty] = useState(false);
+  const [voiceModeOn, setVoiceModeOn] = useState(false);
   const textareaRef = useRef(null);
 
   // Voice-to-text hook
   const {
     isRecording,
     isConnecting,
+    isFlushing,
+    isWsConnected,
     startRecording,
     stopRecording,
+    prepareRecording,
+    releaseRecording,
     transcript,
   } = useVoiceToText({
     onTranscript: useCallback((text) => {
@@ -46,12 +51,9 @@ export const ChatInput = memo(function ChatInput({
         onInputChange(text);
       }
     }, [onInputChange]),
-    onFinalTranscript: useCallback((text) => {
-      // If input was empty when recording started, auto-submit
-      // Note: voiceInputWasEmpty is captured in closure when recording starts
-      if (text.trim()) {
-        setVoiceAutoSubmit(true);
-      }
+    onFinalTranscript: useCallback(() => {
+      // Mark for auto-submit when recording ends (push-to-talk)
+      setVoiceAutoSubmit(true);
     }, []),
     onError: useCallback((error) => {
       setVoiceError(error);
@@ -60,52 +62,87 @@ export const ChatInput = memo(function ChatInput({
     }, []),
   });
 
-  // Handle auto-submit after voice recording
+  // Track auto-submit timer to prevent cleanup from canceling it
+  const voiceSubmitTimerRef = useRef(null);
+
+  // Handle auto-submit after voice recording (push-to-talk: 500ms delay after release)
   useEffect(() => {
-    if (voiceAutoSubmit && voiceInputWasEmpty && input.trim() && !isRecording && !isConnecting) {
+    if (voiceAutoSubmit && !isRecording && !isConnecting) {
       setVoiceAutoSubmit(false);
       setVoiceInputWasEmpty(false);
-      // Small delay to ensure UI updates
-      const timer = setTimeout(() => {
-        onSubmit(input);
-        setInput('');
-      }, 100);
-      return () => clearTimeout(timer);
+
+      // Clear any existing timer
+      if (voiceSubmitTimerRef.current) {
+        clearTimeout(voiceSubmitTimerRef.current);
+      }
+
+      // Wait 500ms after release to allow final transcription to arrive, then submit
+      voiceSubmitTimerRef.current = setTimeout(() => {
+        voiceSubmitTimerRef.current = null;
+        // Get current input value at submit time
+        const currentInput = textareaRef.current?.value || '';
+        if (currentInput.trim()) {
+          onSubmit(currentInput);
+          setInput('');
+        }
+      }, 500);
     }
-  }, [voiceAutoSubmit, voiceInputWasEmpty, input, isRecording, isConnecting, onSubmit]);
+  }, [voiceAutoSubmit, isRecording, isConnecting, onSubmit]);
 
-  // Voice button handlers
-  const handleVoiceMouseDown = useCallback((e) => {
-    e.preventDefault();
-    if (isRecording || isConnecting || !isConnected || isResponsePending) return;
+  // Cleanup timer on unmount
+  useEffect(() => {
+    return () => {
+      if (voiceSubmitTimerRef.current) {
+        clearTimeout(voiceSubmitTimerRef.current);
+      }
+    };
+  }, []);
 
-    // Remember if input was empty when starting
-    const wasEmpty = !input.trim();
-    setVoiceInputWasEmpty(wasEmpty);
+  // Pre-acquire microphone and prepare upstream when voice mode is turned ON
+  useEffect(() => {
+    if (voiceModeOn && isWsConnected && !isRecording && !isConnecting) {
+      prepareRecording();
+    }
+  }, [voiceModeOn, isWsConnected, isRecording, isConnecting, prepareRecording]);
+
+  // Toggle voice mode ON/OFF
+  const handleVoiceToggle = useCallback(() => {
+    if (voiceModeOn) {
+      // Turn OFF - release mic and cleanup
+      releaseRecording();
+      setVoiceModeOn(false);
+    } else {
+      // Turn ON - will trigger prepareRecording via useEffect
+      setVoiceModeOn(true);
+    }
+  }, [voiceModeOn, releaseRecording]);
+
+  // Voice button handlers (only active when voice mode is ON)
+  // Hover-to-talk: enter to start, leave to stop
+  const handleVoiceMouseEnter = useCallback(() => {
+    // Only hover-to-talk when voice mode is ON
+    if (!voiceModeOn) return;
+    // Voice only enabled when input is empty and not flushing
+    if (isRecording || isConnecting || isFlushing || !isConnected || !isWsConnected || isResponsePending || input.trim()) return;
+
+    setVoiceInputWasEmpty(true);
     startRecording();
-  }, [isRecording, isConnecting, isConnected, isResponsePending, input, startRecording]);
+  }, [voiceModeOn, isRecording, isConnecting, isFlushing, isConnected, isWsConnected, isResponsePending, input, startRecording]);
 
-  const handleVoiceMouseUp = useCallback((e) => {
-    e.preventDefault();
-    if (!isRecording && !isConnecting) return;
-    stopRecording();
-  }, [isRecording, isConnecting, stopRecording]);
-
-  // Also handle mouse leave to stop recording if user drags away
-  const handleVoiceMouseLeave = useCallback((e) => {
-    if (isRecording) {
+  const handleVoiceMouseLeave = useCallback(() => {
+    if (isRecording || isConnecting) {
       stopRecording();
     }
-  }, [isRecording, stopRecording]);
+  }, [isRecording, isConnecting, stopRecording]);
 
   // Keyboard shortcut for voice (Ctrl+Shift+V or Cmd+Shift+V)
   useEffect(() => {
     const handleKeyDown = (e) => {
       if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'V') {
         e.preventDefault();
-        if (!isRecording && !isConnecting && isConnected && !isResponsePending) {
-          const wasEmpty = !input.trim();
-          setVoiceInputWasEmpty(wasEmpty);
+        // Only allow voice when voice mode is ON, input is empty and not flushing
+        if (voiceModeOn && !isRecording && !isConnecting && !isFlushing && isConnected && isWsConnected && !isResponsePending && !input.trim()) {
+          setVoiceInputWasEmpty(true);
           startRecording();
         }
       }
@@ -127,7 +164,7 @@ export const ChatInput = memo(function ChatInput({
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
     };
-  }, [isRecording, isConnecting, isConnected, isResponsePending, input, startRecording, stopRecording]);
+  }, [voiceModeOn, isRecording, isConnecting, isFlushing, isConnected, isWsConnected, isResponsePending, input, startRecording, stopRecording]);
 
   // Expose methods to parent via ref
   useImperativeHandle(ref, () => ({
@@ -387,14 +424,12 @@ export const ChatInput = memo(function ChatInput({
       <div className="button-stack">
         <button
           type="button"
-          className={`voice-button ${isRecording ? 'recording' : ''} ${isConnecting ? 'connecting' : ''}`}
-          onMouseDown={handleVoiceMouseDown}
-          onMouseUp={handleVoiceMouseUp}
+          className={`voice-button ${voiceModeOn ? 'voice-on' : ''} ${isRecording ? 'recording' : ''} ${isConnecting ? 'connecting' : ''}`}
+          onClick={handleVoiceToggle}
+          onMouseEnter={handleVoiceMouseEnter}
           onMouseLeave={handleVoiceMouseLeave}
-          onTouchStart={handleVoiceMouseDown}
-          onTouchEnd={handleVoiceMouseUp}
-          disabled={!isConnected || isResponsePending}
-          title="Hold to talk (Ctrl+Shift+V)"
+          disabled={!isConnected || !isWsConnected || isResponsePending || isFlushing}
+          title={voiceModeOn ? "Voice ON - hover to talk, click to turn OFF" : "Click to enable voice mode"}
         >
           {isConnecting ? (
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">

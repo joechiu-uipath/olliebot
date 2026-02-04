@@ -1632,6 +1632,16 @@ html, body {
   }
 }
 
+.voice-button.voice-on {
+  background: rgba(34, 197, 94, 0.15);
+  color: #22c55e;
+  border: 1px solid rgba(34, 197, 94, 0.3);
+}
+
+.voice-button.voice-on:hover:not(:disabled):not(.recording) {
+  background: rgba(34, 197, 94, 0.25);
+}
+
 .voice-button:disabled {
   opacity: 0.5;
   cursor: not-allowed;
