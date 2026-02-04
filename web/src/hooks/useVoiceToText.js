@@ -245,8 +245,9 @@ export function useVoiceToText({ onTranscript, onFinalTranscript, onError } = {}
       }
 
       // Convert to base64
+      const bytes = new Uint8Array(pcm16.buffer);
       const base64 = btoa(
-        String.fromCharCode.apply(null, new Uint8Array(pcm16.buffer))
+        Array.from(bytes, byte => String.fromCharCode(byte)).join('')
       );
 
       const audioMessage = JSON.stringify({
