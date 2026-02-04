@@ -30,6 +30,7 @@ export class WorkerAgent extends AbstractAgent {
   // Collected citations from sub-agents (aggregated when building final response)
   // Stored in simplified format matching StoredCitationData.sources
   private subAgentCitations: Array<{
+    subAgentId: string; // Track which sub-agent provided this citation
     id: string;
     type: CitationSourceType;
     toolName: string;
@@ -391,7 +392,7 @@ export class WorkerAgent extends AbstractAgent {
         // Convert stored format to CitationSource format
         const convertedCitations: CitationSource[] = this.subAgentCitations.map(src => ({
           ...src,
-          toolRequestId: `subagent-${src.id}`, // Generate placeholder for sub-agent sources
+          toolRequestId: `${src.subAgentId}-${src.id}`, // Include sub-agent ID for traceability
         }));
         collectedSources.push(...convertedCitations);
         this.subAgentCitations = []; // Clear after merging
@@ -634,7 +635,9 @@ export class WorkerAgent extends AbstractAgent {
             // Collect citations from sub-agent for aggregation
             if (payload.citations?.sources) {
               console.log(`[${this.identity.name}] Collected ${payload.citations.sources.length} citation(s) from sub-agent ${comm.fromAgent}`);
-              this.subAgentCitations.push(...payload.citations.sources);
+              this.subAgentCitations.push(
+                ...payload.citations.sources.map(src => ({ ...src, subAgentId: comm.fromAgent }))
+              );
             }
 
             pendingResult.resolve(payload.result);
