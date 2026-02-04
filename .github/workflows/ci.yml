@@ -18,26 +18,31 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
       - name: Setup Node.js ${{ matrix.node-version }}
         uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
-          cache: 'npm'
+          cache: 'pnpm'
 
       - name: Install dependencies
-        run: npm ci --legacy-peer-deps
+        run: pnpm install --frozen-lockfile
 
       - name: Type check
-        run: npm run typecheck
+        run: pnpm run typecheck
 
       - name: Build server
-        run: npm run build:server
+        run: pnpm run build:server
 
       - name: Build web
-        run: npm run build:web
+        run: pnpm run build:web
 
       - name: Build TUI
-        run: npm run build:tui
+        run: pnpm run build:tui
 
       - name: Verify build outputs
         run: |
