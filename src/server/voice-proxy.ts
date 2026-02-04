@@ -34,6 +34,23 @@ export function setupVoiceProxy(voiceWss: WebSocketServer, config: VoiceProxyCon
   let upstreamUrl: string;
   let upstreamHeaders: Record<string, string>;
 
+  // Validate voice provider is configured
+  if (!voiceProvider) {
+    console.error('[Voice] Voice provider not configured (VOICE_PROVIDER environment variable)');
+    return;
+  }
+
+  if (voiceProvider !== 'openai' && voiceProvider !== 'azure_openai') {
+    console.error(`[Voice] Invalid voice provider: "${voiceProvider}". Must be "openai" or "azure_openai"`);
+    return;
+  }
+
+  // Validate voice model is configured
+  if (!voiceModel) {
+    console.error('[Voice] Voice model not configured (VOICE_MODEL environment variable)');
+    return;
+  }
+
   if (voiceProvider === 'azure_openai') {
     if (!azureOpenaiApiKey || !azureOpenaiEndpoint) {
       console.error('[Voice] Azure OpenAI credentials not configured');
