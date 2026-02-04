@@ -15,8 +15,9 @@ const SOURCE_ICONS = {
 
 /**
  * Individual source card component
+ * Memoized to prevent re-renders when parent re-renders with same props.
  */
-function SourceCard({ index, source }) {
+const SourceCard = memo(function SourceCard({ index, source }) {
   const icon = SOURCE_ICONS[source.type] || '📎';
 
   return (
@@ -48,10 +49,16 @@ function SourceCard({ index, source }) {
       )}
     </div>
   );
-}
+}, (prevProps, nextProps) => {
+  return (
+    prevProps.index === nextProps.index &&
+    prevProps.source === nextProps.source
+  );
+});
 
 /**
  * Source panel component - displays citation sources for a message
+ * Memoized with custom comparison to prevent re-renders.
  */
 export const SourcePanel = memo(function SourcePanel({ citations }) {
   const [expanded, setExpanded] = useState(false);
@@ -93,6 +100,8 @@ export const SourcePanel = memo(function SourcePanel({ citations }) {
       )}
     </div>
   );
+}, (prevProps, nextProps) => {
+  return prevProps.citations === nextProps.citations;
 });
 
 export default SourcePanel;

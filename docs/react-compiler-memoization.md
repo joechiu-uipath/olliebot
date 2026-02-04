@@ -206,22 +206,151 @@ While React Compiler didn't solve our re-render issues, React 19 provides other 
 
 ---
 
-## Debugging Re-renders
+## Debugging Re-renders: Step-by-Step Walkthrough
 
-### Custom Comparison with Logging
+This section shows how to debug and fix a component that's not memoizing correctly, using `SourcePanel` as a real example.
+
+### Step 1: Identify the Problem
+
+**Symptoms:**
+- Component re-renders when typing in an unrelated input
+- Component re-renders when scrolling
+- React DevTools Profiler shows unexpected renders
+
+**How to detect:** Add a console.log at the top of the component:
 
 ```jsx
-const MyComponent = memo(function MyComponent(props) {
-  // component code
+function SourcePanel({ citations }) {
+  console.log('[SourcePanel] render'); // Add this temporarily
+  // ...
+}
+```
+
+### Step 2: Add Debug Comparison Function
+
+Replace simple `memo()` with a custom comparison that logs which props changed:
+
+```jsx
+// BEFORE: Simple memo (might not work with React Compiler)
+export const SourcePanel = memo(function SourcePanel({ citations }) {
+  // ...
+});
+
+// AFTER: Debug version with logging
+export const SourcePanel = memo(function SourcePanel({ citations }) {
+  // ...
 }, (prevProps, nextProps) => {
-  const keys = Object.keys(prevProps);
+  const keys = ['citations']; // List all prop names
   const changed = keys.filter(k => prevProps[k] !== nextProps[k]);
   if (changed.length > 0) {
-    console.log('[MyComponent] props changed:', changed);
+    console.log('[SourcePanel] props changed:', changed);
   }
   return changed.length === 0;
 });
 ```
+
+### Step 3: Analyze the Output
+
+Run the app and trigger the re-render (e.g., type in input). Check console:
+
+```
+[SourcePanel] props changed: ['citations']  // Props ARE changing
+```
+or
+```
+[SourcePanel] render                         // No log = comparison not even running
+```
+
+**If props are changing:** The parent is passing new object references. Go to Step 4.
+
+**If comparison isn't running:** The parent component itself is recreating the child element. Check if SourcePanel is rendered inside a `.map()` or conditional.
+
+### Step 4: Trace Back to Parent
+
+Find where the component is used:
+
+```jsx
+// In App.jsx or parent component
+<SourcePanel citations={msg.citations} />
+```
+
+Check if `msg.citations` is being recreated on every render:
+- Is `msg` from state that's being spread/copied?
+- Is there a `.map()` creating new objects?
+
+### Step 5: Fix the Issues
+
+**Issue 1: Missing custom comparison**
+
+```jsx
+// Add explicit comparison
+export const SourcePanel = memo(function SourcePanel({ citations }) {
+  // ...
+}, (prevProps, nextProps) => {
+  return prevProps.citations === nextProps.citations;
+});
+```
+
+**Issue 2: List items not memoized**
+
+```jsx
+// BEFORE: SourceCard is not memoized
+function SourceCard({ index, source }) {
+  return <div>...</div>;
+}
+
+// AFTER: Wrap in memo with comparison
+const SourceCard = memo(function SourceCard({ index, source }) {
+  return <div>...</div>;
+}, (prevProps, nextProps) => {
+  return (
+    prevProps.index === nextProps.index &&
+    prevProps.source === nextProps.source
+  );
+});
+```
+
+**Issue 3: Inline functions in parent**
+
+```jsx
+// BEFORE: Inline function creates new reference
+<SourcePanel onClose={() => setShowSources(false)} />
+
+// AFTER: Stable callback
+const handleClose = useCallback(() => setShowSources(false), []);
+<SourcePanel onClose={handleClose} />
+```
+
+### Step 6: Verify the Fix
+
+1. Keep the debug logging temporarily
+2. Trigger the action that caused re-renders
+3. Confirm no more `props changed` logs appear
+4. Remove debug logging before committing
+
+### Step 7: Remove Debug Code
+
+```jsx
+// Final version: custom comparison without logging
+export const SourcePanel = memo(function SourcePanel({ citations }) {
+  // component code
+}, (prevProps, nextProps) => {
+  return prevProps.citations === nextProps.citations;
+});
+```
+
+---
+
+## Quick Debugging Checklist
+
+When a memoized component still re-renders:
+
+- [ ] Is `memo()` actually wrapping the component?
+- [ ] Add custom comparison function (default may not work with React Compiler)
+- [ ] Check if any props are objects/arrays being recreated
+- [ ] Check if any props are callbacks without `useCallback()`
+- [ ] If component renders a list, are list items also memoized?
+- [ ] Is the component rendered inside a `.map()` in the parent?
 
 ### React DevTools Profiler
 
