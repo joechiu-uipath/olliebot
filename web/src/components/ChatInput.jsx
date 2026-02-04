@@ -82,10 +82,16 @@ export const ChatInput = memo(forwardRef(function ChatInput({
       const textAfterHash = textBeforeCursor.slice(lastHashIndex + 1);
       const charBeforeHash = lastHashIndex > 0 ? textBeforeCursor[lastHashIndex - 1] : ' ';
       if ((charBeforeHash === ' ' || charBeforeHash === '\n' || lastHashIndex === 0) && !textAfterHash.includes(' ')) {
-        setHashtagMenuPosition({
-          top: -10 - (hashtagMenuOptions.length * 44),
-          left: 10,
-        });
+        // Calculate position relative to viewport for fixed positioning
+        // CSS has translateY(-100%) so we just need to position at textarea top
+        const textarea = textareaRef.current;
+        if (textarea) {
+          const rect = textarea.getBoundingClientRect();
+          setHashtagMenuPosition({
+            top: rect.top - 8, // Small gap above textarea, CSS translateY(-100%) handles the rest
+            left: rect.left,
+          });
+        }
         setHashtagMenuOpen(true);
         setHashtagMenuIndex(0);
         return;
