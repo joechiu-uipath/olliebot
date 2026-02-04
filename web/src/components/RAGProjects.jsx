@@ -4,7 +4,7 @@ import React, { useState, memo } from 'react';
  * RAG Projects Accordion
  * Displays a list of RAG projects from user/rag/ with indexing controls.
  * Supports drag-and-drop file upload to projects.
- * Memoized to prevent re-renders when parent re-renders with same props.
+ * Memoized with custom comparison to prevent unnecessary re-renders.
  */
 const RAGProjects = memo(function RAGProjects({
   projects = [],
@@ -147,6 +147,14 @@ const RAGProjects = memo(function RAGProjects({
       )}
     </div>
   );
+}, (prevProps, nextProps) => {
+  // Debug: log which props changed
+  const keys = ['projects', 'indexingProgress', 'expanded', 'onToggle', 'onIndex', 'onUpload'];
+  const changed = keys.filter(k => prevProps[k] !== nextProps[k]);
+  if (changed.length > 0) {
+    console.log('[RAGProjects] props changed:', changed);
+  }
+  return changed.length === 0;
 });
 
 export default RAGProjects;

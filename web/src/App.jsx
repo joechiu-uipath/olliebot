@@ -172,6 +172,13 @@ const MessageContent = memo(function MessageContent({ content, html = false, isS
       {content}
     </ReactMarkdown>
   );
+}, (prevProps, nextProps) => {
+  // Custom comparison - check each prop for equality
+  return (
+    prevProps.content === nextProps.content &&
+    prevProps.html === nextProps.html &&
+    prevProps.isStreaming === nextProps.isStreaming
+  );
 });
 
 // Module-level flag to prevent double-fetching in React Strict Mode

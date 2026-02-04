@@ -120,6 +120,17 @@ export const BrowserSessions = memo(function BrowserSessions({
       )}
     </div>
   );
+}, (prevProps, nextProps) => {
+  // Custom comparison - check each prop for equality
+  return (
+    prevProps.sessions === nextProps.sessions &&
+    prevProps.screenshots === nextProps.screenshots &&
+    prevProps.selectedSessionId === nextProps.selectedSessionId &&
+    prevProps.onSelectSession === nextProps.onSelectSession &&
+    prevProps.onCloseSession === nextProps.onCloseSession &&
+    prevProps.expanded === nextProps.expanded &&
+    prevProps.onToggle === nextProps.onToggle
+  );
 });
 
 /**

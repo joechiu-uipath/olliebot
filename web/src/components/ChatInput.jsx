@@ -1,10 +1,11 @@
-import { useState, useRef, useEffect, forwardRef, useImperativeHandle, memo } from 'react';
+import { useState, useRef, useEffect, useImperativeHandle, memo } from 'react';
 
 /**
  * ChatInput component - manages local input state to prevent parent re-renders.
  * Attachments and other state remain in parent.
+ * React 19: ref is now a regular prop, no forwardRef needed.
  */
-export const ChatInput = memo(forwardRef(function ChatInput({
+export const ChatInput = memo(function ChatInput({
   onSubmit,
   onInputChange,
   onKeyDown: parentKeyDown,
@@ -18,7 +19,8 @@ export const ChatInput = memo(forwardRef(function ChatInput({
   onReasoningModeChange,
   onMessageTypeChange,
   modelCapabilities,
-}, ref) {
+  ref,
+}) {
   const [input, setInput] = useState('');
   const [hashtagMenuOpen, setHashtagMenuOpen] = useState(false);
   const [hashtagMenuPosition, setHashtagMenuPosition] = useState({ top: 0, left: 0 });
@@ -272,4 +274,4 @@ export const ChatInput = memo(forwardRef(function ChatInput({
       </button>
     </form>
   );
-}));
+});
