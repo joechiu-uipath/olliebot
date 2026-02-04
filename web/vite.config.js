@@ -2,7 +2,16 @@ import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
 const ReactCompilerConfig = {
-  // React Compiler auto-memoizes components and hooks
+  // Log which files get compiled (remove in production)
+  logger: {
+    logEvent(filename, event) {
+      if (event.kind === 'CompileSuccess') {
+        console.log(`[React Compiler] ✓ ${filename}`);
+      } else if (event.kind === 'CompileError') {
+        console.log(`[React Compiler] ✗ ${filename}: ${event.detail}`);
+      }
+    },
+  },
 };
 
 export default defineConfig({

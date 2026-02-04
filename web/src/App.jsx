@@ -101,51 +101,65 @@ function CodeBlock({ language, children }) {
   );
 }
 
+// Static markdown components that don't depend on props (defined once, reused)
+const staticMarkdownComponents = {
+  pre({ children }) {
+    return <div className="code-block-wrapper">{children}</div>;
+  },
+  table({ children }) {
+    return (
+      <div className="table-wrapper">
+        <table>{children}</table>
+      </div>
+    );
+  },
+};
+
+// Rehype plugin arrays (stable references)
+const rehypePluginsWithHtml = [rehypeRaw, rehypeSanitize];
+const rehypePluginsDefault = [rehypeSanitize];
+const remarkPluginsDefault = [remarkGfm];
+
+// Factory to create code component (only recreated when isStreaming changes)
+function createCodeComponent(isStreaming) {
+  return function CodeComponent({ node, className, children, ...props }) {
+    const match = /language-(\w+)/.exec(className || '');
+    const language = match ? match[1] : null;
+    const isBlock = match || (node?.tagName === 'code' && node?.parent?.tagName === 'pre');
+
+    if (isBlock) {
+      const codeContent = String(children).replace(/\n$/, '');
+      if (language === 'html' || language === 'htm') {
+        return <HtmlPreview html={codeContent} isStreaming={isStreaming} />;
+      }
+      return <CodeBlock language={language}>{codeContent}</CodeBlock>;
+    }
+    return (
+      <code className="inline-code" {...props}>
+        {children}
+      </code>
+    );
+  };
+}
+
+// Cache for markdown components keyed by isStreaming value
+const markdownComponentsCache = new Map();
+function getMarkdownComponents(isStreaming) {
+  if (!markdownComponentsCache.has(isStreaming)) {
+    markdownComponentsCache.set(isStreaming, {
+      ...staticMarkdownComponents,
+      code: createCodeComponent(isStreaming),
+    });
+  }
+  return markdownComponentsCache.get(isStreaming);
+}
+
 /**
  * Message content component for rendering markdown messages.
  */
 function MessageContent({ content, html = false, isStreaming = false }) {
-  const components = {
-    // Custom rendering for pre (code blocks)
-    pre({ children }) {
-      return <div className="code-block-wrapper">{children}</div>;
-    },
-    // Custom rendering for code with syntax highlighting
-    code({ node, className, children, ...props }) {
-      const match = /language-(\w+)/.exec(className || '');
-      const language = match ? match[1] : null;
-      // If inside a pre tag (code block), render as block
-      const isBlock = match || (node?.tagName === 'code' && node?.parent?.tagName === 'pre');
-
-      if (isBlock) {
-        const codeContent = String(children).replace(/\n$/, '');
-
-        // Check if this is HTML content - render with HtmlPreview
-        if (language === 'html' || language === 'htm') {
-          return <HtmlPreview html={codeContent} isStreaming={isStreaming} />;
-        }
-
-        // Use CodeBlock component with copy button
-        return <CodeBlock language={language}>{codeContent}</CodeBlock>;
-      }
-      // Inline code
-      return (
-        <code className="inline-code" {...props}>
-          {children}
-        </code>
-      );
-    },
-    // Custom table rendering
-    table({ children }) {
-      return (
-        <div className="table-wrapper">
-          <table>{children}</table>
-        </div>
-      );
-    },
-  };
-
-  const rehypePlugins = html ? [rehypeRaw, rehypeSanitize] : [rehypeSanitize];
+  const components = getMarkdownComponents(isStreaming);
+  const rehypePlugins = html ? rehypePluginsWithHtml : rehypePluginsDefault;
 
   return (
     <ReactMarkdown
@@ -161,6 +175,68 @@ function MessageContent({ content, html = false, isStreaming = false }) {
 // Module-level flag to prevent double-fetching in React Strict Mode
 // (Strict Mode unmounts/remounts component, so refs don't persist)
 let appInitialLoadDone = false;
+
+// Agent types that should have their responses collapsed by default (module-level constant)
+const COLLAPSE_BY_DEFAULT_AGENT_TYPES = new Set([
+  'research-worker',
+  'research-reviewer',
+]);
+
+// Map display names to agent type IDs (for legacy messages without agentType)
+const AGENT_NAME_TO_TYPE = {
+  'Research Worker': 'research-worker',
+  'Research Reviewer': 'research-reviewer',
+  'Deep Research Lead': 'deep-research-lead',
+};
+
+// Helper function to check if an agent type should collapse by default
+function shouldCollapseByDefault(agentType, agentName) {
+  if (agentType && COLLAPSE_BY_DEFAULT_AGENT_TYPES.has(agentType)) {
+    return true;
+  }
+  if (agentName) {
+    const mappedType = AGENT_NAME_TO_TYPE[agentName];
+    if (mappedType && COLLAPSE_BY_DEFAULT_AGENT_TYPES.has(mappedType)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Helper to transform message data from API format (pure function, no component deps)
+function transformMessages(data) {
+  return data.map((msg) => {
+    let role = msg.role;
+    if (msg.messageType === 'task_run') role = 'task_run';
+    else if (msg.messageType === 'tool_event' || msg.role === 'tool') role = 'tool';
+    else if (msg.messageType === 'delegation') role = 'delegation';
+
+    return {
+      id: msg.id,
+      role,
+      content: msg.content,
+      timestamp: msg.createdAt,
+      agentName: msg.agentName || msg.delegationAgentId,
+      agentEmoji: msg.agentEmoji,
+      attachments: msg.attachments,
+      taskId: msg.taskId,
+      taskName: msg.taskName,
+      taskDescription: msg.taskDescription,
+      toolName: msg.toolName,
+      source: msg.toolSource,
+      status: msg.toolSuccess === true ? 'completed' : msg.toolSuccess === false ? 'failed' : undefined,
+      durationMs: msg.toolDurationMs,
+      error: msg.toolError,
+      parameters: msg.toolParameters,
+      result: msg.toolResult,
+      agentType: msg.agentType || msg.delegationAgentType || (msg.agentName?.includes('-') ? msg.agentName : undefined),
+      mission: msg.delegationMission,
+      reasoningMode: msg.reasoningMode,
+      messageType: msg.messageType,
+      citations: msg.citations,
+    };
+  });
+}
 
 function App() {
   // Router hooks
@@ -223,35 +299,6 @@ function App() {
 
   // Expanded tool events
   const [expandedTools, setExpandedTools] = useState(new Set());
-
-  // Agent types that should have their responses collapsed by default
-  const COLLAPSE_BY_DEFAULT_AGENT_TYPES = new Set([
-    'research-worker',
-    'research-reviewer',
-  ]);
-
-  // Map display names to agent type IDs (for legacy messages without agentType)
-  const AGENT_NAME_TO_TYPE = {
-    'Research Worker': 'research-worker',
-    'Research Reviewer': 'research-reviewer',
-    'Deep Research Lead': 'deep-research-lead',
-  };
-
-  // Helper function to check if an agent type should collapse by default
-  const shouldCollapseByDefault = (agentType, agentName) => {
-    // First try the explicit agentType
-    if (agentType && COLLAPSE_BY_DEFAULT_AGENT_TYPES.has(agentType)) {
-      return true;
-    }
-    // Fallback: map agentName to agentType for legacy messages
-    if (agentName) {
-      const mappedType = AGENT_NAME_TO_TYPE[agentName];
-      if (mappedType && COLLAPSE_BY_DEFAULT_AGENT_TYPES.has(mappedType)) {
-        return true;
-      }
-    }
-    return false;
-  };
 
   // Expanded agent messages (for agents that collapse by default, like research-worker)
   const [expandedAgentMessages, setExpandedAgentMessages] = useState(new Set());
@@ -642,101 +689,88 @@ function App() {
     }
   };
 
-  // Helper to transform message data from API format
-  const transformMessages = (data) => {
-    return data.map((msg) => {
-      // Determine the role based on message type
-      let role = msg.role;
-      if (msg.messageType === 'task_run') {
-        role = 'task_run';
-      } else if (msg.messageType === 'tool_event' || msg.role === 'tool') {
-        role = 'tool';
-      } else if (msg.messageType === 'delegation') {
-        role = 'delegation';
+  // Ref to hold the loadStartupData function (updated via effect)
+  const loadStartupDataRef = useRef(null);
+
+  // Update loadStartupData ref via effect (not during render)
+  useEffect(() => {
+    loadStartupDataRef.current = async () => {
+      try {
+        const res = await fetch('/api/startup');
+        if (!res.ok) throw new Error('Startup API not available');
+        const data = await res.json();
+
+        // Model capabilities
+        setModelCapabilities(data.modelCapabilities);
+
+        // Conversations
+        const mappedConversations = data.conversations.map(c => ({
+          id: c.id,
+          title: c.title,
+          updatedAt: c.updatedAt || c.updated_at,
+          isWellKnown: c.isWellKnown || false,
+          icon: c.icon,
+        }));
+        setConversations(mappedConversations);
+
+        // Set default conversation
+        const feedConversation = mappedConversations.find(c => c.id === ':feed:');
+        if (feedConversation) {
+          setCurrentConversationId(feedConversation.id);
+        } else if (mappedConversations.length > 0) {
+          setCurrentConversationId(mappedConversations[0].id);
+        }
+
+        // Messages - transform API format to internal format
+        setMessages(data.messages.map((msg) => {
+          let role = msg.role;
+          if (msg.messageType === 'task_run') role = 'task_run';
+          else if (msg.messageType === 'tool_event' || msg.role === 'tool') role = 'tool';
+          else if (msg.messageType === 'delegation') role = 'delegation';
+
+          return {
+            id: msg.id,
+            role,
+            content: msg.content,
+            timestamp: msg.createdAt,
+            agentName: msg.agentName || msg.delegationAgentId,
+            agentEmoji: msg.agentEmoji,
+            attachments: msg.attachments,
+            taskId: msg.taskId,
+            taskName: msg.taskName,
+            taskDescription: msg.taskDescription,
+            toolName: msg.toolName,
+            source: msg.toolSource,
+            status: msg.toolSuccess === true ? 'completed' : msg.toolSuccess === false ? 'failed' : undefined,
+            durationMs: msg.toolDurationMs,
+            error: msg.toolError,
+            parameters: msg.toolParameters,
+            result: msg.toolResult,
+            agentType: msg.agentType || msg.delegationAgentType || (msg.agentName?.includes('-') ? msg.agentName : undefined),
+            mission: msg.delegationMission,
+            reasoningMode: msg.reasoningMode,
+            messageType: msg.messageType,
+            citations: msg.citations,
+          };
+        }));
+
+        // Sidebar data
+        setAgentTasks(data.tasks);
+        setSkills(data.skills);
+        setMcps(data.mcps);
+        setTools(data.tools);
+        setRagProjects(data.ragProjects || []);
+      } catch (error) {
+        console.error('Failed to load startup data:', error);
+        setConversations([]);
+        setCurrentConversationId(null);
+        setMessages([]);
+      } finally {
+        setConversationsLoading(false);
+        setShowSkeleton(false);
       }
-
-      return {
-        id: msg.id,
-        role,
-        content: msg.content,
-        timestamp: msg.createdAt,
-        agentName: msg.agentName || msg.delegationAgentId,
-        agentEmoji: msg.agentEmoji,
-        attachments: msg.attachments,
-        // Task metadata
-        taskId: msg.taskId,
-        taskName: msg.taskName,
-        taskDescription: msg.taskDescription,
-        // Tool event metadata
-        toolName: msg.toolName,
-        source: msg.toolSource,
-        status: msg.toolSuccess === true ? 'completed' : msg.toolSuccess === false ? 'failed' : undefined,
-        durationMs: msg.toolDurationMs,
-        error: msg.toolError,
-        parameters: msg.toolParameters,
-        result: msg.toolResult,
-        // Delegation metadata
-        // agentType fallback: use agentName if it looks like an agent type ID (contains hyphen)
-        agentType: msg.agentType || msg.delegationAgentType || (msg.agentName?.includes('-') ? msg.agentName : undefined),
-        mission: msg.delegationMission,
-        // Reasoning mode (from DB, vendor-neutral)
-        reasoningMode: msg.reasoningMode,
-        // Message type (e.g., deep_research)
-        messageType: msg.messageType,
-        // Citations
-        citations: msg.citations,
-      };
-    });
-  };
-
-  // Load all startup data in a single request
-  const loadStartupData = async () => {
-    try {
-      const res = await fetch('/api/startup');
-      if (!res.ok) throw new Error('Startup API not available');
-      const data = await res.json();
-
-      // Model capabilities
-      setModelCapabilities(data.modelCapabilities);
-
-      // Conversations
-      const mappedConversations = data.conversations.map(c => ({
-        id: c.id,
-        title: c.title,
-        updatedAt: c.updatedAt || c.updated_at,
-        isWellKnown: c.isWellKnown || false,
-        icon: c.icon,
-      }));
-      setConversations(mappedConversations);
-
-      // Set default conversation
-      const feedConversation = mappedConversations.find(c => c.id === ':feed:');
-      if (feedConversation) {
-        setCurrentConversationId(feedConversation.id);
-      } else if (mappedConversations.length > 0) {
-        setCurrentConversationId(mappedConversations[0].id);
-      }
-
-      // Messages
-      setMessages(transformMessages(data.messages));
-
-      // Sidebar data
-      setAgentTasks(data.tasks);
-      setSkills(data.skills);
-      setMcps(data.mcps);
-      setTools(data.tools);
-      setRagProjects(data.ragProjects || []);
-    } catch (error) {
-      console.error('Failed to load startup data:', error);
-      // Set empty states on failure
-      setConversations([]);
-      setCurrentConversationId(null);
-      setMessages([]);
-    } finally {
-      setConversationsLoading(false);
-      setShowSkeleton(false);
-    }
-  };
+    };
+  }, []);
 
   // Track if this is the first connection (to avoid refreshing on initial connect)
   const hasConnectedOnce = useRef(false);
@@ -746,7 +780,7 @@ function App() {
     // Only refresh data on REconnection, not initial connection
     // (initial data load is handled by the mount useEffect)
     if (hasConnectedOnce.current) {
-      loadStartupData();
+      loadStartupDataRef.current?.();
     }
     hasConnectedOnce.current = true;
   };
@@ -769,10 +803,9 @@ function App() {
       setShowSkeleton(true);
     }, 500);
 
-    loadStartupData().finally(() => clearTimeout(skeletonTimer));
+    loadStartupDataRef.current?.().finally(() => clearTimeout(skeletonTimer));
 
     return () => clearTimeout(skeletonTimer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Smart auto-scroll - only scroll if user hasn't manually scrolled up
