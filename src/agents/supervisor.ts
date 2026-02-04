@@ -19,12 +19,14 @@ import type { ToolEvent } from '../tools/types.js';
 import { formatToolResultBlocks } from '../utils/index.js';
 import type { CitationSource, StoredCitationData } from '../citations/types.js';
 import { DEEP_RESEARCH_WORKFLOW_ID, AGENT_IDS } from '../deep-research/constants.js';
+import { getMessageEventService } from '../services/message-event-service.js';
 
 export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAgent {
   private subAgents: Map<string, WorkerAgent> = new Map();
   private tasks: Map<string, TaskAssignment> = new Map();
   private messageChannelMap: Map<string, string> = new Map(); // messageId -> channelId
   private currentConversationId: string | null = null;
+  private currentTurnId: string | null = null; // ID of the originating message for this turn
   private conversationMessageCount: Map<string, number> = new Map(); // Track message counts for auto-naming
   // Track messages currently being processed to prevent re-processing due to timeouts/retries
   private processingMessages: Set<string> = new Set();
@@ -102,6 +104,11 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
       this.setConversationId(msgConversationId);
     }
 
+    // Set the turnId for this message processing
+    // For task_run messages, use the turnId from metadata (set by the task_run event)
+    // For user messages, the message ID is the turnId
+    this.currentTurnId = (message.metadata?.turnId as string) || message.id;
+
     // Store channel mapping for response routing
     this.messageChannelMap.set(message.id, message.channel);
 
@@ -157,43 +164,20 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
     // Refresh RAG data cache before generating response
     await this.refreshRagDataCache();
 
-    // Setup tool event broadcasting if tool runner is available
+    // Setup tool event broadcasting and persistence via MessageEventService
     let unsubscribeTool: (() => void) | undefined;
     if (this.toolRunner) {
       unsubscribeTool = this.toolRunner.onToolEvent((event) => {
-        // Broadcast tool events to connected clients
         const webChannel = channel as WebChannel;
-        if (typeof webChannel.broadcast === 'function') {
-          // Safely stringify result for broadcast (may be large)
-          let resultForBroadcast: string | undefined;
-          if ('result' in event && event.result !== undefined) {
-            try {
-              const fullResult = JSON.stringify(event.result);
-              // Don't truncate image data URLs (they need full base64 content)
-              const hasImageData = fullResult.includes('data:image/');
-              const limit = hasImageData ? 5000000 : 10000; // 5MB for images, 10KB for others
-              resultForBroadcast = fullResult.length > limit ? fullResult.substring(0, limit) + '...(truncated)' : fullResult;
-            } catch {
-              resultForBroadcast = String(event.result);
-            }
-          }
+        const messageEventService = getMessageEventService();
+        messageEventService.setWebChannel(webChannel);
 
-          webChannel.broadcast({
-            ...event,
-            result: resultForBroadcast,
-            conversationId: this.currentConversationId || undefined,
-            timestamp: event.timestamp.toISOString(),
-            startTime: 'startTime' in event ? event.startTime.toISOString() : undefined,
-            endTime: 'endTime' in event ? event.endTime.toISOString() : undefined,
-            // Agent tracking
-            agentId: this.identity.id,
-            agentName: this.identity.name,
-            agentEmoji: this.identity.emoji,
-          });
-        }
-
-        // Persist tool events to database
-        this.saveToolEvent(event, message.channel);
+        // Use centralized service that broadcasts AND persists
+        messageEventService.emitToolEvent(event, this.currentConversationId, message.channel, {
+          id: this.identity.id,
+          name: this.identity.name,
+          emoji: this.identity.emoji,
+        }, this.currentTurnId || undefined);
       });
     }
 
@@ -444,7 +428,7 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
         throw new Error('Failed to spawn agent');
       }
 
-      // Pass the current conversationId to the worker agent
+      // Pass the current conversationId and turnId to the worker agent
       if (this.currentConversationId) {
         agent.conversationId = this.currentConversationId;
       } else {
@@ -452,32 +436,24 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
         const convId = this.ensureConversation(originalMessage.channel, originalMessage.content);
         agent.conversationId = convId;
       }
+      agent.turnId = this.currentTurnId;
 
-      // Emit delegation event for compact UI display
+      // Emit delegation event via MessageEventService (broadcasts AND persists)
       const webChannel = channel as WebChannel;
-      if (typeof webChannel.broadcast === 'function') {
-        webChannel.broadcast({
-          type: 'delegation',
+      const messageEventService = getMessageEventService();
+      messageEventService.setWebChannel(webChannel);
+      messageEventService.emitDelegationEvent(
+        {
           agentId: agent.identity.id,
           agentName: agent.identity.name,
           agentEmoji: agent.identity.emoji,
           agentType: type,
           mission,
           rationale,
-          conversationId: this.currentConversationId || undefined,
-          timestamp: new Date().toISOString(),
-        });
-      }
-
-      // Persist delegation event to database for reload
-      this.saveDelegationEvent(
+        },
+        this.currentConversationId,
         originalMessage.channel,
-        agent.identity.id,
-        agent.identity.name,
-        agent.identity.emoji,
-        type,
-        mission,
-        rationale
+        this.currentTurnId || undefined
       );
 
       // Create task assignment
@@ -541,7 +517,7 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
         throw new Error('Failed to spawn agent');
       }
 
-      // Pass the current conversationId to the worker agent
+      // Pass the current conversationId and turnId to the worker agent
       if (this.currentConversationId) {
         agent.conversationId = this.currentConversationId;
       } else {
@@ -549,32 +525,24 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
         const convId = this.ensureConversation(originalMessage.channel, originalMessage.content);
         agent.conversationId = convId;
       }
+      agent.turnId = this.currentTurnId;
 
-      // Emit delegation event for compact UI display
+      // Emit delegation event via MessageEventService (broadcasts AND persists)
       const webChannel = channel as WebChannel;
-      if (typeof webChannel.broadcast === 'function') {
-        webChannel.broadcast({
-          type: 'delegation',
+      const messageEventService = getMessageEventService();
+      messageEventService.setWebChannel(webChannel);
+      messageEventService.emitDelegationEvent(
+        {
           agentId: agent.identity.id,
           agentName: agent.identity.name,
           agentEmoji: agent.identity.emoji,
           agentType: type,
           mission,
           rationale,
-          conversationId: this.currentConversationId || undefined,
-          timestamp: new Date().toISOString(),
-        });
-      }
-
-      // Persist delegation event to database for reload
-      this.saveDelegationEvent(
+        },
+        this.currentConversationId,
         originalMessage.channel,
-        agent.identity.id,
-        agent.identity.name,
-        agent.identity.emoji,
-        type,
-        mission,
-        rationale
+        this.currentTurnId || undefined
       );
 
       // Create task assignment
@@ -905,6 +873,7 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
         content: message.content,
         metadata,
         createdAt: message.createdAt.toISOString(),
+        turnId: this.currentTurnId || undefined,
       });
 
       // Track message count for auto-naming
@@ -1012,110 +981,5 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
     }
   }
 
-  /**
-   * Save tool events to database for persistence
-   */
-  private saveToolEvent(event: ToolEvent, channelId: string): void {
-    // Only save completed events (to avoid duplicates - requested + finished)
-    if (event.type !== 'tool_execution_finished') {
-      return;
-    }
 
-    try {
-      const db = getDb();
-      const conversationId = this.currentConversationId || this.ensureConversation(channelId);
-
-      const messageId = `tool-${event.requestId}`;
-
-      // Check if this tool event was already saved (avoid duplicates on re-runs)
-      const existing = db.messages.findById(messageId);
-      if (existing) {
-        return;
-      }
-
-      // Safely stringify result (may be large, so truncate if needed)
-      let resultStr: string | undefined;
-      if (event.result !== undefined) {
-        try {
-          const fullResult = JSON.stringify(event.result);
-          // Don't truncate image data URLs (they need full base64 content)
-          const hasImageData = fullResult.includes('data:image/');
-          const limit = hasImageData ? 5000000 : 10000; // 5MB for images, 10KB for others
-          resultStr = fullResult.length > limit ? fullResult.substring(0, limit) + '...(truncated)' : fullResult;
-        } catch {
-          resultStr = String(event.result);
-        }
-      }
-
-      db.messages.create({
-        id: messageId,
-        conversationId,
-        channel: channelId,
-        role: 'tool', // Special role for tool events
-        content: '', // No text content
-        metadata: {
-          type: 'tool_event',
-          toolName: event.toolName,
-          source: event.source,
-          success: event.success as boolean,
-          durationMs: event.durationMs as number,
-          error: event.error as string | undefined,
-          parameters: event.parameters as Record<string, unknown> | undefined,
-          result: resultStr,
-          // Agent tracking
-          agentId: this.identity.id,
-          agentName: this.identity.name,
-        },
-        createdAt: new Date().toISOString(),
-      });
-    } catch (error) {
-      console.error(`[${this.identity.name}] Failed to save tool event:`, error);
-    }
-  }
-
-  /**
-   * Save delegation events to database for persistence
-   */
-  private saveDelegationEvent(
-    channelId: string,
-    agentId: string,
-    agentName: string,
-    agentEmoji: string,
-    agentType: string,
-    mission: string,
-    rationale?: string
-  ): void {
-    try {
-      const db = getDb();
-      const conversationId = this.currentConversationId || this.ensureConversation(channelId);
-
-      const messageId = `delegation-${agentId}`;
-
-      // Check if this delegation was already saved (avoid duplicates)
-      const existing = db.messages.findById(messageId);
-      if (existing) {
-        return;
-      }
-
-      db.messages.create({
-        id: messageId,
-        conversationId,
-        channel: channelId,
-        role: 'system', // Special role for system events
-        content: '', // No text content
-        metadata: {
-          type: 'delegation',
-          agentId,
-          agentName,
-          agentEmoji,
-          agentType,
-          mission,
-          rationale,
-        },
-        createdAt: new Date().toISOString(),
-      });
-    } catch (error) {
-      console.error(`[${this.identity.name}] Failed to save delegation event:`, error);
-    }
-  }
 }

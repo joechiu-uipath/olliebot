@@ -15,6 +15,7 @@ import { setupEvalRoutes } from './eval-routes.js';
 import type { BrowserSessionManager } from '../browser/index.js';
 import type { TaskManager } from '../tasks/index.js';
 import { type RAGProjectService, createRAGProjectRoutes, type IndexingProgress } from '../rag-projects/index.js';
+import { getMessageEventService, setMessageEventServiceChannel } from '../services/message-event-service.js';
 
 export interface ServerConfig {
   port: number;
@@ -127,6 +128,9 @@ export class OllieBotServer {
 
     // Create and configure web channel
     this.webChannel = new WebChannel('web-main');
+
+    // Set the web channel on the global MessageEventService so all agents can use it
+    setMessageEventServiceChannel(this.webChannel);
 
     // Setup routes
     this.setupRoutes();
@@ -769,14 +773,18 @@ export class OllieBotServer {
         // Get description from jsonConfig
         const taskDescription = (task.jsonConfig as { description?: string }).description || '';
 
-        // Broadcast task_run event for compact UI display
-        this.webChannel.broadcast({
-          type: 'task_run',
-          taskId: task.id,
-          taskName: task.name,
-          taskDescription,
-          timestamp: now,
-        });
+        // Emit task_run event via MessageEventService (broadcasts AND persists)
+        // Returns the turnId which should be used for all subsequent messages in this turn
+        const messageEventService = getMessageEventService();
+        const turnId = messageEventService.emitTaskRunEvent(
+          {
+            taskId: task.id,
+            taskName: task.name,
+            taskDescription,
+          },
+          conversationId || null,
+          'web-main'
+        );
 
         // Create a message to trigger the task execution via the supervisor
         // The message content is for the LLM, metadata is for UI display
@@ -791,6 +799,7 @@ export class OllieBotServer {
             taskId: task.id,
             taskName: task.name,
             taskDescription,
+            turnId, // Pass the turnId from the task_run event
           },
         };
 

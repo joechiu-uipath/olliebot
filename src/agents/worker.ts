@@ -15,11 +15,13 @@ import type { WebChannel } from '../channels/web.js';
 import { formatToolResultBlocks } from '../utils/index.js';
 import type { CitationSource, CitationSourceType, StoredCitationData } from '../citations/types.js';
 import { SUB_AGENT_TIMEOUT_MS } from '../deep-research/constants.js';
+import { getMessageEventService } from '../services/message-event-service.js';
 
 export class WorkerAgent extends AbstractAgent {
   private currentTaskId?: string;
   private parentId: string;
   public conversationId: string | null = null; // Set by supervisor when spawning
+  public turnId: string | null = null; // Set by supervisor when spawning - ID of originating message for this turn
   private subAgents: Map<string, WorkerAgent> = new Map();
   private agentType: string; // The type of this agent (e.g., 'deep-research-lead')
   private currentWorkflowId: string | null = null; // Current workflow context
@@ -184,24 +186,21 @@ export class WorkerAgent extends AbstractAgent {
 
     console.log(`[${this.identity.name}] Starting task (${tools.length} tools)`);
 
-    // Setup tool event broadcasting
+    // Setup tool event broadcasting and persistence via MessageEventService
     let unsubscribeTool: (() => void) | undefined;
     if (this.toolRunner) {
       unsubscribeTool = this.toolRunner.onToolEvent((event) => {
         const webChannel = channel as WebChannel;
-        if (typeof webChannel.broadcast === 'function') {
-          webChannel.broadcast({
-            ...event,
-            timestamp: event.timestamp.toISOString(),
-            startTime: 'startTime' in event ? event.startTime.toISOString() : undefined,
-            endTime: 'endTime' in event ? event.endTime.toISOString() : undefined,
-            // Agent tracking - capture which agent made this tool call
-            agentId: this.identity.id,
-            agentName: this.identity.name,
-            agentEmoji: this.identity.emoji,
-            agentType: this.agentType,
-          });
-        }
+        const messageEventService = getMessageEventService();
+        messageEventService.setWebChannel(webChannel);
+
+        // Use centralized service that broadcasts AND persists
+        messageEventService.emitToolEvent(event, this.conversationId, channel.id, {
+          id: this.identity.id,
+          name: this.identity.name,
+          emoji: this.identity.emoji,
+          type: this.agentType,
+        }, this.turnId || undefined);
       });
     }
 
@@ -483,7 +482,16 @@ export class WorkerAgent extends AbstractAgent {
     // Create and initialize sub-agent
     const subAgent = new WorkerAgent(config, this.llmService, type);
     subAgent.setRegistry(this.agentRegistry);
+
+    // Defensive check for conversationId - log error if missing
+    if (!this.conversationId) {
+      console.error(
+        `[${this.identity.name}] WARNING: conversationId is null when spawning sub-agent ${type}. ` +
+          `Parent agent: ${this.parentId}. This will cause persistence issues.`
+      );
+    }
     subAgent.conversationId = this.conversationId;
+    subAgent.turnId = this.turnId;
 
     // Set workflow context for restricted agents
     if (this.currentWorkflowId) {
@@ -504,11 +512,12 @@ export class WorkerAgent extends AbstractAgent {
 
     console.log(`[${this.identity.name}] Spawned sub-agent ${subAgent.identity.emoji} ${subAgent.identity.name} (${subAgent.identity.id})`);
 
-    // Emit delegation event for UI
+    // Emit delegation event via MessageEventService (broadcasts AND persists)
     const webChannel = channel as WebChannel;
-    if (typeof webChannel.broadcast === 'function') {
-      webChannel.broadcast({
-        type: 'delegation',
+    const messageEventService = getMessageEventService();
+    messageEventService.setWebChannel(webChannel);
+    messageEventService.emitDelegationEvent(
+      {
         agentId: subAgent.identity.id,
         agentName: subAgent.identity.name,
         agentEmoji: subAgent.identity.emoji,
@@ -517,10 +526,11 @@ export class WorkerAgent extends AbstractAgent {
         parentAgentName: this.identity.name,
         mission,
         rationale,
-        conversationId: this.conversationId || undefined,
-        timestamp: new Date().toISOString(),
-      });
-    }
+      },
+      this.conversationId,
+      channel.id,
+      this.turnId || undefined
+    );
 
     // Create a promise to wait for the sub-agent's result
     // The result will come via handleAgentCommunication when sub-agent sends task_result
@@ -683,7 +693,11 @@ export class WorkerAgent extends AbstractAgent {
     this.conversationHistory.push(message);
 
     if (!this.conversationId) {
-      console.warn(`[${this.identity.name}] No conversationId set, skipping message save`);
+      console.error(
+        `[${this.identity.name}] ERROR: conversationId is null, cannot save assistant message. ` +
+          `Agent type: ${this.agentType}, Parent: ${this.parentId}. ` +
+          `This is a bug - the supervisor should have set conversationId when spawning this agent.`
+      );
       return;
     }
 
@@ -697,9 +711,11 @@ export class WorkerAgent extends AbstractAgent {
         content: message.content,
         metadata: message.metadata || {},
         createdAt: message.createdAt.toISOString(),
+        turnId: this.turnId || undefined,
       });
     } catch (error) {
       console.error(`[${this.identity.name}] Failed to save message:`, error);
     }
   }
+
 }

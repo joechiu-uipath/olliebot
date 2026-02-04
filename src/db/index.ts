@@ -31,6 +31,7 @@ export interface Message {
   content: string;
   metadata: Record<string, unknown>;
   createdAt: string;
+  turnId?: string; // ID of the originating message (user message or task_run) for this turn
 }
 
 export interface Task {
@@ -143,7 +144,8 @@ class Database {
         role STRING,
         content STRING,
         metadata STRING,
-        createdAt STRING
+        createdAt STRING,
+        turnId STRING
       )
     `);
 
