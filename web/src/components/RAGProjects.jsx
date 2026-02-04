@@ -1,11 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, memo } from 'react';
 
 /**
  * RAG Projects Accordion
  * Displays a list of RAG projects from user/rag/ with indexing controls.
  * Supports drag-and-drop file upload to projects.
+ * Memoized to prevent re-renders when parent re-renders with same props.
  */
-function RAGProjects({
+const RAGProjects = memo(function RAGProjects({
   projects = [],
   indexingProgress = {}, // { projectId: { status, totalDocuments, processedDocuments, ... } }
   expanded = false,
@@ -146,6 +147,6 @@ function RAGProjects({
       )}
     </div>
   );
-}
+});
 
 export default RAGProjects;

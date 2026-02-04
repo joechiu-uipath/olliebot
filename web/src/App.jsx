@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, memo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
@@ -157,8 +157,9 @@ function getMarkdownComponents(isStreaming) {
 
 /**
  * Message content component for rendering markdown messages.
+ * Memoized to prevent re-renders when parent re-renders with same props.
  */
-function MessageContent({ content, html = false, isStreaming = false }) {
+const MessageContent = memo(function MessageContent({ content, html = false, isStreaming = false }) {
   const components = getMarkdownComponents(isStreaming);
   const rehypePlugins = html ? rehypePluginsWithHtml : rehypePluginsDefault;
 
@@ -171,7 +172,7 @@ function MessageContent({ content, html = false, isStreaming = false }) {
       {content}
     </ReactMarkdown>
   );
-}
+});
 
 // Module-level flag to prevent double-fetching in React Strict Mode
 // (Strict Mode unmounts/remounts component, so refs don't persist)
