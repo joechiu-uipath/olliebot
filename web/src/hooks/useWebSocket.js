@@ -16,7 +16,7 @@ const getWebSocketUrl = () => {
   }
   // In Vite dev server (port 5173), connect to same origin
   if (window.location.port === '5173') {
-    return `${wsProtocol}://${window.location.hostname}:5173`;
+    return `${wsProtocol}://${window.location.hostname}:3000`;
   }
   // Production: same origin
   return `${wsProtocol}://${window.location.host}`;

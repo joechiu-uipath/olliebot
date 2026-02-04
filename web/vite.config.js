@@ -17,12 +17,13 @@ const ReactCompilerConfig = {
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
   const useWsProxy = env.VITE_USE_WS_PROXY === 'true';
-
+  const wsPort = env.VITE_WS_PORT || '3000';
+  
   // WebSocket proxy config (only used when VITE_USE_WS_PROXY=true)
   // Useful for remote development where only one port is forwarded
   const wsProxyConfig = useWsProxy ? {
     '/ws': {
-      target: 'ws://localhost:5173',
+      target: `ws://localhost:${wsPort}`,
       ws: true,
       rewrite: (path) => path.replace(/^\/ws/, ''),
       configure: (proxy) => {
@@ -68,7 +69,7 @@ export default defineConfig(({ mode }) => {
       proxy: {
         // Proxy API requests to backend
         '/api': {
-          target: 'http://localhost:5173',
+          target: 'http://localhost:3000',
           changeOrigin: true,
         },
         // WebSocket proxy (only when VITE_USE_WS_PROXY=true for remote dev)
