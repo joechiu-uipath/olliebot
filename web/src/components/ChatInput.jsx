@@ -42,7 +42,6 @@ export const ChatInput = memo(function ChatInput({
     stopRecording,
     prepareRecording,
     releaseRecording,
-    transcript,
   } = useVoiceToText({
     onTranscript: useCallback((text) => {
       // Update input with transcribed text
