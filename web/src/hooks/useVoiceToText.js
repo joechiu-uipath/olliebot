@@ -20,6 +20,8 @@ export function useVoiceToText({ onTranscript, onFinalTranscript, onError } = {}
   const audioBufferRef = useRef([]);
   const pendingStopRef = useRef(false);
   const reconnectTimeoutRef = useRef(null);
+  const reconnectAttemptsRef = useRef(0);
+  const reconnectDelayRef = useRef(2000); // Start with 2s delay
 
   // Callback refs to avoid stale closures
   const onFinalTranscriptRef = useRef(onFinalTranscript);
@@ -148,19 +150,26 @@ export function useVoiceToText({ onTranscript, onFinalTranscript, onError } = {}
   // Connect WebSocket on mount, reconnect on close
   useEffect(() => {
     let mounted = true;
+    const MAX_RECONNECT_ATTEMPTS = 10;
+    const INITIAL_RECONNECT_DELAY = 2000; // 2s
+    const MAX_RECONNECT_DELAY = 30000; // 30s
 
     const connect = () => {
       if (!mounted) return;
       if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) return;
 
       const wsUrl = getWsUrl();
-      console.log('[Voice] Connecting to backend:', wsUrl);
+      console.log('[Voice] Connecting to backend:', wsUrl,
+        `(attempt ${reconnectAttemptsRef.current + 1}/${MAX_RECONNECT_ATTEMPTS})`);
 
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
 
       ws.onopen = () => {
         console.log('[Voice] Backend WebSocket connected');
+        // Reset reconnect state on successful connection
+        reconnectAttemptsRef.current = 0;
+        reconnectDelayRef.current = INITIAL_RECONNECT_DELAY;
         if (mounted) setIsWsConnected(true);
       };
 
@@ -175,8 +184,27 @@ export function useVoiceToText({ onTranscript, onFinalTranscript, onError } = {}
         if (mounted) {
           setIsWsConnected(false);
           wsRef.current = null;
-          // Reconnect after a delay
-          reconnectTimeoutRef.current = setTimeout(connect, 2000);
+
+          // Check if we've exceeded max reconnect attempts
+          if (reconnectAttemptsRef.current >= MAX_RECONNECT_ATTEMPTS) {
+            console.warn('[Voice] Max reconnection attempts reached. Voice feature unavailable.');
+            onErrorRef.current?.('Voice service unavailable. Please check server configuration.');
+            return;
+          }
+
+          // Exponential backoff with jitter
+          const delay = Math.min(
+            reconnectDelayRef.current * (1 + Math.random() * 0.3), // Add 0-30% jitter
+            MAX_RECONNECT_DELAY
+          );
+
+          console.log(`[Voice] Reconnecting in ${Math.round(delay / 1000)}s...`);
+
+          reconnectTimeoutRef.current = setTimeout(() => {
+            reconnectAttemptsRef.current += 1;
+            reconnectDelayRef.current = Math.min(reconnectDelayRef.current * 2, MAX_RECONNECT_DELAY);
+            connect();
+          }, delay);
         }
       };
     };
