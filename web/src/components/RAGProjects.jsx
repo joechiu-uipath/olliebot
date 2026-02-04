@@ -148,13 +148,14 @@ const RAGProjects = memo(function RAGProjects({
     </div>
   );
 }, (prevProps, nextProps) => {
-  // Debug: log which props changed
-  const keys = ['projects', 'indexingProgress', 'expanded', 'onToggle', 'onIndex', 'onUpload'];
-  const changed = keys.filter(k => prevProps[k] !== nextProps[k]);
-  if (changed.length > 0) {
-    console.log('[RAGProjects] props changed:', changed);
-  }
-  return changed.length === 0;
+  return (
+    prevProps.projects === nextProps.projects &&
+    prevProps.indexingProgress === nextProps.indexingProgress &&
+    prevProps.expanded === nextProps.expanded &&
+    prevProps.onToggle === nextProps.onToggle &&
+    prevProps.onIndex === nextProps.onIndex &&
+    prevProps.onUpload === nextProps.onUpload
+  );
 });
 
 export default RAGProjects;
