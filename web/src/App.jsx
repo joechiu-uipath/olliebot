@@ -248,7 +248,6 @@ function App() {
   const mode = location.pathname.startsWith('/eval') ? MODES.EVAL : MODES.CHAT;
 
   const [messages, setMessages] = useState([]);
-  const [input, setInput] = useState('');
   const [attachments, setAttachments] = useState([]);
   const [isDragOver, setIsDragOver] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
@@ -315,14 +314,11 @@ function App() {
   // Reasoning mode state
   const [reasoningMode, setReasoningMode] = useState(null); // null | 'high' | 'xhigh'
   const [messageType, setMessageType] = useState(null); // null | 'deep_research'
-  const [hashtagMenuOpen, setHashtagMenuOpen] = useState(false);
-  const [hashtagMenuPosition, setHashtagMenuPosition] = useState({ top: 0, left: 0 });
   const [modelCapabilities, setModelCapabilities] = useState({ reasoningEfforts: [] });
-  const [hashtagMenuIndex, setHashtagMenuIndex] = useState(0);
 
   const messagesEndRef = useRef(null);
   const messagesContainerRef = useRef(null);
-  const textareaRef = useRef(null);
+  const chatInputRef = useRef(null);
 
   // Ref to track current conversation ID for use in callbacks
   const currentConversationIdRef = useRef(currentConversationId);
@@ -1179,9 +1175,9 @@ function App() {
       .catch(() => setMessages([]));
   };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    if (!input.trim() && attachments.length === 0) return;
+  // Handle chat submission - receives input text from ChatInput component
+  const handleSubmit = async (inputText) => {
+    if (!inputText.trim() && attachments.length === 0) return;
 
     // If user is near the bottom when sending, re-enable auto-scroll
     const container = messagesContainerRef.current;
@@ -1216,26 +1212,24 @@ function App() {
     const userMessage = {
       id: messageId,
       role: 'user',
-      content: input,
+      content: inputText,
       attachments: attachments.map(f => ({ name: f.name, type: f.type, size: f.size })),
       timestamp: new Date().toISOString(),
-      reasoningMode: reasoningMode, // Track reasoning mode used for this message
-      messageType: messageType, // Track message type (e.g., deep_research)
+      reasoningMode: reasoningMode,
+      messageType: messageType,
     };
     setMessages((prev) => [...prev, userMessage]);
 
     // Send via WebSocket with conversation ID, attachments, reasoning effort, and message type
-    // Include messageId for server-side deduplication
     sendMessage({
       type: 'message',
-      messageId: messageId, // For deduplication on server
-      content: input,
+      messageId: messageId,
+      content: inputText,
       attachments: processedAttachments,
       conversationId: currentConversationId,
       reasoningEffort: reasoningMode,
-      messageType: messageType, // e.g., 'deep_research'
+      messageType: messageType,
     });
-    setInput('');
     setAttachments([]);
     setReasoningMode(null);
     setMessageType(null);
@@ -1298,131 +1292,6 @@ function App() {
   // Remove attachment
   const removeAttachment = (index) => {
     setAttachments((prev) => prev.filter((_, i) => i !== index));
-  };
-
-  // Handle input change - detect # trigger for hashtag menu (reasoning modes + deep research)
-  const handleInputChange = (e) => {
-    const newValue = e.target.value;
-    const cursorPos = e.target.selectionStart;
-
-    // Check if user just typed # at start or after a space
-    // Show menu for: Deep Research (always available) or reasoning modes (if supported)
-    if (newValue.length > input.length) {
-      const charJustTyped = newValue[cursorPos - 1];
-      const charBefore = cursorPos > 1 ? newValue[cursorPos - 2] : '';
-
-      if (charJustTyped === '#' && (cursorPos === 1 || charBefore === ' ' || charBefore === '\n')) {
-        // Calculate position for menu
-        const textarea = textareaRef.current;
-        if (textarea) {
-          const rect = textarea.getBoundingClientRect();
-          setHashtagMenuPosition({
-            top: rect.top - 8, // Position above the textarea
-            left: rect.left + 12,
-          });
-          setHashtagMenuOpen(true);
-          setHashtagMenuIndex(0);
-        }
-      }
-    }
-
-    setInput(newValue);
-  };
-
-  // Handle reasoning mode selection
-  const handleSelectReasoningMode = (mode) => {
-    setReasoningMode(mode);
-    setHashtagMenuOpen(false);
-    // Remove the # from input
-    const cursorPos = textareaRef.current?.selectionStart || 0;
-    setInput(prev => {
-      // Find the # before cursor and remove it
-      const before = prev.slice(0, cursorPos);
-      const after = prev.slice(cursorPos);
-      const hashIndex = before.lastIndexOf('#');
-      if (hashIndex >= 0) {
-        return before.slice(0, hashIndex) + after;
-      }
-      return prev;
-    });
-    textareaRef.current?.focus();
-  };
-
-  // Handle message type selection (e.g., deep research)
-  const handleSelectMessageType = (type) => {
-    setMessageType(type);
-    setHashtagMenuOpen(false);
-    // Remove the # from input
-    const cursorPos = textareaRef.current?.selectionStart || 0;
-    setInput(prev => {
-      // Find the # before cursor and remove it
-      const before = prev.slice(0, cursorPos);
-      const after = prev.slice(cursorPos);
-      const hashIndex = before.lastIndexOf('#');
-      if (hashIndex >= 0) {
-        return before.slice(0, hashIndex) + after;
-      }
-      return prev;
-    });
-    textareaRef.current?.focus();
-  };
-
-  // Build available hashtag menu options
-  const hashtagMenuOptions = (() => {
-    const options = [];
-    // Deep Research is always available
-    options.push({ id: 'deep_research', type: 'messageType', icon: '🔬', label: 'Deep Research', desc: 'Comprehensive multi-source research' });
-    // Add reasoning modes if available
-    if (modelCapabilities.reasoningEfforts?.includes('high')) {
-      options.push({ id: 'high', type: 'reasoningMode', icon: '🧠', label: 'Think', desc: 'High effort reasoning' });
-    }
-    if (modelCapabilities.reasoningEfforts?.includes('xhigh')) {
-      options.push({ id: 'xhigh', type: 'reasoningMode', icon: '🧠', label: 'Think+', desc: 'Maximum effort reasoning' });
-    }
-    return options;
-  })();
-
-  // Handle hashtag menu item selection
-  const handleHashtagMenuSelect = (option) => {
-    if (option.type === 'messageType') {
-      handleSelectMessageType(option.id);
-    } else if (option.type === 'reasoningMode') {
-      handleSelectReasoningMode(option.id);
-    }
-  };
-
-  // Handle textarea key down (submit on Enter, newline on Shift+Enter)
-  const handleKeyDown = (e) => {
-    // Handle hashtag menu navigation
-    if (hashtagMenuOpen) {
-      const optionCount = hashtagMenuOptions.length;
-      if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        setHashtagMenuIndex(prev => Math.min(prev + 1, optionCount - 1));
-        return;
-      } else if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        setHashtagMenuIndex(prev => Math.max(prev - 1, 0));
-        return;
-      } else if (e.key === 'Enter') {
-        e.preventDefault();
-        if (hashtagMenuOptions[hashtagMenuIndex]) {
-          handleHashtagMenuSelect(hashtagMenuOptions[hashtagMenuIndex]);
-        }
-        return;
-      } else if (e.key === 'Escape') {
-        e.preventDefault();
-        setHashtagMenuOpen(false);
-        return;
-      }
-    }
-
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      if (input.trim() || attachments.length > 0) {
-        handleSubmit(e);
-      }
-    }
   };
 
   const handleAction = (action, data) => {
@@ -2455,111 +2324,26 @@ function App() {
         )}
         </main>
 
-        <footer className="input-container">
-          <form onSubmit={handleSubmit}>
-            <div
-              className={`input-wrapper ${isDragOver ? 'drag-over' : ''}`}
-              onDrop={handleDrop}
-              onDragOver={handleDragOver}
-              onDragLeave={handleDragLeave}
-            >
-              {/* Chips bar - show if attachments OR reasoning mode */}
-              {(attachments.length > 0 || reasoningMode || messageType) && (
-                <div className="attachments-bar">
-                  {/* Attachment chips first */}
-                  {attachments.map((file, index) => (
-                    <div key={index} className="attachment-chip">
-                      <span className="attachment-icon">
-                        {file.type.startsWith('image/') ? '🖼️' : '📎'}
-                      </span>
-                      <span className="attachment-name" title={file.name}>
-                        {file.name.length > 20 ? file.name.slice(0, 17) + '...' : file.name}
-                      </span>
-                      <button
-                        type="button"
-                        className="attachment-remove"
-                        onClick={() => removeAttachment(index)}
-                        title="Remove attachment"
-                      >
-                        ×
-                      </button>
-                    </div>
-                  ))}
-
-                  {/* Message type chip (e.g., Deep Research) */}
-                  {messageType && (
-                    <div className="hashtag-chip hashtag-chip-research">
-                      <span className="hashtag-chip-icon">🔬</span>
-                      <span className="hashtag-chip-label">
-                        {messageType === 'deep_research' ? 'Deep Research' : messageType}
-                      </span>
-                      <button
-                        type="button"
-                        className="hashtag-chip-remove"
-                        onClick={() => setMessageType(null)}
-                        title="Remove message type"
-                      >
-                        ×
-                      </button>
-                    </div>
-                  )}
-
-                  {/* Reasoning mode chip, accent color */}
-                  {reasoningMode && (
-                    <div className="hashtag-chip">
-                      <span className="hashtag-chip-icon">🧠</span>
-                      <span className="hashtag-chip-label">
-                        {reasoningMode === 'xhigh' ? 'Think+' : 'Think'}
-                      </span>
-                      <button
-                        type="button"
-                        className="hashtag-chip-remove"
-                        onClick={() => setReasoningMode(null)}
-                        title="Remove reasoning mode"
-                      >
-                        ×
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Hashtag context menu */}
-              {hashtagMenuOpen && hashtagMenuOptions.length > 0 && (
-                <div
-                  className="hashtag-menu"
-                  style={{ top: hashtagMenuPosition.top, left: hashtagMenuPosition.left }}
-                >
-                  {hashtagMenuOptions.map((option, index) => (
-                    <button
-                      key={option.id}
-                      type="button"
-                      className={`hashtag-menu-item ${hashtagMenuIndex === index ? 'selected' : ''}`}
-                      onClick={() => handleHashtagMenuSelect(option)}
-                      onMouseEnter={() => setHashtagMenuIndex(index)}
-                    >
-                      <span>{option.icon} {option.label}</span>
-                      <span className="hashtag-menu-item-desc">{option.desc}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-
-              <textarea
-                ref={textareaRef}
-                value={input}
-                onChange={handleInputChange}
-                onKeyDown={handleKeyDown}
-                onPaste={handlePaste}
-                placeholder={isResponsePending ? "Waiting for response..." : "Type a message... (Shift + Enter for new line)"}
-                disabled={!isConnected || isResponsePending}
-                rows={3}
-              />
-            </div>
-            <button type="submit" disabled={!isConnected || isResponsePending || (!input.trim() && attachments.length === 0)}>
-              {isResponsePending ? 'Waiting...' : 'Send'}
-            </button>
-          </form>
+        <footer
+          className={`input-container ${isDragOver ? 'drag-over' : ''}`}
+          onDrop={handleDrop}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+        >
+          <ChatInput
+            ref={chatInputRef}
+            onSubmit={handleSubmit}
+            onPaste={handlePaste}
+            attachments={attachments}
+            onRemoveAttachment={removeAttachment}
+            isConnected={isConnected}
+            isResponsePending={isResponsePending}
+            reasoningMode={reasoningMode}
+            messageType={messageType}
+            onReasoningModeChange={setReasoningMode}
+            onMessageTypeChange={setMessageType}
+            modelCapabilities={modelCapabilities}
+          />
         </footer>
         </>
         )}
