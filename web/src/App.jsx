@@ -1141,14 +1141,6 @@ function App() {
     }
   }, [openMenuId]);
 
-  // Close hashtag menu when clicking outside
-  useEffect(() => {
-    const handleClickOutside = () => setHashtagMenuOpen(false);
-    if (hashtagMenuOpen) {
-      document.addEventListener('click', handleClickOutside);
-      return () => document.removeEventListener('click', handleClickOutside);
-    }
-  }, [hashtagMenuOpen]);
 
   // Switch conversation - navigates to the conversation URL
   const handleSelectConversation = (convId) => {
