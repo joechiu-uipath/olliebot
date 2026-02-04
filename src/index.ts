@@ -507,18 +507,14 @@ async function main(): Promise<void> {
 
         for (const tool of tools) {
           const toolName = tool.name;
-          if (toolName.startsWith('user__')) {
+          if (toolName.startsWith('user.')) {
             user.push({
-              name: toolName.replace('user__', ''),
+              name: toolName.replace('user.', ''),
               description: tool.description,
             });
-          } else if (toolName.startsWith('native__')) {
-            builtin.push({
-              name: toolName.replace('native__', ''),
-              description: tool.description,
-            });
-          } else if (toolName.includes('__')) {
-            const [serverId, ...rest] = toolName.split('__');
+          } else if (toolName.startsWith('mcp.')) {
+            const nameWithoutPrefix = toolName.replace(/^mcp\./, '');
+            const [serverId, ...rest] = nameWithoutPrefix.split('__');
             const mcpToolName = rest.join('__');
             const serverName = serverNames[serverId] || serverId;
             if (!mcp[serverName]) {
@@ -526,6 +522,12 @@ async function main(): Promise<void> {
             }
             mcp[serverName].push({
               name: mcpToolName,
+              description: tool.description,
+            });
+          } else {
+            // No prefix = native/builtin tool
+            builtin.push({
+              name: toolName,
               description: tool.description,
             });
           }

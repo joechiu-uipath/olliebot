@@ -282,7 +282,7 @@ export class WorkerAgent extends AbstractAgent {
 
           // Check if delegate tool was called - handle sub-agent delegation
           // Find ALL delegate results (there may be multiple parallel delegations)
-          const delegateResults = results.filter(r => r.toolName === 'native__delegate' && r.success);
+          const delegateResults = results.filter(r => r.toolName === 'delegate' && r.success);
 
           if (delegateResults.length > 0 && this.agentRegistry) {
             // Check if this agent is allowed to delegate

@@ -31,7 +31,7 @@ export interface SpecialistTemplate {
 }
 
 /** Default tool exclusions for all specialists (supervisor-only tools) */
-const SUPERVISOR_ONLY_TOOLS = ['!native__delegate', '!native__remember'];
+const SUPERVISOR_ONLY_TOOLS = ['!delegate', '!remember'];
 
 /**
  * Built-in specialist templates
@@ -47,11 +47,11 @@ const SPECIALIST_TEMPLATES: SpecialistTemplate[] = [
     },
     // Researcher: web search, scraping, wikipedia, http
     canAccessTools: [
-      'native__web_search',
-      'native__web_scrape',
-      'native__wikipedia_search',
-      'native__analyze-image',
-      '*__*', // MCP tools
+      'web_search',
+      'web_scrape',
+      'wikipedia_search',
+      'analyze_image',
+      'mcp.*', // MCP tools
     ],
   },
   {
@@ -64,10 +64,10 @@ const SPECIALIST_TEMPLATES: SpecialistTemplate[] = [
     },
     // Coder: web for docs
     canAccessTools: [
-      'native__web_search',
-      'native__web_scrape',
-      'native__analyze-image',
-      '*__*', // MCP tools (filesystem, etc.)
+      'web_search',
+      'web_scrape',
+      'analyze_image',
+      'mcp.*', // MCP tools (filesystem, etc.)
     ],
   },
   {
@@ -80,11 +80,11 @@ const SPECIALIST_TEMPLATES: SpecialistTemplate[] = [
     },
     // Writer: web research, image creation for illustrations
     canAccessTools: [
-      'native__web_search',
-      'native__web_scrape',
-      'native__wikipedia_search',
-      'native__create-image',
-      '*__*', // MCP tools
+      'web_search',
+      'web_scrape',
+      'wikipedia_search',
+      'create_image',
+      'mcp.*', // MCP tools
     ],
   },
   {
@@ -97,10 +97,10 @@ const SPECIALIST_TEMPLATES: SpecialistTemplate[] = [
     },
     // Planner: research tools for gathering info to plan
     canAccessTools: [
-      'native__web_search',
-      'native__web_scrape',
-      'native__wikipedia_search',
-      '*__*', // MCP tools
+      'web_search',
+      'web_scrape',
+      'wikipedia_search',
+      'mcp.*', // MCP tools
     ],
   },
   // ============================================================================
@@ -115,11 +115,11 @@ const SPECIALIST_TEMPLATES: SpecialistTemplate[] = [
       description: 'Orchestrates comprehensive multi-source research tasks',
     },
     canAccessTools: [
-      'native__web_search',
-      'native__web_scrape',
-      'native__wikipedia_search',
-      'native__delegate', // Can delegate to research-worker
-      '*__*', // MCP tools
+      'web_search',
+      'web_scrape',
+      'wikipedia_search',
+      'delegate', // Can delegate to research-worker
+      'mcp.*', // MCP tools
       // Note: delegate is explicitly included above (overrides SUPERVISOR_ONLY_TOOLS exclusion)
     ],
     delegation: {
@@ -138,10 +138,10 @@ const SPECIALIST_TEMPLATES: SpecialistTemplate[] = [
       description: 'Deep exploration of specific research subtopics',
     },
     canAccessTools: [
-      'native__web_search',
-      'native__web_scrape',
-      'native__wikipedia_search',
-      '*__*', // MCP tools
+      'web_search',
+      'web_scrape',
+      'wikipedia_search',
+      'mcp.*', // MCP tools
     ],
     delegation: {
       canDelegate: false,
@@ -161,7 +161,7 @@ const SPECIALIST_TEMPLATES: SpecialistTemplate[] = [
     },
     canAccessTools: [
       // Reviewer doesn't need search - just reviews drafts
-      'native__web_scrape', // Can verify sources
+      'web_scrape', // Can verify sources
     ],
     delegation: {
       canDelegate: false,
@@ -281,13 +281,12 @@ export class AgentRegistry {
       const explicitIncludes = new Set(
         template.canAccessTools
           .filter(t => !t.startsWith('!'))
-          .map(t => t.replace('native__', ''))
       );
 
       // Filter out exclusions for tools that are explicitly included
       const filteredExclusions = SUPERVISOR_ONLY_TOOLS.filter(exclusion => {
         if (exclusion.startsWith('!')) {
-          const toolName = exclusion.slice(1).replace('native__', '');
+          const toolName = exclusion.slice(1);
           // Don't add exclusion if the tool is explicitly included
           return !explicitIncludes.has(toolName);
         }

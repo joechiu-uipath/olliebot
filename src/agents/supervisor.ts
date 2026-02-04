@@ -295,7 +295,7 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
             }
 
             // Check if delegate tool was called
-            const delegateResult = results.find(r => r.toolName === 'native__delegate' && r.success);
+            const delegateResult = results.find(r => r.toolName === 'delegate' && r.success);
             if (delegateResult) {
               // Check if we've already delegated for this message (prevent re-delegation on retries)
               if (this.delegatedMessages.has(message.id)) {
