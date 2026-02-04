@@ -1161,7 +1161,10 @@ function App() {
     );
 
     // Generate a unique message ID for deduplication (prevents React Strict Mode double-sends)
-    const messageId = `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+    const messageId =
+      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
 
     // Add user message to UI immediately
     const userMessage = {
