@@ -10,78 +10,87 @@ The self-coding system enables OlliBot to modify its own React frontend codebase
 
 1. **Separation of Concerns**: Different agents handle orchestration, planning, execution, and error recovery
 2. **Least Privilege**: Each agent only has access to the tools it needs
-3. **Validation**: All changes are verified through build checks before reporting success
-4. **Error Recovery**: Build failures trigger automated Code Fixer to resolve issues
-5. **Sandboxing**: All file operations are restricted to the `/web` directory
+3. **Sequential Execution**: All agents execute ONE AT A TIME to avoid race conditions and file conflicts
+4. **Validation**: All changes are verified through build checks before reporting success
+5. **Error Recovery**: Build failures trigger automated Code Fixer to resolve issues
+6. **Sandboxing**: All file operations are restricted to the `/web` directory
 
 ## Architecture
 
-### Workflow DAG
+### Workflow DAG (Sequential Execution)
+
+**IMPORTANT: All execution is SEQUENTIAL - one agent at a time, no parallelism.**
 
 ```
 User Request
      │
      ▼
 ┌─────────────┐
-│  Supervisor │ (routes requests, no frontend code access)
+│  Supervisor │ (routes requests)
 └──────┬──────┘
        │
        ▼
 ┌─────────────┐
-│ Coding Lead │ (orchestrates, validates builds)
+│ Coding Lead │ (orchestrates - ONE planner at a time)
 └──────┬──────┘
        │
-       ├───────────────────────────────────────────────┐
-       │                                               │
-       ▼                                               │
-┌──────────────┐                                       │
-│Coding Planner│ (analyzes, plans, delegates)         │
-└──────┬───────┘                                       │
-       │                                               │
-       ▼                                               │
-┌───────────────┐                                      │
-│ Coding Worker │ (executes changes) ×N               │
-└───────────────┘                                      │
-       │                                               │
-       ▼                                               │
-┌──────────────────────────────────────────────┐       │
-│              /web Directory                   │       │
-│  (React 19 Frontend Codebase)                │       │
-└──────────────────────────────────────────────┘       │
-       │                                               │
-       ▼                                               │
-┌─────────────┐                                        │
-│ Coding Lead │ (validates build)                     │
-└──────┬──────┘                                        │
-       │ check_frontend_code                           │
-       │                                               │
-   ┌───┴───┐                                           │
-   │ Pass? │                                           │
-   └───┬───┘                                           │
-       │                                               │
-  ┌────┴────┐                                          │
- Yes       No ─────────────────────────────────────────┤
-  │                                                    │
-  ▼                                               ┌────▼────┐
-Report                                            │Code     │
-Success                                           │Fixer    │
-                                                  └────┬────┘
-                                                       │
-                                                       ▼
-                                                  ┌─────────┐
-                                                  │ Re-check│
-                                                  │ build   │◄──┐
-                                                  └────┬────┘   │
-                                                       │        │
-                                                  ┌────┴────┐   │
-                                                  │ Pass?   │   │
-                                                  └────┬────┘   │
-                                                       │        │
-                                                  ┌────┴────┐   │
-                                                 Yes       No───┘
-                                                  │       (max 3)
-                                                  ▼
-                                             Report Success
+       ▼
+┌──────────────┐
+│Coding Planner│ (ONE instance, executes workers sequentially)
+└──────┬───────┘
+       │
+       │  ┌──────────────────────────────────────┐
+       │  │ SEQUENTIAL LOOP (one worker at a time)│
+       │  │                                        │
+       │  │  Worker 1 → wait → inspect result     │
+       │  │       ↓                               │
+       │  │  Worker 2 → wait → inspect result     │
+       │  │       ↓                               │
+       │  │  Worker N → wait → inspect result     │
+       │  │       ↓                               │
+       │  │  Return aggregated results            │
+       │  └──────────────────────────────────────┘
+       │
+       ▼
+┌──────────────────────────────────────────────┐
+│              /web Directory                   │
+│  (React 19 Frontend Codebase)                │
+└──────────────────────────────────────────────┘
+       │
+       ▼
+┌─────────────┐
+│ Coding Lead │ (validates build)
+└──────┬──────┘
+       │ check_frontend_code
+       │
+   ┌───┴───┐
+   │ Pass? │
+   └───┬───┘
+       │
+  ┌────┴────┐
+ Yes       No
+  │         │
+  ▼         ▼
+Report   ┌───────────┐
+Success  │Code Fixer │ (ONE instance, wait for completion)
+         └─────┬─────┘
+               │
+               ▼
+         ┌───────────┐
+         │ Re-check  │◄──┐
+         │ build     │   │
+         └─────┬─────┘   │
+               │         │
+          ┌────┴────┐    │
+          │ Pass?   │    │
+          └────┬────┘    │
+               │         │
+          ┌────┴────┐    │
+         Yes       No────┘
+          │       (max 3)
+          ▼
+       Report
+       Success
 ```
 
 ### Agent Responsibilities
@@ -100,6 +109,23 @@ Success                                           │Fixer    │
 - Supervisor cannot directly invoke Coding Planner, Coding Worker, or Code Fixer
 - Coding Lead cannot directly invoke Coding Worker (must go through Planner)
 - This ensures proper orchestration and prevents bypassing the planning phase
+
+### Sequential Execution Model
+
+**Critical: All agents execute ONE AT A TIME to prevent race conditions and file conflicts.**
+
+| Level | Constraint |
+|-------|------------|
+| Coding Lead | Launches ONE Coding Planner, waits for completion before proceeding |
+| Coding Lead | Launches ONE Code Fixer (if needed), waits for completion |
+| Coding Planner | Launches ONE Coding Worker at a time, waits and inspects result |
+| Coding Planner | Decides next action based on worker result (retry, next change, or complete) |
+
+**Why Sequential?**
+1. **File Safety**: Prevents multiple workers from editing the same file simultaneously
+2. **Dependency Tracking**: Later changes may depend on earlier changes succeeding
+3. **Error Recovery**: Planner can adapt strategy based on each worker's result
+4. **Debugging**: Easier to trace issues when changes are applied one at a time
 
 ### Output Formats
 
