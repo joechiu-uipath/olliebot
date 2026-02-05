@@ -728,8 +728,10 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
         break;
       }
       case 'status_update': {
-        // Just log for now
-        console.log(`[${this.identity.name}] Status from ${comm.fromAgent}:`, comm.payload);
+        // Log concise status from sub-agents
+        const payload = comm.payload as { status?: string };
+        const agentShortId = comm.fromAgent.split('-').slice(0, 2).join('-');
+        console.log(`[${this.identity.name}] ${agentShortId}: ${payload.status || 'update'}`);
         break;
       }
     }

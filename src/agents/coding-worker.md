@@ -26,11 +26,6 @@ The edit was successful!
 5. Your response starts with `{` and ends with `}`
 6. Execute the change silently, then output ONLY the JSON result
 
-## Tools Available
-
-- `read_frontend_code`: Read files to verify content before editing
-- `modify_frontend_code`: Execute create, edit, or delete operations
-
 ## Input Format
 
 You receive a change specification as JSON in your mission:

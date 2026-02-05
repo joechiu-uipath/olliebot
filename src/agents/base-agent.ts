@@ -81,9 +81,10 @@ export abstract class AbstractAgent implements BaseAgent {
    */
   setSkillManager(manager: SkillManager): void {
     this.skillManager = manager;
-    const skillCount = manager.getAllMetadata().length;
-    if (skillCount > 0) {
-      console.log(`[${this.identity.name}] Skill manager configured with ${skillCount} skills`);
+    const allSkills = manager.getAllMetadata();
+    if (allSkills.length > 0) {
+      const skillIds = allSkills.map(s => s.id).join(', ');
+      console.log(`[${this.identity.name}] Skills available: ${skillIds}`);
     }
   }
 

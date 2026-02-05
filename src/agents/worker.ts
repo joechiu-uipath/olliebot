@@ -66,7 +66,9 @@ export class WorkerAgent extends AbstractAgent {
 
   async init(): Promise<void> {
     await super.init();
-    console.log(`[${this.identity.name}] Worker initialized - ${this.config.mission || 'awaiting task'}`);
+    const mission = this.config.mission || 'awaiting task';
+    const missionPreview = mission.length > 80 ? mission.substring(0, 80) + '...' : mission;
+    console.log(`[${this.identity.name}] Initialized: ${missionPreview}`);
   }
 
   async handleMessage(message: Message): Promise<void> {
@@ -687,8 +689,9 @@ export class WorkerAgent extends AbstractAgent {
         break;
       }
       case 'status_update': {
-        // Log status updates from sub-agents
-        console.log(`[${this.identity.name}] Sub-agent status: ${JSON.stringify(comm.payload)}`);
+        // Log concise status updates from sub-agents
+        const payload = comm.payload as { status?: string; taskId?: string };
+        console.log(`[${this.identity.name}] Sub-agent ${comm.fromAgent.split('-').slice(0, 2).join('-')}: ${payload.status || 'unknown'}`);
         break;
       }
     }

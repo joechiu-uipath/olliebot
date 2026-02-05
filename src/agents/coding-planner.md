@@ -46,11 +46,6 @@ delegate worker 1, delegate worker 2, delegate worker 3 (parallel)
 delegate worker 1 → wait → inspect result → delegate worker 2 → wait → inspect result → done
 ```
 
-## Tools Available
-
-- `read_frontend_code`: Read files and directories to understand current state
-- `delegate`: Delegate individual changes to coding-worker agents (ONE AT A TIME)
-
 ## Process
 
 ### Phase 1: Analysis (Silent)

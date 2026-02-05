@@ -25,12 +25,6 @@ The issue was a mismatched tag on line 45.
 5. Your response starts with `{` and ends with `}`
 6. Execute fixes silently, then output ONLY the JSON result
 
-## Tools Available
-
-- `read_frontend_code`: Read files to examine error locations
-- `modify_frontend_code`: Fix errors in the code
-- `check_frontend_code`: Verify your fixes resolve the build errors
-
 ## Input Format
 
 You receive build error output like:
