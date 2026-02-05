@@ -19,6 +19,7 @@ import type { ToolEvent } from '../tools/types.js';
 import { formatToolResultBlocks } from '../utils/index.js';
 import type { CitationSource, StoredCitationData } from '../citations/types.js';
 import { DEEP_RESEARCH_WORKFLOW_ID, AGENT_IDS } from '../deep-research/constants.js';
+import { SELF_CODING_WORKFLOW_ID, AGENT_IDS as CODING_AGENT_IDS } from '../self-coding/constants.js';
 import { getMessageEventService } from '../services/message-event-service.js';
 
 export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAgent {
@@ -47,7 +48,7 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
       },
       capabilities: {
         canSpawnAgents: true,
-        canAccessTools: ['*'],
+        canAccessTools: ['*', '!read_frontend_code', '!modify_frontend_code'], // Exclude self-coding tools - must delegate to coding-lead
         canUseChannels: ['*'],
         maxConcurrentTasks: 10,
       },
@@ -634,6 +635,11 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
     // Set workflow context for deep research agents
     if (type === AGENT_IDS.LEAD) {
       agent.setWorkflowId(DEEP_RESEARCH_WORKFLOW_ID);
+    }
+
+    // Set workflow context for self-coding agents
+    if (type === CODING_AGENT_IDS.LEAD) {
+      agent.setWorkflowId(SELF_CODING_WORKFLOW_ID);
     }
 
     // Pass the tool runner to worker agents so they can use MCP, skills, and native tools

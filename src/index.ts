@@ -40,7 +40,9 @@ import {
   DelegateTool,
   QueryRAGProjectTool,
   SpeakTool,
+  ReadFrontendCodeTool,
   ModifyFrontendCodeTool,
+  CheckFrontendCodeTool,
 } from './tools/index.js';
 import { TaskManager } from './tasks/index.js';
 import { MemoryService } from './memory/index.js';
@@ -394,8 +396,10 @@ async function main(): Promise<void> {
   toolRunner.registerNativeTool(new RunSkillScriptTool(skillManager));
 
   // Self-modifying code tools (for frontend code modification)
+  toolRunner.registerNativeTool(new ReadFrontendCodeTool());
   toolRunner.registerNativeTool(new ModifyFrontendCodeTool());
-  console.log('[Init] Frontend code modification tool enabled');
+  toolRunner.registerNativeTool(new CheckFrontendCodeTool());
+  console.log('[Init] Frontend code tools enabled (read + modify + check)');
 
   // Initialize Browser Session Manager
   console.log('[Init] Initializing browser session manager...');

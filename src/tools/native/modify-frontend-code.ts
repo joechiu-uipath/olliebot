@@ -1,12 +1,12 @@
 /**
  * Modify Frontend Code Tool
  *
- * Allows agents to safely modify the frontend codebase within /web directory.
- * This tool is designed for the self-modifying software PoC.
+ * Write-only tool for modifying the frontend codebase within /web directory.
+ * Used by coding-worker to execute code changes.
  */
 
-import { readFileSync, writeFileSync, existsSync, unlinkSync, mkdirSync, readdirSync, statSync } from 'fs';
-import { join, dirname, resolve, relative } from 'path';
+import { readFileSync, writeFileSync, existsSync, unlinkSync, mkdirSync } from 'fs';
+import { dirname, resolve, relative } from 'path';
 import type { NativeTool, NativeToolResult } from './types.js';
 
 // Base path for frontend code - all modifications must be within this directory
@@ -16,7 +16,7 @@ const WEB_BASE_PATH = resolve(process.cwd(), 'web');
 const PROTECTED_FILES = ['src/main.jsx', 'index.html', 'vite.config.js', 'package.json'];
 
 export type EditOperation = 'replace' | 'insert_before' | 'insert_after' | 'append' | 'prepend' | 'full_replace';
-export type FileOperation = 'create' | 'edit' | 'delete' | 'read';
+export type FileOperation = 'create' | 'edit' | 'delete';
 
 export interface ModifyFrontendCodeParams {
   /** Relative path from /web directory (e.g., "src/components/Button.jsx") */
@@ -35,10 +35,9 @@ export interface ModifyFrontendCodeParams {
 
 export class ModifyFrontendCodeTool implements NativeTool {
   readonly name = 'modify_frontend_code';
-  readonly description = `Modify frontend source code files within the /web directory. This tool enables self-modification of the React frontend.
+  readonly description = `Modify frontend source code files within the /web directory. This is a WRITE-ONLY tool for creating, editing, and deleting files.
 
 Operations:
-- read: Read file content, or list directory contents if path is a folder
 - create: Create a new file (fails if file exists)
 - edit: Modify an existing file
 - delete: Remove a file (protected files cannot be deleted)
@@ -51,8 +50,7 @@ Edit types (for edit operation):
 - prepend: Add content at the beginning of the file
 - full_replace: Replace entire file content
 
-IMPORTANT: Always read a file first to understand its structure before editing.
-TIP: Use read with a directory path (e.g., "src/components") to list all files in that directory.`;
+NOTE: Use read_frontend_code tool to examine files before modifying them.`;
 
   readonly inputSchema = {
     type: 'object',
@@ -63,7 +61,7 @@ TIP: Use read with a directory path (e.g., "src/components") to list all files i
       },
       operation: {
         type: 'string',
-        enum: ['create', 'edit', 'delete', 'read'],
+        enum: ['create', 'edit', 'delete'],
         description: 'Operation to perform on the file',
       },
       edit_type: {
@@ -109,8 +107,6 @@ TIP: Use read with a directory path (e.g., "src/components") to list all files i
 
     try {
       switch (operation) {
-        case 'read':
-          return this.readFile(absolutePath, relativePath);
         case 'create':
           return this.createFile(absolutePath, relativePath, content);
         case 'edit':
@@ -155,67 +151,6 @@ TIP: Use read with a directory path (e.g., "src/components") to list all files i
     }
 
     return { valid: true, absolutePath, relativePath };
-  }
-
-  private readFile(absolutePath: string, relativePath: string): NativeToolResult {
-    if (!existsSync(absolutePath)) {
-      return { success: false, error: `File not found: ${relativePath}` };
-    }
-
-    // Check if path is a directory
-    const stats = statSync(absolutePath);
-    if (stats.isDirectory()) {
-      return this.listDirectory(absolutePath, relativePath);
-    }
-
-    const content = readFileSync(absolutePath, 'utf-8');
-    const lines = content.split('\n');
-
-    return {
-      success: true,
-      output: {
-        path: relativePath,
-        content,
-        lineCount: lines.length,
-        size: content.length,
-      },
-    };
-  }
-
-  private listDirectory(absolutePath: string, relativePath: string): NativeToolResult {
-    const entries = readdirSync(absolutePath, { withFileTypes: true });
-
-    const files: Array<{ name: string; type: 'file' | 'directory'; size?: number }> = [];
-
-    for (const entry of entries) {
-      const entryPath = join(absolutePath, entry.name);
-      if (entry.isDirectory()) {
-        files.push({ name: entry.name, type: 'directory' });
-      } else if (entry.isFile()) {
-        const fileStats = statSync(entryPath);
-        files.push({ name: entry.name, type: 'file', size: fileStats.size });
-      }
-    }
-
-    // Sort: directories first, then files, alphabetically within each group
-    files.sort((a, b) => {
-      if (a.type !== b.type) {
-        return a.type === 'directory' ? -1 : 1;
-      }
-      return a.name.localeCompare(b.name);
-    });
-
-    return {
-      success: true,
-      output: {
-        path: relativePath || '.',
-        type: 'directory',
-        entries: files,
-        totalEntries: files.length,
-        directories: files.filter(f => f.type === 'directory').length,
-        files: files.filter(f => f.type === 'file').length,
-      },
-    };
   }
 
   private createFile(absolutePath: string, relativePath: string, content?: string): NativeToolResult {

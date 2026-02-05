@@ -16,4 +16,6 @@ export * from './http-client.js';
 export * from './delegate.js';
 export * from './query-rag-project.js';
 export * from './speak.js';
+export * from './read-frontend-code.js';
 export * from './modify-frontend-code.js';
+export * from './check-frontend-code.js';
