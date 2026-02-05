@@ -263,14 +263,26 @@ TIPS:
           return { success: false, error: `target is required for ${editType} operation` };
         }
 
-        // Check for exact match first
-        if (currentContent.includes(target)) {
+        // Normalize line endings for comparison (handle CRLF vs LF mismatch)
+        // Detect the file's line ending style and normalize the target to match
+        const fileUsesCRLF = currentContent.includes('\r\n');
+        const normalizedTarget = fileUsesCRLF
+          ? target.replace(/(?<!\r)\n/g, '\r\n')  // Convert LF to CRLF if file uses CRLF
+          : target.replace(/\r\n/g, '\n');        // Convert CRLF to LF if file uses LF
+
+        // Check for exact match first (with normalized line endings)
+        if (currentContent.includes(normalizedTarget)) {
+          // Also normalize content to match file's line ending style
+          const normalizedContent = fileUsesCRLF
+            ? content.replace(/(?<!\r)\n/g, '\r\n')
+            : content.replace(/\r\n/g, '\n');
+
           if (editType === 'replace') {
-            newContent = currentContent.replace(target, content);
+            newContent = currentContent.replace(normalizedTarget, normalizedContent);
           } else if (editType === 'insert_before') {
-            newContent = currentContent.replace(target, content + target);
+            newContent = currentContent.replace(normalizedTarget, normalizedContent + normalizedTarget);
           } else {
-            newContent = currentContent.replace(target, target + content);
+            newContent = currentContent.replace(normalizedTarget, normalizedTarget + normalizedContent);
           }
           break;
         }
@@ -306,8 +318,12 @@ TIPS:
    * Find similar content in the file to help debug target mismatches
    */
   private findSimilarContent(fileContent: string, target: string): string {
-    const lines = fileContent.split('\n');
-    const targetLines = target.split('\n');
+    // Normalize line endings for consistent comparison
+    const normalizedContent = fileContent.replace(/\r\n/g, '\n');
+    const normalizedTarget = target.replace(/\r\n/g, '\n');
+
+    const lines = normalizedContent.split('\n');
+    const targetLines = normalizedTarget.split('\n');
     const targetFirstLine = targetLines[0].trim();
 
     // Skip if target first line is too short
@@ -321,12 +337,23 @@ TIPS:
     for (let i = 0; i < lines.length; i++) {
       const lineTrimmed = lines[i].trim();
 
-      // Check if line contains significant part of target
-      if (lineTrimmed.includes(targetFirstLine) || targetFirstLine.includes(lineTrimmed)) {
+      // Skip empty or very short lines (would match everything)
+      if (lineTrimmed.length < 10) {
+        continue;
+      }
+
+      // Check if line contains significant part of target or vice versa
+      if (lineTrimmed.includes(targetFirstLine)) {
         similarLines.push({
           line: i + 1,
           content: lines[i].substring(0, 80),
-          similarity: 'exact match (trimmed)',
+          similarity: 'contains target',
+        });
+      } else if (targetFirstLine.includes(lineTrimmed)) {
+        similarLines.push({
+          line: i + 1,
+          content: lines[i].substring(0, 80),
+          similarity: 'target contains this line',
         });
       } else if (lineTrimmed.length > 10) {
         // Check for partial matches (first 20 chars)
