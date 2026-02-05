@@ -171,6 +171,68 @@ const SPECIALIST_TEMPLATES: SpecialistTemplate[] = [
     },
     collapseResponseByDefault: true, // Collapse reviewer responses in UI
   },
+  // ============================================================================
+  // SELF-CODING AGENTS (Frontend Self-Modification)
+  // ============================================================================
+  {
+    type: 'coding-lead',
+    identity: {
+      name: 'Coding Lead',
+      emoji: '👨‍💻',
+      role: 'specialist',
+      description: 'Orchestrates frontend code modifications, validates builds, and commits changes',
+    },
+    canAccessTools: [
+      'modify_frontend_code', // For reading files and understanding context
+      'read_skill', // To read the frontend-modifier skill
+      'delegate', // Can delegate to coding-planner and coding-worker
+      'mcp.*', // MCP tools for git operations
+    ],
+    delegation: {
+      canDelegate: true,
+      allowedDelegates: ['coding-planner', 'coding-worker'],
+      restrictedToWorkflow: null,
+      supervisorCanInvoke: true,
+    },
+  },
+  {
+    type: 'coding-planner',
+    identity: {
+      name: 'Coding Planner',
+      emoji: '📐',
+      role: 'specialist',
+      description: 'Analyzes frontend modification requests and creates structured change plans',
+    },
+    canAccessTools: [
+      'modify_frontend_code', // For reading files to understand current state
+    ],
+    delegation: {
+      canDelegate: false,
+      allowedDelegates: [],
+      restrictedToWorkflow: 'self-coding',
+      supervisorCanInvoke: false, // Only invocable by coding-lead
+    },
+    collapseResponseByDefault: true,
+  },
+  {
+    type: 'coding-worker',
+    identity: {
+      name: 'Coding Worker',
+      emoji: '🔧',
+      role: 'specialist',
+      description: 'Executes individual code changes using the modify_frontend_code tool',
+    },
+    canAccessTools: [
+      'modify_frontend_code', // Primary tool for all file operations
+    ],
+    delegation: {
+      canDelegate: false,
+      allowedDelegates: [],
+      restrictedToWorkflow: 'self-coding',
+      supervisorCanInvoke: false, // Only invocable by coding-lead
+    },
+    collapseResponseByDefault: true,
+  },
 ];
 
 export class AgentRegistry {

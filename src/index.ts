@@ -40,6 +40,7 @@ import {
   DelegateTool,
   QueryRAGProjectTool,
   SpeakTool,
+  ModifyFrontendCodeTool,
 } from './tools/index.js';
 import { TaskManager } from './tasks/index.js';
 import { MemoryService } from './memory/index.js';
@@ -385,6 +386,10 @@ async function main(): Promise<void> {
   // Skill tools (for Agent Skills spec)
   toolRunner.registerNativeTool(new ReadSkillTool(CONFIG.skillsDir));
   toolRunner.registerNativeTool(new RunSkillScriptTool(CONFIG.skillsDir));
+
+  // Self-modifying code tools (for frontend code modification)
+  toolRunner.registerNativeTool(new ModifyFrontendCodeTool());
+  console.log('[Init] Frontend code modification tool enabled');
 
   // Initialize Browser Session Manager
   console.log('[Init] Initializing browser session manager...');
