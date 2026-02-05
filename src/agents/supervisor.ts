@@ -650,6 +650,12 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
       agent.setToolRunner(this.toolRunner);
     }
 
+    // Pass the skill manager to worker agents so they can see and use skills
+    // Note: Workers do NOT inherit excludedSkillSources - they have full access to skills
+    if (this.skillManager) {
+      agent.setSkillManager(this.skillManager);
+    }
+
     // Pass the RAG data manager to worker agents
     if (this.ragDataManager) {
       agent.setRagDataManager(this.ragDataManager);

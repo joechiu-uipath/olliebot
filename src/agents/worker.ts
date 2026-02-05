@@ -520,9 +520,12 @@ export class WorkerAgent extends AbstractAgent {
       subAgent.setWorkflowId(this.currentWorkflowId);
     }
 
-    // Pass tool runner and RAG manager
+    // Pass tool runner, skill manager, and RAG manager
     if (this.toolRunner) {
       subAgent.setToolRunner(this.toolRunner);
+    }
+    if (this.skillManager) {
+      subAgent.setSkillManager(this.skillManager);
     }
     if (this.ragDataManager) {
       subAgent.setRagDataManager(this.ragDataManager);
