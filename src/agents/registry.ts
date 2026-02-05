@@ -184,12 +184,12 @@ const SPECIALIST_TEMPLATES: SpecialistTemplate[] = [
     },
     canAccessTools: [
       'read_skill', // To read the frontend-modifier skill
-      'delegate', // Can delegate to coding-planner and coding-worker
+      'delegate', // Can delegate to coding-planner and code-fixer
       'check_frontend_code', // To validate build after changes
     ],
     delegation: {
       canDelegate: true,
-      allowedDelegates: ['coding-planner', 'coding-worker'],
+      allowedDelegates: ['coding-planner', 'code-fixer'], // Workers go through planner
       restrictedToWorkflow: null,
       supervisorCanInvoke: true,
     },
@@ -200,14 +200,15 @@ const SPECIALIST_TEMPLATES: SpecialistTemplate[] = [
       name: 'Coding Planner',
       emoji: '📐',
       role: 'specialist',
-      description: 'Analyzes frontend modification requests and creates structured change plans',
+      description: 'Analyzes frontend modification requests, creates change plans, and delegates to workers',
     },
     canAccessTools: [
       'read_frontend_code', // Read-only access to understand current state
+      'delegate', // Can delegate to coding-worker
     ],
     delegation: {
-      canDelegate: false,
-      allowedDelegates: [],
+      canDelegate: true,
+      allowedDelegates: ['coding-worker'],
       restrictedToWorkflow: 'self-coding',
       supervisorCanInvoke: false, // Only invocable by coding-lead
     },
@@ -224,6 +225,27 @@ const SPECIALIST_TEMPLATES: SpecialistTemplate[] = [
     canAccessTools: [
       'read_frontend_code', // To verify file state before/after changes
       'modify_frontend_code', // Write access for creating, editing, deleting files
+    ],
+    delegation: {
+      canDelegate: false,
+      allowedDelegates: [],
+      restrictedToWorkflow: 'self-coding',
+      supervisorCanInvoke: false, // Only invocable by coding-planner
+    },
+    collapseResponseByDefault: true,
+  },
+  {
+    type: 'code-fixer',
+    identity: {
+      name: 'Code Fixer',
+      emoji: '🔨',
+      role: 'specialist',
+      description: 'Fixes build errors in frontend code, focusing on syntax issues like mismatched tags and brackets',
+    },
+    canAccessTools: [
+      'read_frontend_code', // To examine files with errors
+      'modify_frontend_code', // To fix the errors
+      'check_frontend_code', // To verify fixes work
     ],
     delegation: {
       canDelegate: false,

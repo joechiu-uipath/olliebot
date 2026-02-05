@@ -53,7 +53,7 @@ Returns success/failure status with any error output.`;
   };
 
   async execute(params: Record<string, unknown>): Promise<NativeToolResult> {
-    const { check, timeout = 60000 } = params as CheckFrontendCodeParams;
+    const { check, timeout = 60000 } = params as unknown as CheckFrontendCodeParams;
 
     // Verify web directory exists
     if (!existsSync(WEB_BASE_PATH)) {

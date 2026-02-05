@@ -8,10 +8,11 @@ The self-coding system enables OlliBot to modify its own React frontend codebase
 
 ### Key Principles
 
-1. **Separation of Concerns**: Different agents handle planning vs. execution
+1. **Separation of Concerns**: Different agents handle orchestration, planning, execution, and error recovery
 2. **Least Privilege**: Each agent only has access to the tools it needs
 3. **Validation**: All changes are verified through build checks before reporting success
-4. **Sandboxing**: All file operations are restricted to the `/web` directory
+4. **Error Recovery**: Build failures trigger automated Code Fixer to resolve issues
+5. **Sandboxing**: All file operations are restricted to the `/web` directory
 
 ## Architecture
 
@@ -22,53 +23,93 @@ User Request
      │
      ▼
 ┌─────────────┐
-│  Supervisor │ (delegates, no frontend code access)
+│  Supervisor │ (routes requests, no frontend code access)
 └──────┬──────┘
        │
        ▼
 ┌─────────────┐
-│ Coding Lead │ (orchestrates, validates)
+│ Coding Lead │ (orchestrates, validates builds)
 └──────┬──────┘
        │
-       ├──────────────────────────────────┐
-       │                                  │
-       ▼                                  ▼
-┌──────────────┐                  ┌───────────────┐
-│Coding Planner│ (plans)          │ Coding Worker │ (executes) ×N
-└──────────────┘                  └───────────────┘
-       │                                  │
-       │ read_frontend_code               │ read_frontend_code
-       │                                  │ modify_frontend_code
-       │                                  │
-       ▼                                  ▼
-┌──────────────────────────────────────────────┐
-│              /web Directory                   │
-│  (React 19 Frontend Codebase)                │
-└──────────────────────────────────────────────┘
-       │
-       ▼
-┌─────────────┐
-│ Coding Lead │ (validates build)
-└──────┬──────┘
-       │ check_frontend_code
-       ▼
-   Report Results
+       ├───────────────────────────────────────────────┐
+       │                                               │
+       ▼                                               │
+┌──────────────┐                                       │
+│Coding Planner│ (analyzes, plans, delegates)         │
+└──────┬───────┘                                       │
+       │                                               │
+       ▼                                               │
+┌───────────────┐                                      │
+│ Coding Worker │ (executes changes) ×N               │
+└───────────────┘                                      │
+       │                                               │
+       ▼                                               │
+┌──────────────────────────────────────────────┐       │
+│              /web Directory                   │       │
+│  (React 19 Frontend Codebase)                │       │
+└──────────────────────────────────────────────┘       │
+       │                                               │
+       ▼                                               │
+┌─────────────┐                                        │
+│ Coding Lead │ (validates build)                     │
+└──────┬──────┘                                        │
+       │ check_frontend_code                           │
+       │                                               │
+   ┌───┴───┐                                           │
+   │ Pass? │                                           │
+   └───┬───┘                                           │
+       │                                               │
+  ┌────┴────┐                                          │
+ Yes       No ─────────────────────────────────────────┤
+  │                                                    │
+  ▼                                               ┌────▼────┐
+Report                                            │Code     │
+Success                                           │Fixer    │
+                                                  └────┬────┘
+                                                       │
+                                                       ▼
+                                                  ┌─────────┐
+                                                  │ Re-check│
+                                                  │ build   │◄──┐
+                                                  └────┬────┘   │
+                                                       │        │
+                                                  ┌────┴────┐   │
+                                                  │ Pass?   │   │
+                                                  └────┬────┘   │
+                                                       │        │
+                                                  ┌────┴────┐   │
+                                                 Yes       No───┘
+                                                  │       (max 3)
+                                                  ▼
+                                             Report Success
 ```
 
 ### Agent Responsibilities
 
-| Agent | Role | Tools Available |
-|-------|------|-----------------|
-| **Supervisor** | Routes user requests to appropriate specialists | All tools except `read_frontend_code`, `modify_frontend_code` |
-| **Coding Lead** | Orchestrates the workflow, validates builds | `read_skill`, `delegate`, `check_frontend_code` |
-| **Coding Planner** | Analyzes requests, creates structured change plans | `read_frontend_code` (read-only) |
-| **Coding Worker** | Executes individual atomic code changes | `read_frontend_code`, `modify_frontend_code` |
+| Agent | Role | Tools Available | Can Delegate To |
+|-------|------|-----------------|-----------------|
+| **Supervisor** | Routes user requests to appropriate specialists | All tools except `read_frontend_code`, `modify_frontend_code`, `check_frontend_code` | `coding-lead` |
+| **Coding Lead** | Orchestrates workflow, validates builds, reports results | `read_skill`, `delegate`, `check_frontend_code` | `coding-planner`, `code-fixer` |
+| **Coding Planner** | Analyzes requests, creates change plans, coordinates workers | `read_frontend_code`, `delegate` | `coding-worker` |
+| **Coding Worker** | Executes individual atomic code changes | `read_frontend_code`, `modify_frontend_code` | None |
+| **Code Fixer** | Fixes build errors (syntax, imports, brackets) | `read_frontend_code`, `modify_frontend_code`, `check_frontend_code` | None |
 
 ### Workflow Restrictions
 
-- **Coding Planner** and **Coding Worker** are restricted to the `self-coding` workflow
-- Only **Coding Lead** can delegate to them (supervisor cannot invoke directly)
+- All self-coding agents are restricted to the `self-coding` workflow
+- Supervisor cannot directly invoke Coding Planner, Coding Worker, or Code Fixer
+- Coding Lead cannot directly invoke Coding Worker (must go through Planner)
 - This ensures proper orchestration and prevents bypassing the planning phase
+
+### Output Formats
+
+| Agent | Output Format | Description |
+|-------|---------------|-------------|
+| Supervisor | Natural language | User-facing conversational response |
+| Coding Lead | Markdown | User-facing status report with tables |
+| Coding Planner | JSON only | Machine-readable plan and execution results |
+| Coding Worker | JSON only | Machine-readable change result |
+| Code Fixer | JSON only | Machine-readable fix result |
 
 ## Tools
 
@@ -106,8 +147,9 @@ User Request
 {
   "file_path": "src/components/Button.jsx",
   "operation": "create|edit|delete",
-  "edit_type": "replace|insert_before|insert_after|append|prepend|full_replace",
+  "edit_type": "replace|insert_before|insert_after|append|prepend|full_replace|replace_line|insert_at_line",
   "target": "string to find (for replace/insert)",
+  "line_number": 42,
   "content": "content to write",
   "description": "what this change does"
 }
@@ -121,14 +163,27 @@ User Request
 | `delete` | Remove a file | `file_path` |
 
 **Edit Types**:
-| Type | Description |
-|------|-------------|
-| `replace` | Find `target` and replace with `content` |
-| `insert_before` | Insert `content` before `target` |
-| `insert_after` | Insert `content` after `target` |
-| `append` | Add `content` to end of file |
-| `prepend` | Add `content` to beginning of file |
-| `full_replace` | Replace entire file with `content` |
+| Type | Description | Required |
+|------|-------------|----------|
+| `replace` | Find `target` and replace with `content` | `target`, `content` |
+| `insert_before` | Insert `content` before `target` | `target`, `content` |
+| `insert_after` | Insert `content` after `target` | `target`, `content` |
+| `append` | Add `content` to end of file | `content` |
+| `prepend` | Add `content` to beginning of file | `content` |
+| `full_replace` | Replace entire file with `content` | `content` |
+| `replace_line` | Replace line at `line_number` with `content` | `line_number`, `content` |
+| `insert_at_line` | Insert `content` at `line_number` | `line_number`, `content` |
+
+**Best Practices**:
+- Use `append`/`prepend` when possible (no target needed, most reliable)
+- Use `replace_line`/`insert_at_line` for precise edits (avoids whitespace issues)
+- For targeted edits, use SHORT unique strings (single line is best)
+- Always read the file first to find exact targets or line numbers
+
+**Error Handling**:
+- When target string is not found, the tool provides helpful error messages
+- Shows similar content found in the file with line numbers
+- Suggests using line-based operations for precise edits
 
 **Security**:
 - Path validation ensures all writes stay within `/web`
@@ -181,57 +236,108 @@ User Request
 2. Supervisor delegates to Coding Lead
 3. Coding Lead reads `frontend-modifier` skill to understand codebase
 
-### Phase 2: Planning
-1. Coding Lead delegates to Coding Planner with request details
+### Phase 2: Planning & Execution
+1. Coding Lead delegates to Coding Planner with full request details
 2. Coding Planner uses `read_frontend_code` to examine:
    - Relevant source files
    - Directory structure
    - Existing patterns
-3. Coding Planner outputs a JSON change plan:
+3. Coding Planner creates a change plan and delegates to Coding Workers
+4. Workers execute changes and return JSON results
+5. Planner aggregates results and returns to Coding Lead
 
+**Planner Output Format**:
 ```json
 {
-  "summary": "Add weather widget to header",
-  "changes": [
-    {
-      "id": "change-1",
-      "file_path": "src/components/WeatherWidget.jsx",
-      "operation": "create",
-      "content": "...",
-      "priority": 1
-    },
-    {
-      "id": "change-2",
-      "file_path": "src/App.jsx",
-      "operation": "edit",
-      "edit_type": "insert_after",
-      "target": "import StatusBadge",
-      "content": "\nimport WeatherWidget from './components/WeatherWidget';",
-      "priority": 2,
-      "depends_on": ["change-1"]
-    }
-  ]
+  "status": "completed|partial|failed",
+  "plan": {
+    "summary": "Add weather widget to header",
+    "total_changes": 3,
+    "changes": [...]
+  },
+  "results": [
+    {"change_id": "1", "status": "success", "file_path": "..."},
+    {"change_id": "2", "status": "failed", "error": "..."}
+  ],
+  "files_modified": ["src/components/Widget.jsx"],
+  "files_failed": ["src/App.jsx"]
 }
 ```
 
-### Phase 3: Execution
-1. Coding Lead parses the change plan
-2. For each change, delegates to a Coding Worker
-3. Independent changes can run in parallel (max 3 workers)
-4. Workers use `modify_frontend_code` to execute changes
-5. Coding Lead collects results from all workers
-
-### Phase 4: Validation
+### Phase 3: Build Validation
 1. Coding Lead runs `check_frontend_code` with `check: "build"`
-2. If build fails: Report error details to user
-3. If build succeeds: Proceed to report
+2. If build passes → Proceed to reporting
+3. If build fails → Enter error recovery loop
+
+### Phase 4: Error Recovery (if needed)
+1. Coding Lead delegates to Code Fixer with build error output
+2. Code Fixer:
+   - Analyzes error messages (line numbers, error types)
+   - Reads affected files
+   - Applies targeted fixes
+   - Verifies fix with `check_frontend_code`
+3. If still failing, repeat (max 3 attempts)
+4. Code Fixer returns JSON result
+
+**Code Fixer Output Format**:
+```json
+{
+  "status": "fixed|failed",
+  "fixes_applied": [
+    {
+      "file": "src/App.jsx",
+      "line": 45,
+      "error_type": "mismatched_tag",
+      "description": "Changed </span> to </div>",
+      "success": true
+    }
+  ],
+  "build_status": "pass|fail",
+  "remaining_errors": [],
+  "attempts": 2
+}
+```
 
 ### Phase 5: Reporting
-Coding Lead reports to user:
-- Summary of changes made
-- Files modified (table format)
-- Build status (pass/fail)
-- Any errors or warnings
+Coding Lead reports to user in markdown format:
+
+**Success**:
+```markdown
+## Frontend Modification Complete
+
+### Summary
+Added weather widget component to the application header.
+
+### Changes Made
+| File | Operation | Status |
+|------|-----------|--------|
+| src/components/WeatherWidget.jsx | created | ✓ |
+| src/App.jsx | edited | ✓ |
+
+### Build Status
+✅ Build passed
+
+### Notes
+The widget displays current temperature fetched from the weather API.
+```
+
+**Failure**:
+```markdown
+## Frontend Modification Failed
+
+### Summary
+Attempted to add weather widget but encountered errors.
+
+### Issues
+- Target string not found in App.jsx
+- Build failed with syntax error
+
+### Partial Changes
+- src/components/WeatherWidget.jsx was created
+
+### Recommendation
+Review App.jsx manually or provide more specific modification instructions.
+```
 
 ## File Structure
 
@@ -241,6 +347,7 @@ src/
 │   ├── coding-lead.md      # Coding Lead system prompt
 │   ├── coding-planner.md   # Coding Planner system prompt
 │   ├── coding-worker.md    # Coding Worker system prompt
+│   ├── code-fixer.md       # Code Fixer system prompt
 │   └── registry.ts         # Agent templates and tool access
 ├── tools/native/
 │   ├── read-frontend-code.ts   # Read-only file access
@@ -267,14 +374,19 @@ src/
 
 ### Tool Access Control
 - Supervisor cannot directly access frontend code tools
-- Only Coding Workers can write files
+- Only Coding Workers and Code Fixer can write files
 - Coding Planner has read-only access
 - Workflow restrictions prevent bypassing the orchestration
 
 ### Build Validation
 - Changes are validated through `npm run build` before reporting success
-- Failed builds are reported with error details
-- Users are informed of any issues
+- Failed builds trigger Code Fixer for automated repair
+- Users are informed of any unresolved issues
+
+### Error Recovery Limits
+- Code Fixer limited to 3 fix attempts per failure
+- Prevents infinite loops on unfixable errors
+- Reports failure with details for manual intervention
 
 ## Configuration
 
@@ -284,6 +396,7 @@ src/
 export const SELF_CODING_WORKFLOW_ID = 'self-coding';
 export const MAX_CHANGES_PER_REQUEST = 10;
 export const MAX_PARALLEL_WORKERS = 3;
+export const MAX_FIX_ATTEMPTS = 3;
 export const BUILD_TIMEOUT_MS = 60000;
 export const FRONTEND_BASE_PATH = 'web';
 ```
@@ -307,3 +420,5 @@ export const PROTECTED_FILES = [
 4. **Test Execution**: Run tests as part of validation
 5. **Lint Auto-fix**: Automatically fix style issues
 6. **Component Library**: Pre-built components the system can use
+7. **Multi-file Diffs**: Show unified diff of all changes before execution
+8. **Caching**: Cache file reads to reduce redundant I/O

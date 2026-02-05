@@ -41,7 +41,7 @@ All paths are relative to the /web directory.`;
   };
 
   async execute(params: Record<string, unknown>): Promise<NativeToolResult> {
-    const { path: filePath } = params as ReadFrontendCodeParams;
+    const { path: filePath } = params as unknown as ReadFrontendCodeParams;
 
     // Validate and resolve file path
     const pathValidation = this.validatePath(filePath);
