@@ -77,7 +77,6 @@ export function setupVoiceProxy(voiceWss: WebSocketServer, config: VoiceProxyCon
   });
 
   voiceWss.on('connection', (clientWs) => {
-    console.log('[Voice] Client connected');
 
     let upstream: UpstreamConnection | null = null;
 
@@ -247,7 +246,6 @@ export function setupVoiceProxy(voiceWss: WebSocketServer, config: VoiceProxyCon
     });
 
     clientWs.on('close', () => {
-      console.log('[Voice] Client disconnected');
       // Close upstream when client disconnects
       if (upstream?.ws.readyState === WebSocket.OPEN) {
         upstream.ws.close();
