@@ -324,14 +324,20 @@ async function main(): Promise<void> {
 
   // Web search (requires API key)
   if (CONFIG.webSearchApiKey) {
-    toolRunner.registerNativeTool(
-      new WebSearchTool({
-        provider: CONFIG.webSearchProvider,
-        apiKey: CONFIG.webSearchApiKey,
-        searchEngineId: CONFIG.googleCustomSearchEngineId || undefined,
-      })
-    );
-    console.log(`[Init] Web search enabled (${CONFIG.webSearchProvider})`);
+    // Google Custom Search requires searchEngineId
+    if (CONFIG.webSearchProvider === 'google_custom_search' && !CONFIG.googleCustomSearchEngineId) {
+      console.error('[Init] Web search disabled: google_custom_search provider requires GOOGLE_CUSTOM_SEARCH_ENGINE_ID');
+      console.error('[Init] GOOGLE_CUSTOM_SEARCH_ENGINE_ID env value:', process.env.GOOGLE_CUSTOM_SEARCH_ENGINE_ID ? '(set)' : '(not set)');
+    } else {
+      toolRunner.registerNativeTool(
+        new WebSearchTool({
+          provider: CONFIG.webSearchProvider,
+          apiKey: CONFIG.webSearchApiKey,
+          searchEngineId: CONFIG.googleCustomSearchEngineId || undefined,
+        })
+      );
+      console.log(`[Init] Web search enabled (${CONFIG.webSearchProvider})`);
+    }
   }
 
   // Web scraping (uses LLM for summarization)

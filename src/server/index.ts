@@ -215,37 +215,40 @@ export class OllieBotServer {
           return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
         });
 
-        // 3. Messages for default :feed: conversation
-        const rawMessages = db.messages.findByConversationId(':feed:');
-        const messages = rawMessages.map(m => ({
-          id: m.id,
-          role: m.role,
-          content: m.content,
-          createdAt: m.createdAt,
-          agentName: m.metadata?.agentName,
-          agentEmoji: m.metadata?.agentEmoji,
-          agentType: m.metadata?.agentType,
-          attachments: m.metadata?.attachments,
-          messageType: m.metadata?.type,
-          taskId: m.metadata?.taskId,
-          taskName: m.metadata?.taskName,
-          taskDescription: m.metadata?.taskDescription,
-          toolName: m.metadata?.toolName,
-          toolSource: m.metadata?.source,
-          toolSuccess: m.metadata?.success,
-          toolDurationMs: m.metadata?.durationMs,
-          toolError: m.metadata?.error,
-          toolParameters: m.metadata?.parameters,
-          toolResult: m.metadata?.result,
-          delegationAgentId: m.metadata?.agentId,
-          delegationAgentType: m.metadata?.agentType,
-          delegationMission: m.metadata?.mission,
-          delegationRationale: m.metadata?.rationale,
-          // Reasoning mode (vendor-neutral)
-          reasoningMode: m.metadata?.reasoningMode,
-          // Citations
-          citations: m.metadata?.citations,
-        }));
+        // 3. Messages for default :feed: conversation (paginated - last 20)
+        const paginatedResult = db.messages.findByConversationIdPaginated(':feed:', { limit: 20, includeTotal: true });
+        const feedMessages = {
+          items: paginatedResult.items.map(m => ({
+            id: m.id,
+            role: m.role,
+            content: m.content,
+            createdAt: m.createdAt,
+            agentName: m.metadata?.agentName,
+            agentEmoji: m.metadata?.agentEmoji,
+            agentType: m.metadata?.agentType,
+            attachments: m.metadata?.attachments,
+            messageType: m.metadata?.type,
+            taskId: m.metadata?.taskId,
+            taskName: m.metadata?.taskName,
+            taskDescription: m.metadata?.taskDescription,
+            toolName: m.metadata?.toolName,
+            toolSource: m.metadata?.source,
+            toolSuccess: m.metadata?.success,
+            toolDurationMs: m.metadata?.durationMs,
+            toolError: m.metadata?.error,
+            toolParameters: m.metadata?.parameters,
+            toolResult: m.metadata?.result,
+            delegationAgentId: m.metadata?.agentId,
+            delegationAgentType: m.metadata?.agentType,
+            delegationMission: m.metadata?.mission,
+            delegationRationale: m.metadata?.rationale,
+            // Reasoning mode (vendor-neutral)
+            reasoningMode: m.metadata?.reasoningMode,
+            // Citations
+            citations: m.metadata?.citations,
+          })),
+          pagination: paginatedResult.pagination,
+        };
 
         // 4. Tasks
         const rawTasks = db.tasks.findAll({ limit: 20 });
@@ -367,7 +370,7 @@ export class OllieBotServer {
         res.json({
           modelCapabilities,
           conversations,
-          messages,
+          feedMessages,
           tasks,
           skills,
           mcps,
@@ -540,45 +543,69 @@ export class OllieBotServer {
       }
     });
 
-    // Get messages for a specific conversation
+    // Get messages for a specific conversation (with pagination support)
     this.app.get('/api/conversations/:id/messages', (req: Request, res: Response) => {
       try {
         const db = getDb();
-        const messages = db.messages.findByConversationId(req.params.id as string);
-        res.json(messages.map(m => ({
-          id: m.id,
-          role: m.role,
-          content: m.content,
-          createdAt: m.createdAt,
-          agentName: m.metadata?.agentName,
-          agentEmoji: m.metadata?.agentEmoji,
-          agentType: m.metadata?.agentType,
-          // Attachments
-          attachments: m.metadata?.attachments,
-          // Message type (task_run, tool_event, delegation, etc.)
-          messageType: m.metadata?.type,
-          // Task run metadata
-          taskId: m.metadata?.taskId,
-          taskName: m.metadata?.taskName,
-          taskDescription: m.metadata?.taskDescription,
-          // Tool event metadata
-          toolName: m.metadata?.toolName,
-          toolSource: m.metadata?.source,
-          toolSuccess: m.metadata?.success,
-          toolDurationMs: m.metadata?.durationMs,
-          toolError: m.metadata?.error,
-          toolParameters: m.metadata?.parameters,
-          toolResult: m.metadata?.result,
-          // Delegation metadata (legacy - agentType above is preferred)
-          delegationAgentId: m.metadata?.agentId,
-          delegationAgentType: m.metadata?.agentType,
-          delegationMission: m.metadata?.mission,
-          delegationRationale: m.metadata?.rationale,
-          // Reasoning mode (vendor-neutral)
-          reasoningMode: m.metadata?.reasoningMode,
-          // Citations
-          citations: m.metadata?.citations,
-        })));
+        const conversationId = req.params.id as string;
+
+        // Parse pagination query params
+        const limit = Math.min(Math.max(parseInt(req.query.limit as string) || 20, 1), 100);
+        const before = req.query.before as string | undefined;
+        const after = req.query.after as string | undefined;
+        const includeTotal = req.query.includeTotal === 'true';
+
+        // Helper to transform message for API response
+        const transformMessage = (m: ReturnType<typeof db.messages.findById>) => {
+          if (!m) return null;
+          return {
+            id: m.id,
+            role: m.role,
+            content: m.content,
+            createdAt: m.createdAt,
+            agentName: m.metadata?.agentName,
+            agentEmoji: m.metadata?.agentEmoji,
+            agentType: m.metadata?.agentType,
+            // Attachments
+            attachments: m.metadata?.attachments,
+            // Message type (task_run, tool_event, delegation, etc.)
+            messageType: m.metadata?.type,
+            // Task run metadata
+            taskId: m.metadata?.taskId,
+            taskName: m.metadata?.taskName,
+            taskDescription: m.metadata?.taskDescription,
+            // Tool event metadata
+            toolName: m.metadata?.toolName,
+            toolSource: m.metadata?.source,
+            toolSuccess: m.metadata?.success,
+            toolDurationMs: m.metadata?.durationMs,
+            toolError: m.metadata?.error,
+            toolParameters: m.metadata?.parameters,
+            toolResult: m.metadata?.result,
+            // Delegation metadata (legacy - agentType above is preferred)
+            delegationAgentId: m.metadata?.agentId,
+            delegationAgentType: m.metadata?.agentType,
+            delegationMission: m.metadata?.mission,
+            delegationRationale: m.metadata?.rationale,
+            // Reasoning mode (vendor-neutral)
+            reasoningMode: m.metadata?.reasoningMode,
+            // Citations
+            citations: m.metadata?.citations,
+          };
+        };
+
+        // Use paginated query
+        const result = db.messages.findByConversationIdPaginated(conversationId, {
+          limit,
+          before,
+          after,
+          includeTotal,
+        });
+
+        res.json({
+          items: result.items.map(transformMessage).filter(Boolean),
+          pagination: result.pagination,
+        });
       } catch (error) {
         console.error('[API] Failed to fetch messages:', error);
         res.status(500).json({ error: 'Failed to fetch messages' });

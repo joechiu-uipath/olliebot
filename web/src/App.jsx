@@ -6,6 +6,7 @@ import rehypeSanitize from 'rehype-sanitize';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import { Virtuoso } from 'react-virtuoso';
 import { useWebSocket } from './hooks/useWebSocket';
 import HtmlPreview from './components/HtmlPreview';
 import { EvalSidebar, EvalRunner } from './components/eval';
@@ -43,12 +44,16 @@ function CodeBlock({ language, children }) {
   }, []);
 
   const handleCopy = async () => {
+    let success = false;
     try {
       await navigator.clipboard.writeText(children);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
+      success = true;
     } catch (err) {
       console.error('Failed to copy:', err);
+    }
+    if (success) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
     }
   };
 
@@ -327,6 +332,13 @@ function App() {
   const [isUserScrolled, setIsUserScrolled] = useState(false);
   const [showScrollButton, setShowScrollButton] = useState(false);
 
+  // Pagination state for virtualization
+  const [hasMoreOlder, setHasMoreOlder] = useState(true);
+  const [isLoadingOlder, setIsLoadingOlder] = useState(false);
+  const [oldestCursor, setOldestCursor] = useState(null);
+  const [totalMessageCount, setTotalMessageCount] = useState(0); // Total messages for reference
+  const [firstItemIndex, setFirstItemIndex] = useState(100000); // Start high for prepending
+
   // Expanded tool events
   const [expandedTools, setExpandedTools] = useState(new Set());
 
@@ -346,8 +358,7 @@ function App() {
   const [messageType, setMessageType] = useState(null); // null | 'deep_research'
   const [modelCapabilities, setModelCapabilities] = useState({ reasoningEfforts: [] });
 
-  const messagesEndRef = useRef(null);
-  const messagesContainerRef = useRef(null);
+  const virtuosoRef = useRef(null);
   const chatInputRef = useRef(null);
 
   // Ref to track current conversation ID for use in callbacks
@@ -385,6 +396,8 @@ function App() {
         if (prev.some((m) => m.id === messageId)) {
           return prev;
         }
+        // Increment total count for new message
+        setTotalMessageCount((c) => c + 1);
         return [
           ...prev,
           {
@@ -404,6 +417,7 @@ function App() {
       if (!isForCurrentConversation(data.conversationId)) return;
 
       // Start a new streaming message
+      setTotalMessageCount((c) => c + 1);
       setMessages((prev) => {
         // Find the most recent user message to get reasoning mode and message type
         const lastUserMsg = [...prev].reverse().find(m => m.role === 'user');
@@ -465,6 +479,8 @@ function App() {
         if (prev.some((m) => m.id === errorId)) {
           return prev;
         }
+        // Increment total count for new message
+        setTotalMessageCount((c) => c + 1);
         return [
           ...prev,
           {
@@ -490,6 +506,8 @@ function App() {
       const toolId = `tool-${data.requestId}`;
       setMessages((prev) => {
         if (prev.some((m) => m.id === toolId)) return prev;
+        // Increment total count for new message
+        setTotalMessageCount((c) => c + 1);
         return [
           ...prev,
           {
@@ -535,6 +553,8 @@ function App() {
       const delegationId = `delegation-${data.agentId}`;
       setMessages((prev) => {
         if (prev.some((m) => m.id === delegationId)) return prev;
+        // Increment total count for new message
+        setTotalMessageCount((c) => c + 1);
         return [
           ...prev,
           {
@@ -553,6 +573,8 @@ function App() {
       const taskRunId = `task-run-${data.taskId}-${Date.now()}`;
       setMessages((prev) => {
         if (prev.some((m) => m.taskId === data.taskId && m.role === 'task_run')) return prev;
+        // Increment total count for new message
+        setTotalMessageCount((c) => c + 1);
         return [
           ...prev,
           {
@@ -731,89 +753,78 @@ function App() {
   // Ref to hold the loadStartupData function (updated via effect)
   const loadStartupDataRef = useRef(null);
 
+  // Helper to process startup data (outside try/catch for React Compiler compatibility)
+  const processStartupData = useCallback((data) => {
+    // Model capabilities
+    setModelCapabilities(data.modelCapabilities);
+
+    // Conversations
+    const mappedConversations = data.conversations.map(c => ({
+      id: c.id,
+      title: c.title,
+      updatedAt: c.updatedAt || c.updated_at,
+      isWellKnown: c.isWellKnown || false,
+      icon: c.icon,
+    }));
+    setConversations(mappedConversations);
+
+    // Set default conversation
+    const feedConversation = mappedConversations.find(c => c.id === ':feed:');
+    if (feedConversation) {
+      setCurrentConversationId(feedConversation.id);
+    } else if (mappedConversations.length > 0) {
+      setCurrentConversationId(mappedConversations[0].id);
+    }
+
+    // Messages - handle new feedMessages paginated structure
+    const feedData = data.feedMessages;
+    if (feedData && feedData.items) {
+      const pagination = feedData.pagination || {};
+      const items = transformMessages(feedData.items);
+      const total = pagination.totalCount || items.length;
+      setMessages(items);
+      // Initialize pagination state
+      setHasMoreOlder(pagination.hasOlder || false);
+      setOldestCursor(pagination.oldestCursor || null);
+      setTotalMessageCount(total);
+      // Reset to starting high index for prepending
+      setFirstItemIndex(100000);
+    } else {
+      // Fallback for backwards compatibility
+      setMessages([]);
+      setHasMoreOlder(false);
+      setOldestCursor(null);
+      setTotalMessageCount(0);
+      setFirstItemIndex(0);
+    }
+
+    // Sidebar data
+    setAgentTasks(data.tasks);
+    setSkills(data.skills);
+    setMcps(data.mcps);
+    setTools(data.tools);
+    const ragProjectsData = data.ragProjects;
+    if (ragProjectsData) {
+      setRagProjects(ragProjectsData);
+    } else {
+      setRagProjects([]);
+    }
+  }, []);
+
   // Update loadStartupData ref via effect (not during render)
   useEffect(() => {
     loadStartupDataRef.current = async () => {
+      let res = null;
       try {
-        const res = await fetch('/api/startup');
-        if (!res.ok) {
-          console.error('Startup API not available');
-          setConversations([]);
-          setCurrentConversationId(null);
-          setMessages([]);
-          setConversationsLoading(false);
-          setShowSkeleton(false);
-          return;
-        }
-        const data = await res.json();
-
-        // Model capabilities
-        setModelCapabilities(data.modelCapabilities);
-
-        // Conversations
-        const mappedConversations = data.conversations.map(c => ({
-          id: c.id,
-          title: c.title,
-          updatedAt: c.updatedAt || c.updated_at,
-          isWellKnown: c.isWellKnown || false,
-          icon: c.icon,
-        }));
-        setConversations(mappedConversations);
-
-        // Set default conversation
-        const feedConversation = mappedConversations.find(c => c.id === ':feed:');
-        if (feedConversation) {
-          setCurrentConversationId(feedConversation.id);
-        } else if (mappedConversations.length > 0) {
-          setCurrentConversationId(mappedConversations[0].id);
-        }
-
-        // Messages - transform API format to internal format
-        setMessages(data.messages.map((msg) => {
-          let role = msg.role;
-          if (msg.messageType === 'task_run') role = 'task_run';
-          else if (msg.messageType === 'tool_event' || msg.role === 'tool') role = 'tool';
-          else if (msg.messageType === 'delegation') role = 'delegation';
-
-          return {
-            id: msg.id,
-            role,
-            content: msg.content,
-            timestamp: msg.createdAt,
-            agentName: msg.agentName || msg.delegationAgentId,
-            agentEmoji: msg.agentEmoji,
-            attachments: msg.attachments,
-            taskId: msg.taskId,
-            taskName: msg.taskName,
-            taskDescription: msg.taskDescription,
-            toolName: msg.toolName,
-            source: msg.toolSource,
-            status: msg.toolSuccess === true ? 'completed' : msg.toolSuccess === false ? 'failed' : undefined,
-            durationMs: msg.toolDurationMs,
-            error: msg.toolError,
-            parameters: msg.toolParameters,
-            result: msg.toolResult,
-            agentType: msg.agentType || msg.delegationAgentType || (msg.agentName?.includes('-') ? msg.agentName : undefined),
-            mission: msg.delegationMission,
-            reasoningMode: msg.reasoningMode,
-            messageType: msg.messageType,
-            citations: msg.citations,
-          };
-        }));
-
-        // Sidebar data
-        setAgentTasks(data.tasks);
-        setSkills(data.skills);
-        setMcps(data.mcps);
-        setTools(data.tools);
-        const ragProjectsData = data.ragProjects;
-        if (ragProjectsData) {
-          setRagProjects(ragProjectsData);
-        } else {
-          setRagProjects([]);
-        }
+        res = await fetch('/api/startup');
       } catch (error) {
         console.error('Failed to load startup data:', error);
+      }
+
+      if (res && res.ok) {
+        const data = await res.json();
+        processStartupData(data);
+      } else {
         setConversations([]);
         setCurrentConversationId(null);
         setMessages([]);
@@ -821,7 +832,7 @@ function App() {
       setConversationsLoading(false);
       setShowSkeleton(false);
     };
-  }, []);
+  }, [processStartupData]);
 
   // Track if this is the first connection (to avoid refreshing on initial connect)
   const hasConnectedOnce = useRef(false);
@@ -859,14 +870,6 @@ function App() {
     return () => clearTimeout(skeletonTimer);
   }, []);
 
-  // Smart auto-scroll - only scroll if user hasn't manually scrolled up
-  // Uses instant scroll (not smooth) so it doesn't create ongoing animations that fight with user input
-  useEffect(() => {
-    if (!isUserScrolled && messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView({ behavior: 'instant' });
-    }
-  }, [messages, isUserScrolled]);
-
   // Sync URL to state for chat mode deep linking
   // Ref to prevent re-triggering when we programmatically set state
   const isNavigatingRef = useRef(false);
@@ -884,21 +887,41 @@ function App() {
       // Default to feed view
       if (currentConversationId !== ':feed:' && conversations.some(c => c.id === ':feed:')) {
         setCurrentConversationId(':feed:');
-        // Load feed messages
-        fetch('/api/conversations/:feed:/messages')
-          .then(res => res.ok ? res.json() : [])
-          .then(data => setMessages(transformMessages(data)))
-          .catch(() => setMessages([]));
+        // Load feed messages with pagination
+        fetch('/api/conversations/:feed:/messages?limit=20&includeTotal=true')
+          .then(res => res.ok ? res.json() : { items: [], pagination: {} })
+          .then(data => {
+            const pagination = data.pagination || {};
+            setMessages(transformMessages(data.items || []));
+            setHasMoreOlder(pagination.hasOlder || false);
+            setOldestCursor(pagination.oldestCursor || null);
+            setFirstItemIndex(100000);
+          })
+          .catch(() => {
+            setMessages([]);
+            setHasMoreOlder(false);
+            setOldestCursor(null);
+          });
       }
     } else if (path.startsWith('/chat/')) {
       const convId = decodeURIComponent(path.slice(6)); // Remove '/chat/'
       if (convId && convId !== currentConversationId) {
         setCurrentConversationId(convId);
-        // Load conversation messages
-        fetch(`/api/conversations/${encodeURIComponent(convId)}/messages`)
-          .then(res => res.ok ? res.json() : [])
-          .then(data => setMessages(transformMessages(data)))
-          .catch(() => setMessages([]));
+        // Load conversation messages with pagination
+        fetch(`/api/conversations/${encodeURIComponent(convId)}/messages?limit=20&includeTotal=true`)
+          .then(res => res.ok ? res.json() : { items: [], pagination: {} })
+          .then(data => {
+            const pagination = data.pagination || {};
+            setMessages(transformMessages(data.items || []));
+            setHasMoreOlder(pagination.hasOlder || false);
+            setOldestCursor(pagination.oldestCursor || null);
+            setFirstItemIndex(100000);
+          })
+          .catch(() => {
+            setMessages([]);
+            setHasMoreOlder(false);
+            setOldestCursor(null);
+          });
       }
     }
 
@@ -949,49 +972,63 @@ function App() {
     }
   }, [location.pathname, navigate]);
 
-  // Track if we're programmatically scrolling (to avoid scroll event interference)
-  const isScrollingToBottom = useRef(false);
-
-  // Handle wheel events - immediately disengage auto-scroll when user scrolls up
-  const handleWheel = (e) => {
-    if (e.deltaY < 0) {
-      // User is scrolling UP - immediately disengage auto-scroll
-      setIsUserScrolled(true);
-      setShowScrollButton(true);
-    }
-  };
-
-  // Handle scroll events to detect scroll position (only controls button visibility)
-  const handleScroll = () => {
-    // Ignore scroll events during programmatic scroll
-    if (isScrollingToBottom.current) return;
-
-    const container = messagesContainerRef.current;
-    if (!container) return;
-
-    const { scrollTop, scrollHeight, clientHeight } = container;
-    const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
-
-    // Only control button visibility - don't change auto-scroll state here
-    // Auto-scroll is only re-enabled by clicking the "scroll to bottom" button
-    if (distanceFromBottom < 50) {
-      setShowScrollButton(false);
-    } else {
-      setShowScrollButton(true);
-    }
-  };
-
-  // Scroll to bottom handler
-  const scrollToBottom = () => {
-    isScrollingToBottom.current = true;
+  // Scroll to bottom handler for Virtuoso
+  const scrollToBottom = useCallback(() => {
     setIsUserScrolled(false);
     setShowScrollButton(false);
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    // Reset flag after animation completes
-    setTimeout(() => {
-      isScrollingToBottom.current = false;
-    }, 500);
-  };
+    virtuosoRef.current?.scrollToIndex({
+      index: messages.length - 1,
+      behavior: 'smooth',
+      align: 'end',
+    });
+  }, [messages.length]);
+
+  // Load older messages when scrolling near unloaded area
+  const loadOlderMessages = useCallback(async () => {
+    if (isLoadingOlder || !hasMoreOlder || !oldestCursor) return;
+
+    const convId = currentConversationIdRef.current;
+    if (!convId) return;
+
+    setIsLoadingOlder(true);
+    let res = null;
+    try {
+      res = await fetch(
+        `/api/conversations/${encodeURIComponent(convId)}/messages?limit=20&before=${encodeURIComponent(oldestCursor)}`
+      );
+    } catch (error) {
+      console.error('Failed to load older messages:', error);
+    }
+
+    let data = null;
+    if (res && res.ok) {
+      data = await res.json();
+    }
+
+    if (data) {
+      const olderMessages = transformMessages(data.items || []);
+      const pagination = data.pagination || {};
+
+      if (olderMessages.length > 0) {
+        // Prepend messages and adjust firstItemIndex for scroll position stability
+        setFirstItemIndex((prev) => prev - olderMessages.length);
+        setMessages((prev) => [...olderMessages, ...prev]);
+        setHasMoreOlder(pagination.hasOlder || false);
+        setOldestCursor(pagination.oldestCursor || null);
+      } else {
+        setHasMoreOlder(false);
+      }
+    }
+    setIsLoadingOlder(false);
+  }, [isLoadingOlder, hasMoreOlder, oldestCursor]);
+
+  // Handle Virtuoso atBottomStateChange
+  const handleAtBottomStateChange = useCallback((atBottom) => {
+    setShowScrollButton(!atBottom);
+    if (atBottom) {
+      setIsUserScrolled(false);
+    }
+  }, []);
 
   // Helper to insert a new conversation after well-known ones
   const insertConversation = (prev, newConv) => {
@@ -1001,37 +1038,34 @@ function App() {
 
   // Start a new conversation
   const handleNewConversation = async () => {
+    let res = null;
     try {
       // Create conversation on server
-      const res = await fetch('/api/conversations', {
+      res = await fetch('/api/conversations', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: 'New Conversation' }),
       });
-
-      if (res.ok) {
-        const newConv = await res.json();
-        setConversations((prev) => insertConversation(prev, {
-          id: newConv.id,
-          title: newConv.title,
-          updatedAt: newConv.updatedAt || new Date().toISOString(),
-          isWellKnown: false,
-        }));
-        setCurrentConversationId(newConv.id);
-        // Navigate to the new conversation URL
-        navigate(`/chat/${encodeURIComponent(newConv.id)}`, { replace: true });
-      }
-
-      // Tell server to start new conversation context
-      sendMessage({ type: 'new-conversation' });
-
-      // Clear local messages
-      setMessages([]);
-      setIsUserScrolled(false);
-      setShowScrollButton(false);
-      setIsResponsePending(false);
     } catch (error) {
       console.error('Failed to create new conversation:', error);
+    }
+
+    let newConv = null;
+    if (res && res.ok) {
+      newConv = await res.json();
+    }
+
+    if (newConv) {
+      setConversations((prev) => insertConversation(prev, {
+        id: newConv.id,
+        title: newConv.title,
+        updatedAt: newConv.updatedAt || new Date().toISOString(),
+        isWellKnown: false,
+      }));
+      setCurrentConversationId(newConv.id);
+      // Navigate to the new conversation URL
+      navigate(`/chat/${encodeURIComponent(newConv.id)}`, { replace: true });
+    } else {
       // Fallback to local-only
       const newId = `conv-${Date.now()}`;
       setConversations((prev) => insertConversation(prev, {
@@ -1041,10 +1075,21 @@ function App() {
         isWellKnown: false,
       }));
       setCurrentConversationId(newId);
-      setMessages([]);
       // Navigate to the new conversation URL
       navigate(`/chat/${encodeURIComponent(newId)}`, { replace: true });
     }
+
+    // Tell server to start new conversation context
+    sendMessage({ type: 'new-conversation' });
+
+    // Clear local messages and reset pagination
+    setMessages([]);
+    setIsUserScrolled(false);
+    setShowScrollButton(false);
+    setIsResponsePending(false);
+    setHasMoreOlder(false);
+    setOldestCursor(null);
+    setFirstItemIndex(100000);
   };
 
   // Delete conversation (soft delete)
@@ -1052,42 +1097,53 @@ function App() {
     e.stopPropagation(); // Prevent selecting the conversation
     setOpenMenuId(null);
 
+    let deleteSuccess = false;
     try {
       const res = await fetch(`/api/conversations/${convId}`, {
         method: 'DELETE',
       });
-
-      if (res.ok) {
-        // Remove from local state
-        setConversations((prev) => prev.filter((c) => c.id !== convId));
-
-        // If deleted conversation was current, switch to another or clear
-        if (convId === currentConversationId) {
-          const remaining = conversations.filter((c) => c.id !== convId);
-          if (remaining.length > 0) {
-            const nextConv = remaining[0];
-            setCurrentConversationId(nextConv.id);
-            // Navigate to the next conversation
-            if (nextConv.id === ':feed:') {
-              navigate('/chat');
-            } else {
-              navigate(`/chat/${encodeURIComponent(nextConv.id)}`);
-            }
-            // Load messages for new current conversation
-            const msgRes = await fetch(`/api/conversations/${encodeURIComponent(nextConv.id)}/messages`);
-            if (msgRes.ok) {
-              const data = await msgRes.json();
-              setMessages(transformMessages(data));
-            }
-          } else {
-            setCurrentConversationId(null);
-            setMessages([]);
-            navigate('/chat');
-          }
-        }
-      }
+      deleteSuccess = res.ok;
     } catch (error) {
       console.error('Failed to delete conversation:', error);
+    }
+
+    if (!deleteSuccess) return;
+
+    // Remove from local state
+    setConversations((prev) => prev.filter((c) => c.id !== convId));
+
+    // If deleted conversation was current, switch to another or clear
+    if (convId === currentConversationId) {
+      const remaining = conversations.filter((c) => c.id !== convId);
+      if (remaining.length > 0) {
+        const nextConv = remaining[0];
+        setCurrentConversationId(nextConv.id);
+        // Navigate to the next conversation
+        if (nextConv.id === ':feed:') {
+          navigate('/chat');
+        } else {
+          navigate(`/chat/${encodeURIComponent(nextConv.id)}`);
+        }
+        // Load messages for new current conversation with pagination
+        fetch(`/api/conversations/${encodeURIComponent(nextConv.id)}/messages?limit=20&includeTotal=true`)
+          .then(res => res.ok ? res.json() : null)
+          .then(data => {
+            if (data) {
+              const pagination = data.pagination || {};
+              setMessages(transformMessages(data.items || []));
+              setHasMoreOlder(pagination.hasOlder || false);
+              setOldestCursor(pagination.oldestCursor || null);
+              setFirstItemIndex(100000);
+            }
+          });
+      } else {
+        setCurrentConversationId(null);
+        setMessages([]);
+        setHasMoreOlder(false);
+        setOldestCursor(null);
+        setFirstItemIndex(100000);
+        navigate('/chat');
+      }
     }
   };
 
@@ -1122,25 +1178,29 @@ function App() {
       return;
     }
 
+    let res = null;
     try {
-      const res = await fetch(`/api/conversations/${editingConversationId}`, {
+      res = await fetch(`/api/conversations/${editingConversationId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: newTitle }),
       });
-
-      if (res.ok) {
-        const data = await res.json();
-        setConversations((prev) =>
-          prev.map((c) =>
-            c.id === editingConversationId
-              ? { ...c, title: data.conversation.title, manuallyNamed: true }
-              : c
-          )
-        );
-      }
     } catch (error) {
       console.error('Failed to rename conversation:', error);
+    }
+
+    let data = null;
+    if (res && res.ok) {
+      data = await res.json();
+    }
+    if (data) {
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id === editingConversationId
+            ? { ...c, title: data.conversation.title, manuallyNamed: true }
+            : c
+        )
+      );
     }
 
     setEditingConversationId(null);
@@ -1197,12 +1257,22 @@ function App() {
       navigate(`/chat/${encodeURIComponent(convId)}`);
     }
 
-    // Update state and load messages
+    // Update state and load messages with pagination
     setCurrentConversationId(convId);
-    fetch(`/api/conversations/${encodeURIComponent(convId)}/messages`)
-      .then(res => res.ok ? res.json() : [])
-      .then(data => setMessages(transformMessages(data)))
-      .catch(() => setMessages([]));
+    fetch(`/api/conversations/${encodeURIComponent(convId)}/messages?limit=20&includeTotal=true`)
+      .then(res => res.ok ? res.json() : { items: [], pagination: {} })
+      .then(data => {
+        const pagination = data.pagination || {};
+        setMessages(transformMessages(data.items || []));
+        setHasMoreOlder(pagination.hasOlder || false);
+        setOldestCursor(pagination.oldestCursor || null);
+        setFirstItemIndex(100000);
+      })
+      .catch(() => {
+        setMessages([]);
+        setHasMoreOlder(false);
+        setOldestCursor(null);
+      });
   };
 
   // Handle chat submission - receives input text from ChatInput component
@@ -1237,15 +1307,8 @@ function App() {
 
     if (!inputText.trim() && currentAttachments.length === 0) return;
 
-    // If user is near the bottom when sending, re-enable auto-scroll
-    const container = messagesContainerRef.current;
-    if (container) {
-      const { scrollTop, scrollHeight, clientHeight } = container;
-      const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
-      if (distanceFromBottom < 150) {
-        setIsUserScrolled(false);
-      }
-    }
+    // Re-enable auto-scroll when sending a message (Virtuoso's followOutput will handle it)
+    setIsUserScrolled(false);
 
     // Process attachments to base64
     const processedAttachments = await Promise.all(
@@ -1276,6 +1339,7 @@ function App() {
       reasoningMode: currentReasoningMode,
       messageType: currentMessageType,
     };
+    setTotalMessageCount((c) => c + 1);
     setMessages((prev) => [...prev, userMessage]);
 
     // Send via WebSocket with conversation ID, attachments, reasoning effort, and message type
@@ -1356,25 +1420,27 @@ function App() {
 
   // Run a task immediately
   const handleRunTask = async (taskId) => {
+    let success = false;
     try {
       const res = await fetch(`/api/tasks/${taskId}/run`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ conversationId: currentConversationId }),
       });
-
-      if (res.ok) {
-        // Update the task in local state to show it's running
-        setAgentTasks((prev) =>
-          prev.map((t) =>
-            t.id === taskId ? { ...t, status: 'running' } : t
-          )
-        );
-      } else {
-        console.error('Failed to run task');
-      }
+      success = res.ok;
     } catch (error) {
       console.error('Error running task:', error);
+    }
+
+    if (success) {
+      // Update the task in local state to show it's running
+      setAgentTasks((prev) =>
+        prev.map((t) =>
+          t.id === taskId ? { ...t, status: 'running' } : t
+        )
+      );
+    } else {
+      console.error('Failed to run task');
     }
   };
 
@@ -1410,24 +1476,28 @@ function App() {
       let trimmed = result.trim();
       // Handle double-stringified JSON (starts with " and contains escaped quotes)
       if (trimmed.startsWith('"') && trimmed.includes('\\"')) {
+        let unwrapped = null;
         try {
-          // First parse to unwrap the outer string
-          const unwrapped = JSON.parse(trimmed);
-          if (typeof unwrapped === 'string') {
-            trimmed = unwrapped.trim();
-          }
+          unwrapped = JSON.parse(trimmed);
         } catch {
           // Continue with original
+        }
+        if (unwrapped && typeof unwrapped === 'string') {
+          trimmed = unwrapped.trim();
         }
       }
 
       if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+        let parsed = null;
         try {
-          parsedResult = JSON.parse(trimmed);
+          parsed = JSON.parse(trimmed);
         } catch {
-          // Not valid JSON, keep as string
+          // Not valid JSON
+        }
+        if (parsed === null) {
           return <pre className="tool-details-content">{result}</pre>;
         }
+        parsedResult = parsed;
       } else {
         return <pre className="tool-details-content">{result}</pre>;
       }
@@ -1643,16 +1713,15 @@ function App() {
     if (force) {
       url = url + '?force=true';
     }
+    let res = null;
     try {
-      const res = await fetch(url, {
-        method: 'POST',
-      });
-      if (!res.ok) {
-        const data = await res.json();
-        console.error('Failed to start indexing:', data.error);
-      }
+      res = await fetch(url, { method: 'POST' });
     } catch (error) {
       console.error('Failed to start indexing:', error);
+      return;
+    }
+    if (!res.ok) {
+      res.json().then(data => console.error('Failed to start indexing:', data.error));
     }
   }, []);
 
@@ -1662,20 +1731,20 @@ function App() {
     for (let i = 0; i < files.length; i++) {
       formData.append('files', files[i]);
     }
+    let res = null;
     try {
-      const res = await fetch(`/api/rag/projects/${projectId}/upload?index=true`, {
+      res = await fetch(`/api/rag/projects/${projectId}/upload?index=true`, {
         method: 'POST',
         body: formData,
       });
-      if (!res.ok) {
-        const data = await res.json();
-        console.error('Failed to upload files:', data.error);
-      } else {
-        const data = await res.json();
-        console.log('Upload successful:', data);
-      }
     } catch (error) {
       console.error('Failed to upload files:', error);
+      return;
+    }
+    if (!res.ok) {
+      res.json().then(data => console.error('Failed to upload files:', data.error));
+    } else {
+      res.json().then(data => console.log('Upload successful:', data));
     }
   }, []);
 
@@ -1683,6 +1752,212 @@ function App() {
   const selectedBrowserSession = browserSessions.find(
     (s) => s.id === selectedBrowserSessionId
   );
+
+  // Render a single message item for Virtuoso (index-based for totalCount mode)
+  // Render a single message item for Virtuoso
+  const renderMessageItem = useCallback((index, msg) => {
+    if (msg.role === 'tool') {
+      // Expandable tool invocation display
+      return (
+        <div className={`tool-event-wrapper ${expandedTools.has(msg.id) ? 'expanded' : ''}`}>
+          <div
+            className={`tool-event ${msg.status}`}
+            onClick={() => toggleToolExpand(msg.id)}
+            style={{ cursor: 'pointer' }}
+          >
+            <span className="tool-icon">
+              {msg.source === 'mcp' ? '🔌' : msg.source === 'skill' ? '⚡' : '🔧'}
+            </span>
+            <span className="tool-status-indicator">
+              {msg.status === 'running' ? '◐' : msg.status === 'completed' ? '✓' : '✗'}
+            </span>
+            <span className="tool-name">{msg.toolName}</span>
+            {msg.parameters?.task && (
+              <span className="tool-mission">{msg.parameters.task}</span>
+            )}
+            {msg.durationMs !== undefined && (
+              <span className="tool-duration">{msg.durationMs}ms</span>
+            )}
+            <span className="tool-expand-icon">
+              {expandedTools.has(msg.id) ? '▼' : '▶'}
+            </span>
+          </div>
+          {expandedTools.has(msg.id) && (
+            <div className="tool-details">
+              {msg.parameters && Object.keys(msg.parameters).length > 0 && (
+                <div className="tool-details-section">
+                  <div className="tool-details-label">Parameters</div>
+                  <pre className="tool-details-content">
+                    {JSON.stringify(msg.parameters, null, 2)}
+                  </pre>
+                </div>
+              )}
+              {msg.result && (
+                <div className="tool-details-section">
+                  <div className="tool-details-label">Response</div>
+                  {renderToolResult(msg.result)}
+                </div>
+              )}
+              {msg.error && (
+                <div className="tool-details-section error">
+                  <div className="tool-details-label">Error</div>
+                  <pre className="tool-details-content">{msg.error}</pre>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    if (msg.role === 'delegation') {
+      // Compact delegation display
+      return (
+        <div className="delegation-event">
+          <span className="delegation-icon">🎯</span>
+          <span className="delegation-agent">
+            {msg.agentEmoji} {msg.agentName}
+          </span>
+          <span className="delegation-mission">{msg.mission}</span>
+        </div>
+      );
+    }
+
+    if (msg.role === 'task_run') {
+      // Compact task run display
+      return (
+        <div className="task-run-event">
+          <span className="task-run-icon">📋</span>
+          <span className="task-run-label">Running Task</span>
+          <span className="task-run-name">{msg.taskName}</span>
+          {msg.taskDescription && (
+            <span className="task-run-description">{msg.taskDescription}</span>
+          )}
+        </div>
+      );
+    }
+
+    if (shouldCollapseByDefault(msg.agentType, msg.agentName)) {
+      // Collapsible agent message (e.g., research-worker)
+      return (
+        <div className={`collapsible-agent-message ${expandedAgentMessages.has(msg.id) ? 'expanded' : 'collapsed'}`}>
+          <div
+            className="collapsible-agent-header"
+            onClick={() => toggleAgentMessageExpand(msg.id)}
+          >
+            <span className="collapsible-agent-icon">{msg.agentEmoji || '📚'}</span>
+            <span className="collapsible-agent-name">{msg.agentName || 'Agent'}</span>
+            <span className="collapsible-agent-preview">
+              {msg.content ? (msg.content.substring(0, 80) + (msg.content.length > 80 ? '...' : '')) : 'Processing...'}
+            </span>
+            <span className="collapsible-agent-expand-icon">
+              {expandedAgentMessages.has(msg.id) ? '▼' : '▶'}
+            </span>
+          </div>
+          {expandedAgentMessages.has(msg.id) && (
+            <div className={`message ${msg.role}${msg.isError ? ' error' : ''}${msg.isStreaming ? ' streaming' : ''}`}>
+              <div className="message-avatar">
+                {msg.isError ? '⚠️' : (msg.agentEmoji || '🐙')}
+              </div>
+              <div className="message-content">
+                <MessageContent content={msg.content} html={msg.html} isStreaming={msg.isStreaming} />
+                {msg.role === 'assistant' && msg.citations && !msg.isStreaming && (
+                  <SourcePanel citations={msg.citations} />
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // Default message display
+    return (
+      <div className={`message ${msg.role}${msg.isError ? ' error' : ''}${msg.isStreaming ? ' streaming' : ''}`}>
+        <div className="message-avatar">
+          {msg.isError ? '⚠️' : msg.role === 'user' ? '👤' : (msg.agentEmoji || '🐙')}
+        </div>
+        <div className="message-content">
+          {msg.agentName && msg.role === 'assistant' && (
+            <div className="agent-name">{msg.agentName}</div>
+          )}
+          <MessageContent content={msg.content} html={msg.html} isStreaming={msg.isStreaming} />
+          {msg.role === 'assistant' && msg.citations && !msg.isStreaming && (
+            <SourcePanel citations={msg.citations} />
+          )}
+          {msg.attachments && msg.attachments.length > 0 && (
+            <div className="message-attachments">
+              {msg.attachments.map((att, attIndex) => (
+                <div key={attIndex} className="message-attachment-chip">
+                  <span className="attachment-icon">
+                    {att.type?.startsWith('image/') ? '🖼️' : '📎'}
+                  </span>
+                  <span className="attachment-name" title={att.name}>
+                    {att.name?.length > 25 ? att.name.slice(0, 22) + '...' : att.name}
+                  </span>
+                  <span className="attachment-size">
+                    {formatFileSize(att.size)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+          {msg.messageType && (
+            <div className="message-reasoning-chip message-type-chip">
+              <span className="reasoning-chip-icon">🔬</span>
+              <span className="reasoning-chip-label">
+                {msg.messageType === 'deep_research' ? 'Deep Research' : msg.messageType}
+              </span>
+            </div>
+          )}
+          {msg.reasoningMode && (
+            <div className="message-reasoning-chip">
+              <span className="reasoning-chip-icon">🧠</span>
+              <span className="reasoning-chip-label">
+                {msg.reasoningMode === 'xhigh' ? 'Think+' : 'Think'}
+              </span>
+            </div>
+          )}
+          {msg.isStreaming && !msg.content && (
+            <span className="typing-indicator">
+              <span className="dot"></span>
+              <span className="dot"></span>
+              <span className="dot"></span>
+            </span>
+          )}
+          {msg.isStreaming && msg.content && (
+            <span className="streaming-cursor"></span>
+          )}
+          {msg.buttons && (
+            <div className="message-buttons">
+              {msg.buttons.map((btn) => (
+                <button
+                  key={btn.id}
+                  onClick={() => handleAction(btn.action, btn.data)}
+                  className="action-button"
+                >
+                  {btn.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }, [expandedTools, expandedAgentMessages, handleAction, formatFileSize, renderToolResult, toggleToolExpand, toggleAgentMessageExpand]);
+
+  // Virtuoso header component for loading indicator
+  const VirtuosoHeader = useCallback(() => {
+    if (isLoadingOlder) {
+      return (
+        <div className="virtuoso-loading-header">
+          <span className="loading-spinner"></span>
+          Loading older messages...
+        </div>
+      );
+    }
+    return null;
+  }, [isLoadingOlder]);
 
   return (
     <div className="app-layout">
@@ -2122,186 +2397,29 @@ function App() {
         {mode === MODES.CHAT && (
         <>
         <main className="chat-container">
-          <div className="messages" ref={messagesContainerRef} onScroll={handleScroll} onWheel={handleWheel}>
-          {messages.length === 0 && (
+          <div className="messages">
+          {messages.length === 0 ? (
             <div className="welcome">
               <h2>Welcome to OllieBot</h2>
               <p>Your personal support agent is ready to help.</p>
             </div>
+          ) : (
+            <Virtuoso
+              ref={virtuosoRef}
+              data={messages}
+              firstItemIndex={firstItemIndex}
+              initialTopMostItemIndex={messages.length - 1}
+              followOutput={(isAtBottom) => isAtBottom ? 'smooth' : false}
+              atBottomStateChange={handleAtBottomStateChange}
+              startReached={loadOlderMessages}
+              increaseViewportBy={{ top: 200, bottom: 200 }}
+              components={{
+                Header: VirtuosoHeader,
+              }}
+              itemContent={renderMessageItem}
+              className="virtuoso-scroller"
+            />
           )}
-          {messages.map((msg) =>
-            msg.role === 'tool' ? (
-              // Expandable tool invocation display
-              <div key={msg.id} className={`tool-event-wrapper ${expandedTools.has(msg.id) ? 'expanded' : ''}`}>
-                <div
-                  className={`tool-event ${msg.status}`}
-                  onClick={() => toggleToolExpand(msg.id)}
-                  style={{ cursor: 'pointer' }}
-                >
-                  <span className="tool-icon">
-                    {msg.source === 'mcp' ? '🔌' : msg.source === 'skill' ? '⚡' : '🔧'}
-                  </span>
-                  <span className="tool-status-indicator">
-                    {msg.status === 'running' ? '◐' : msg.status === 'completed' ? '✓' : '✗'}
-                  </span>
-                  <span className="tool-name">{msg.toolName}</span>
-                  {msg.parameters?.task && (
-                    <span className="tool-mission">{msg.parameters.task}</span>
-                  )}
-                  {msg.durationMs !== undefined && (
-                    <span className="tool-duration">{msg.durationMs}ms</span>
-                  )}
-                  <span className="tool-expand-icon">
-                    {expandedTools.has(msg.id) ? '▼' : '▶'}
-                  </span>
-                </div>
-                {expandedTools.has(msg.id) && (
-                  <div className="tool-details">
-                    {msg.parameters && Object.keys(msg.parameters).length > 0 && (
-                      <div className="tool-details-section">
-                        <div className="tool-details-label">Parameters</div>
-                        <pre className="tool-details-content">
-                          {JSON.stringify(msg.parameters, null, 2)}
-                        </pre>
-                      </div>
-                    )}
-                    {msg.result && (
-                      <div className="tool-details-section">
-                        <div className="tool-details-label">Response</div>
-                        {renderToolResult(msg.result)}
-                      </div>
-                    )}
-                    {msg.error && (
-                      <div className="tool-details-section error">
-                        <div className="tool-details-label">Error</div>
-                        <pre className="tool-details-content">{msg.error}</pre>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            ) : msg.role === 'delegation' ? (
-              // Compact delegation display
-              <div key={msg.id} className="delegation-event">
-                <span className="delegation-icon">🎯</span>
-                <span className="delegation-agent">
-                  {msg.agentEmoji} {msg.agentName}
-                </span>
-                <span className="delegation-mission">{msg.mission}</span>
-              </div>
-            ) : msg.role === 'task_run' ? (
-              // Compact task run display
-              <div key={msg.id} className="task-run-event">
-                <span className="task-run-icon">📋</span>
-                <span className="task-run-label">Running Task</span>
-                <span className="task-run-name">{msg.taskName}</span>
-                {msg.taskDescription && (
-                  <span className="task-run-description">{msg.taskDescription}</span>
-                )}
-              </div>
-            ) : shouldCollapseByDefault(msg.agentType, msg.agentName) ? (
-              // Collapsible agent message (e.g., research-worker)
-              <div key={msg.id} className={`collapsible-agent-message ${expandedAgentMessages.has(msg.id) ? 'expanded' : 'collapsed'}`}>
-                <div
-                  className="collapsible-agent-header"
-                  onClick={() => toggleAgentMessageExpand(msg.id)}
-                >
-                  <span className="collapsible-agent-icon">{msg.agentEmoji || '📚'}</span>
-                  <span className="collapsible-agent-name">{msg.agentName || 'Agent'}</span>
-                  <span className="collapsible-agent-preview">
-                    {msg.content ? (msg.content.substring(0, 80) + (msg.content.length > 80 ? '...' : '')) : 'Processing...'}
-                  </span>
-                  <span className="collapsible-agent-expand-icon">
-                    {expandedAgentMessages.has(msg.id) ? '▼' : '▶'}
-                  </span>
-                </div>
-                {expandedAgentMessages.has(msg.id) && (
-                  <div className={`message ${msg.role}${msg.isError ? ' error' : ''}${msg.isStreaming ? ' streaming' : ''}`}>
-                    <div className="message-avatar">
-                      {msg.isError ? '⚠️' : (msg.agentEmoji || '🐙')}
-                    </div>
-                    <div className="message-content">
-                      <MessageContent content={msg.content} html={msg.html} isStreaming={msg.isStreaming} />
-                      {msg.role === 'assistant' && msg.citations && !msg.isStreaming && (
-                        <SourcePanel citations={msg.citations} />
-                      )}
-                    </div>
-                  </div>
-                )}
-              </div>
-            ) : (
-            <div key={msg.id} className={`message ${msg.role}${msg.isError ? ' error' : ''}${msg.isStreaming ? ' streaming' : ''}`}>
-              <div className="message-avatar">
-                {msg.isError ? '⚠️' : msg.role === 'user' ? '👤' : (msg.agentEmoji || '🐙')}
-              </div>
-              <div className="message-content">
-                {msg.agentName && msg.role === 'assistant' && (
-                  <div className="agent-name">{msg.agentName}</div>
-                )}
-                <MessageContent content={msg.content} html={msg.html} isStreaming={msg.isStreaming} />
-                {msg.role === 'assistant' && msg.citations && !msg.isStreaming && (
-                  <SourcePanel citations={msg.citations} />
-                )}
-                {msg.attachments && msg.attachments.length > 0 && (
-                  <div className="message-attachments">
-                    {msg.attachments.map((att, index) => (
-                      <div key={index} className="message-attachment-chip">
-                        <span className="attachment-icon">
-                          {att.type?.startsWith('image/') ? '🖼️' : '📎'}
-                        </span>
-                        <span className="attachment-name" title={att.name}>
-                          {att.name?.length > 25 ? att.name.slice(0, 22) + '...' : att.name}
-                        </span>
-                        <span className="attachment-size">
-                          {formatFileSize(att.size)}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                {msg.messageType && (
-                  <div className="message-reasoning-chip message-type-chip">
-                    <span className="reasoning-chip-icon">🔬</span>
-                    <span className="reasoning-chip-label">
-                      {msg.messageType === 'deep_research' ? 'Deep Research' : msg.messageType}
-                    </span>
-                  </div>
-                )}
-                {msg.reasoningMode && (
-                  <div className="message-reasoning-chip">
-                    <span className="reasoning-chip-icon">🧠</span>
-                    <span className="reasoning-chip-label">
-                      {msg.reasoningMode === 'xhigh' ? 'Think+' : 'Think'}
-                    </span>
-                  </div>
-                )}
-                {msg.isStreaming && !msg.content && (
-                  <span className="typing-indicator">
-                    <span className="dot"></span>
-                    <span className="dot"></span>
-                    <span className="dot"></span>
-                  </span>
-                )}
-                {msg.isStreaming && msg.content && (
-                  <span className="streaming-cursor"></span>
-                )}
-                {msg.buttons && (
-                  <div className="message-buttons">
-                    {msg.buttons.map((btn) => (
-                      <button
-                        key={btn.id}
-                        onClick={() => handleAction(btn.action, btn.data)}
-                        className="action-button"
-                      >
-                        {btn.label}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          ))}
-          <div ref={messagesEndRef} />
           </div>
 
           {/* Scroll to bottom button */}
