@@ -181,13 +181,22 @@ export class SkillManager {
   /**
    * Get skill metadata for system prompt injection
    * Returns XML format as recommended by the Agent Skills specification
+   * @param excludeSources - Optional array of sources to exclude (e.g., ['builtin'])
    */
-  getSkillsForSystemPrompt(): string {
+  getSkillsForSystemPrompt(excludeSources?: SkillSource[]): string {
     if (this.metadata.size === 0) {
       return '';
     }
 
-    const skillsXml = Array.from(this.metadata.values())
+    const filteredMetadata = excludeSources
+      ? Array.from(this.metadata.values()).filter(meta => !excludeSources.includes(meta.source))
+      : Array.from(this.metadata.values());
+
+    if (filteredMetadata.length === 0) {
+      return '';
+    }
+
+    const skillsXml = filteredMetadata
       .map(
         (meta) => `  <skill>
     <id>${this.escapeXml(meta.id)}</id>
@@ -206,9 +215,14 @@ ${skillsXml}
   /**
    * Get instructions for how the agent should use skills
    * Include this in the system prompt along with available_skills
+   * @param excludeSources - Optional array of sources to exclude (e.g., ['builtin'])
    */
-  getSkillUsageInstructions(): string {
-    if (this.metadata.size === 0) {
+  getSkillUsageInstructions(excludeSources?: SkillSource[]): string {
+    const filteredMetadata = excludeSources
+      ? Array.from(this.metadata.values()).filter(meta => !excludeSources.includes(meta.source))
+      : Array.from(this.metadata.values());
+
+    if (filteredMetadata.length === 0) {
       return '';
     }
 

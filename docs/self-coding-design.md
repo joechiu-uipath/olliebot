@@ -98,7 +98,7 @@ Success  │Code Fixer │ (ONE instance, wait for completion)
 | Agent | Role | Tools Available | Can Delegate To |
 |-------|------|-----------------|-----------------|
 | **Supervisor** | Routes user requests to appropriate specialists | All tools except `read_frontend_code`, `modify_frontend_code`, `check_frontend_code` | `coding-lead` |
-| **Coding Lead** | Orchestrates workflow, validates builds, reports results | `read_skill`, `delegate`, `check_frontend_code` | `coding-planner`, `code-fixer` |
+| **Coding Lead** | Orchestrates workflow, validates builds, reports results | `read_skill`, `delegate`, `check_frontend_code` | `coding-planner`, `coding-fixer` |
 | **Coding Planner** | Analyzes requests, creates change plans, coordinates workers | `read_frontend_code`, `delegate` | `coding-worker` |
 | **Coding Worker** | Executes individual atomic code changes | `read_frontend_code`, `modify_frontend_code` | None |
 | **Code Fixer** | Fixes build errors (syntax, imports, brackets) | `read_frontend_code`, `modify_frontend_code`, `check_frontend_code` | None |
@@ -373,7 +373,7 @@ src/
 │   ├── coding-lead.md      # Coding Lead system prompt
 │   ├── coding-planner.md   # Coding Planner system prompt
 │   ├── coding-worker.md    # Coding Worker system prompt
-│   ├── code-fixer.md       # Code Fixer system prompt
+│   ├── coding-fixer.md       # Code Fixer system prompt
 │   └── registry.ts         # Agent templates and tool access
 ├── tools/native/
 │   ├── read-frontend-code.ts   # Read-only file access

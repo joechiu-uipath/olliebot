@@ -290,9 +290,15 @@ export class WorkerAgent extends AbstractAgent {
             const delegationConfig = this.agentRegistry.getDelegationConfigForSpecialist(this.agentType);
 
             if (delegationConfig.canDelegate) {
-              console.log(`[${this.identity.name}] Processing ${delegateResults.length} delegation(s) in parallel`);
+              console.log(`[${this.identity.name}] Processing ${delegateResults.length} delegation(s)`);
 
-              // Process all delegations in parallel
+              // Unsubscribe from tool events BEFORE delegating to sub-agents
+              // This prevents duplicate tool events when sub-agents use the same toolRunner
+              if (unsubscribeTool) {
+                unsubscribeTool();
+              }
+
+              // Process all delegations sequentially (one at a time to avoid file conflicts)
               const delegationPromises = delegateResults.map(async (delegateResult, idx) => {
                 const delegationParams = delegateResult.output as {
                   type: string;
@@ -358,6 +364,22 @@ export class WorkerAgent extends AbstractAgent {
               }
 
               console.log(`[${this.identity.name}] All ${delegateResults.length} delegation(s) completed`);
+
+              // Re-subscribe to tool events after delegations complete
+              // (this worker may execute more tools in subsequent iterations)
+              if (this.toolRunner) {
+                unsubscribeTool = this.toolRunner.onToolEvent((event) => {
+                  const webChannel = channel as WebChannel;
+                  const messageEventService = getMessageEventService();
+                  messageEventService.setWebChannel(webChannel);
+                  messageEventService.emitToolEvent(event, this.conversationId, channel.id, {
+                    id: this.identity.id,
+                    name: this.identity.name,
+                    emoji: this.identity.emoji,
+                    type: this.agentType,
+                  }, this.turnId || undefined);
+                });
+              }
             } else {
               console.warn(`[${this.identity.name}] Agent type '${this.agentType}' cannot delegate`);
             }

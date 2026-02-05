@@ -1935,141 +1935,6 @@ html, body {
   white-space: nowrap;
 }
 
-/* A2UI Interaction Modal */
-.interaction-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.7);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-}
-
-.interaction-modal {
-  background: var(--bg-secondary);
-  border-radius: 1rem;
-  padding: 1.5rem;
-  max-width: 500px;
-  width: 90%;
-  max-height: 80vh;
-  overflow-y: auto;
-  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
-}
-
-.interaction-modal h3 {
-  margin: 0 0 0.5rem 0;
-  font-size: 1.25rem;
-  color: var(--text-primary);
-}
-
-.interaction-modal > p {
-  margin: 0 0 1.5rem 0;
-  color: var(--text-secondary);
-  line-height: 1.5;
-}
-
-.interaction-options {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.75rem;
-  margin-bottom: 1rem;
-}
-
-.interaction-btn {
-  padding: 0.75rem 1.5rem;
-  border: none;
-  border-radius: 0.5rem;
-  font-size: 1rem;
-  font-weight: 500;
-  cursor: pointer;
-  transition: all 0.2s;
-}
-
-.interaction-btn.primary {
-  background: var(--accent);
-  color: white;
-}
-
-.interaction-btn.primary:hover {
-  background: var(--accent-hover);
-}
-
-.interaction-btn.secondary {
-  background: var(--bg-tertiary);
-  color: var(--text-primary);
-}
-
-.interaction-btn.secondary:hover {
-  background: var(--border-color);
-}
-
-.interaction-btn.danger {
-  background: #c0392b;
-  color: white;
-}
-
-.interaction-btn.danger:hover {
-  background: #e74c3c;
-}
-
-.interaction-form {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-
-.form-field {
-  display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
-}
-
-.form-field label {
-  font-size: 0.875rem;
-  color: var(--text-secondary);
-}
-
-.form-field input,
-.form-field textarea,
-.form-field select {
-  padding: 0.75rem;
-  border: 1px solid var(--border-color);
-  border-radius: 0.5rem;
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  font-size: 1rem;
-  outline: none;
-}
-
-.form-field input:focus,
-.form-field textarea:focus,
-.form-field select:focus {
-  border-color: var(--accent);
-}
-
-.form-field textarea {
-  min-height: 100px;
-  resize: vertical;
-}
-
-.interaction-cancel {
-  margin-top: 1rem;
-  padding: 0.5rem;
-  background: transparent;
-  border: none;
-  color: var(--text-secondary);
-  cursor: pointer;
-  font-size: 0.875rem;
-}
-
-.interaction-cancel:hover {
-  color: var(--text-primary);
-}
-
 /* Sidebar Scrollbar */
 .conversation-list::-webkit-scrollbar {
   width: 6px;
@@ -2293,6 +2158,25 @@ html, body {
   letter-spacing: 0.05em;
   color: var(--text-secondary);
   margin-bottom: 0.375rem;
+}
+
+.tool-details-agent {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.375rem 0.5rem;
+  background: var(--bg-secondary);
+  border-radius: 4px;
+  font-size: 0.8125rem;
+}
+
+.tool-agent-emoji {
+  font-size: 1rem;
+}
+
+.tool-agent-name {
+  color: var(--text-primary);
+  font-weight: 500;
 }
 
 .tool-details-content {

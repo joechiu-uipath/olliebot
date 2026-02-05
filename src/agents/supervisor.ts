@@ -316,13 +316,16 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
 
               console.log(`[${this.identity.name}] Delegating to ${delegationParams.type} for message ${message.id}`);
 
+              // Unsubscribe from tool events BEFORE delegating
+              // This prevents duplicate tool events when the sub-agent uses the same toolRunner
+              if (unsubscribeTool) {
+                unsubscribeTool();
+                unsubscribeTool = undefined; // Prevent double unsubscribe in finally block
+              }
+
               // Perform the delegation
               await this.handleDelegationFromTool(delegationParams, message, channel);
 
-              // Clean up and return - delegation takes over
-              if (unsubscribeTool) {
-                unsubscribeTool();
-              }
               return;
             }
 

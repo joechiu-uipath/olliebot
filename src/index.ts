@@ -16,7 +16,6 @@ import { OllieBotServer } from './server/index.js';
 import { MCPClient } from './mcp/index.js';
 import type { MCPServerConfig } from './mcp/types.js';
 import { SkillManager } from './skills/index.js';
-import { A2UIManager } from './a2ui/index.js';
 import {
   RAGProjectService,
   GoogleEmbeddingProvider,
@@ -288,10 +287,6 @@ async function main(): Promise<void> {
   const skillManager = new SkillManager(CONFIG.skillsDir);
   await skillManager.init();
 
-  // Initialize A2UI Manager
-  console.log('[Init] Initializing A2UI manager...');
-  const a2uiManager = new A2UIManager();
-
   // Initialize RAG Project Service (folder-based RAG with vector storage)
   let ragProjectService: RAGProjectService | null = null;
   const embeddingProvider = createEmbeddingProvider();
@@ -471,6 +466,8 @@ async function main(): Promise<void> {
   supervisor.setToolRunner(toolRunner);
   supervisor.setMemoryService(memoryService);
   supervisor.setSkillManager(skillManager);
+  // Exclude builtin skills from supervisor - these are for specialists only
+  supervisor.setExcludedSkillSources(['builtin']);
 
   // Set RAG data manager on supervisor (if RAG service is available)
   if (ragProjectService) {

@@ -37,6 +37,7 @@ export abstract class AbstractAgent implements BaseAgent {
   protected ragDataManager: RagDataManager | null = null;
   private ragDataCache: string | null = null;
   private ragDataCacheTime = 0;
+  private excludedSkillSources: Array<'builtin' | 'user'> = [];
 
   constructor(config: AgentConfig, llmService: LLMService) {
     this.config = config;
@@ -92,6 +93,14 @@ export abstract class AbstractAgent implements BaseAgent {
    */
   setRagDataManager(manager: RagDataManager): void {
     this.ragDataManager = manager;
+  }
+
+  /**
+   * Set skill sources to exclude from this agent's system prompt
+   * Used to prevent supervisor from accessing specialist-only skills
+   */
+  setExcludedSkillSources(sources: Array<'builtin' | 'user'>): void {
+    this.excludedSkillSources = sources;
   }
 
   /**
@@ -324,8 +333,8 @@ export abstract class AbstractAgent implements BaseAgent {
 
     // Add skill information per Agent Skills spec (progressive disclosure)
     if (this.skillManager) {
-      const skillInstructions = this.skillManager.getSkillUsageInstructions();
-      const skillsXml = this.skillManager.getSkillsForSystemPrompt();
+      const skillInstructions = this.skillManager.getSkillUsageInstructions(this.excludedSkillSources.length > 0 ? this.excludedSkillSources : undefined);
+      const skillsXml = this.skillManager.getSkillsForSystemPrompt(this.excludedSkillSources.length > 0 ? this.excludedSkillSources : undefined);
 
       if (skillInstructions && skillsXml) {
         prompt += `\n\n${skillInstructions}\n\n${skillsXml}`;

@@ -31,14 +31,14 @@ export class DelegateTool implements NativeTool {
 - coding-lead: For frontend code modifications (use when user wants to modify the UI)
 - coding-planner: For planning code changes (only used by coding-lead)
 - coding-worker: For executing code changes (only used by coding-planner)
-- code-fixer: For fixing build errors in frontend code (only used by coding-lead)`;
+- coding-fixer: For fixing build errors in frontend code (only used by coding-lead)`;
 
   readonly inputSchema = {
     type: 'object',
     properties: {
       type: {
         type: 'string',
-        enum: ['researcher', 'coder', 'writer', 'planner', 'deep-research-lead', 'research-worker', 'research-reviewer', 'coding-lead', 'coding-planner', 'coding-worker', 'code-fixer', 'custom'],
+        enum: ['researcher', 'coder', 'writer', 'planner', 'deep-research-lead', 'research-worker', 'research-reviewer', 'coding-lead', 'coding-planner', 'coding-worker', 'coding-fixer', 'custom'],
         description: 'The type of specialist agent to spawn',
       },
       mission: {
@@ -69,7 +69,7 @@ export class DelegateTool implements NativeTool {
     const { type, mission, rationale, customName, customEmoji, callerAgentId } = params;
 
     // Validate type
-    const validTypes = ['researcher', 'coder', 'writer', 'planner', 'deep-research-lead', 'research-worker', 'research-reviewer', 'coding-lead', 'coding-planner', 'coding-worker', 'code-fixer', 'custom'];
+    const validTypes = ['researcher', 'coder', 'writer', 'planner', 'deep-research-lead', 'research-worker', 'research-reviewer', 'coding-lead', 'coding-planner', 'coding-worker', 'coding-fixer', 'custom'];
     if (!validTypes.includes(type as string)) {
       return {
         success: false,

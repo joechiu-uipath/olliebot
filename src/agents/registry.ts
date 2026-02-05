@@ -183,13 +183,12 @@ const SPECIALIST_TEMPLATES: SpecialistTemplate[] = [
       description: 'Orchestrates frontend code modifications, validates builds, and commits changes',
     },
     canAccessTools: [
-      'read_skill', // To read the frontend-modifier skill
-      'delegate', // Can delegate to coding-planner and code-fixer
+      'delegate', // Can delegate to coding-planner and coding-fixer
       'check_frontend_code', // To validate build after changes
     ],
     delegation: {
       canDelegate: true,
-      allowedDelegates: ['coding-planner', 'code-fixer'], // Workers go through planner
+      allowedDelegates: ['coding-planner', 'coding-fixer'], // Workers go through planner
       restrictedToWorkflow: null,
       supervisorCanInvoke: true,
     },
@@ -235,9 +234,9 @@ const SPECIALIST_TEMPLATES: SpecialistTemplate[] = [
     collapseResponseByDefault: true,
   },
   {
-    type: 'code-fixer',
+    type: 'coding-fixer',
     identity: {
-      name: 'Code Fixer',
+      name: 'Coding Fixer',
       emoji: '🔨',
       role: 'specialist',
       description: 'Fixes build errors in frontend code, focusing on syntax issues like mismatched tags and brackets',
