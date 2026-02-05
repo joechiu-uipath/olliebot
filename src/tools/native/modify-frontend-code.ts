@@ -5,7 +5,7 @@
  * This tool is designed for the self-modifying software PoC.
  */
 
-import { readFileSync, writeFileSync, existsSync, unlinkSync, mkdirSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, unlinkSync, mkdirSync, readdirSync, statSync } from 'fs';
 import { join, dirname, resolve, relative } from 'path';
 import type { NativeTool, NativeToolResult } from './types.js';
 
@@ -38,7 +38,7 @@ export class ModifyFrontendCodeTool implements NativeTool {
   readonly description = `Modify frontend source code files within the /web directory. This tool enables self-modification of the React frontend.
 
 Operations:
-- read: Read the current content of a file
+- read: Read file content, or list directory contents if path is a folder
 - create: Create a new file (fails if file exists)
 - edit: Modify an existing file
 - delete: Remove a file (protected files cannot be deleted)
@@ -51,7 +51,8 @@ Edit types (for edit operation):
 - prepend: Add content at the beginning of the file
 - full_replace: Replace entire file content
 
-IMPORTANT: Always read a file first to understand its structure before editing.`;
+IMPORTANT: Always read a file first to understand its structure before editing.
+TIP: Use read with a directory path (e.g., "src/components") to list all files in that directory.`;
 
   readonly inputSchema = {
     type: 'object',
@@ -161,6 +162,12 @@ IMPORTANT: Always read a file first to understand its structure before editing.`
       return { success: false, error: `File not found: ${relativePath}` };
     }
 
+    // Check if path is a directory
+    const stats = statSync(absolutePath);
+    if (stats.isDirectory()) {
+      return this.listDirectory(absolutePath, relativePath);
+    }
+
     const content = readFileSync(absolutePath, 'utf-8');
     const lines = content.split('\n');
 
@@ -171,6 +178,42 @@ IMPORTANT: Always read a file first to understand its structure before editing.`
         content,
         lineCount: lines.length,
         size: content.length,
+      },
+    };
+  }
+
+  private listDirectory(absolutePath: string, relativePath: string): NativeToolResult {
+    const entries = readdirSync(absolutePath, { withFileTypes: true });
+
+    const files: Array<{ name: string; type: 'file' | 'directory'; size?: number }> = [];
+
+    for (const entry of entries) {
+      const entryPath = join(absolutePath, entry.name);
+      if (entry.isDirectory()) {
+        files.push({ name: entry.name, type: 'directory' });
+      } else if (entry.isFile()) {
+        const fileStats = statSync(entryPath);
+        files.push({ name: entry.name, type: 'file', size: fileStats.size });
+      }
+    }
+
+    // Sort: directories first, then files, alphabetically within each group
+    files.sort((a, b) => {
+      if (a.type !== b.type) {
+        return a.type === 'directory' ? -1 : 1;
+      }
+      return a.name.localeCompare(b.name);
+    });
+
+    return {
+      success: true,
+      output: {
+        path: relativePath || '.',
+        type: 'directory',
+        entries: files,
+        totalEntries: files.length,
+        directories: files.filter(f => f.type === 'directory').length,
+        files: files.filter(f => f.type === 'file').length,
       },
     };
   }

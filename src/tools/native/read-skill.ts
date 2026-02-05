@@ -2,10 +2,11 @@ import { readFile } from 'fs/promises';
 import { existsSync } from 'fs';
 import { join, normalize, resolve } from 'path';
 import type { NativeTool, NativeToolResult } from './types.js';
+import type { SkillManager } from '../../skills/manager.js';
 
 interface ReadSkillParams {
-  /** Full absolute path to the SKILL.md file */
-  skillPath: string;
+  /** Skill ID to read (e.g., "frontend-modifier") */
+  skill_id: string;
   /** Optional: specific file within the skill directory (e.g., "references/forms.md") */
   file?: string;
 }
@@ -18,72 +19,83 @@ interface ReadSkillParams {
  */
 export class ReadSkillTool implements NativeTool {
   name = 'read_skill';
-  description = `Read a skill file to load its instructions. You must provide the full absolute path to the SKILL.md file as shown in your available skills list.
-You can also read additional files within the skill directory like references or documentation.`;
+  description = `Read a skill file to load its instructions. Provide the skill_id to read the main SKILL.md file.
+You can also read additional files within the skill directory like references or documentation.
+
+Example usage:
+- Read main skill: { "skill_id": "frontend-modifier" }
+- Read reference file: { "skill_id": "frontend-modifier", "file": "references/api.md" }`;
 
   inputSchema = {
     type: 'object' as const,
     properties: {
-      skillPath: {
+      skill_id: {
         type: 'string',
-        description: 'The full absolute path to the SKILL.md file (e.g., "user/skills/pdf/SKILL.md")',
+        description: 'The skill ID to read (e.g., "frontend-modifier")',
       },
       file: {
         type: 'string',
         description: 'Optional: specific file within skill directory (e.g., "references/forms.md")',
       },
     },
-    required: ['skillPath'],
+    required: ['skill_id'],
   };
 
-  private skillsDir: string;
+  private skillManager: SkillManager;
 
-  constructor(skillsDir: string) {
-    this.skillsDir = resolve(skillsDir);
+  constructor(skillManager: SkillManager) {
+    this.skillManager = skillManager;
   }
 
   async execute(params: Record<string, unknown>): Promise<NativeToolResult> {
-    const { skillPath, file } = params as unknown as ReadSkillParams;
+    const { skill_id, file } = params as unknown as ReadSkillParams;
 
-    if (!skillPath) {
+    if (!skill_id) {
       return {
         success: false,
-        error: 'skillPath is required',
+        error: 'skill_id is required',
       };
     }
 
     try {
-      // Resolve the path
-      let targetPath: string;
+      // Get skill metadata to find the directory
+      const skillMeta = this.skillManager.getMetadata(skill_id);
+      if (!skillMeta) {
+        // List available skills to help the agent
+        const available = this.skillManager.getAllMetadata().map(m => m.id);
+        return {
+          success: false,
+          error: `Skill not found: "${skill_id}". Available skills: ${available.join(', ')}`,
+        };
+      }
 
+      // Determine the target path
+      let targetPath: string;
       if (file) {
         // Reading a specific file within the skill directory
-        const skillDir = skillPath.replace(/[/\\]SKILL\.md$/i, '');
-        targetPath = join(skillDir, file);
+        targetPath = join(skillMeta.dirPath, file);
       } else {
-        targetPath = skillPath;
+        // Reading the main SKILL.md file
+        targetPath = skillMeta.filePath;
       }
 
       // Normalize and resolve
       targetPath = resolve(normalize(targetPath));
 
-      // Security check: ensure path is within skills directory or is a valid skill path
-      const normalizedSkillsDir = resolve(this.skillsDir);
-      if (!targetPath.startsWith(normalizedSkillsDir)) {
-        // Also allow if it's directly pointing to a valid SKILL.md
-        if (!targetPath.includes('skills') || !existsSync(targetPath)) {
-          return {
-            success: false,
-            error: 'Access denied: path must be within skills directory',
-          };
-        }
+      // Security check: ensure path is within the skill directory
+      const normalizedSkillDir = resolve(skillMeta.dirPath);
+      if (!targetPath.startsWith(normalizedSkillDir)) {
+        return {
+          success: false,
+          error: 'Access denied: path must be within skill directory',
+        };
       }
 
       // Check if file exists
       if (!existsSync(targetPath)) {
         return {
           success: false,
-          error: `File not found: ${targetPath}`,
+          error: `File not found: ${file || 'SKILL.md'}`,
         };
       }
 
@@ -95,6 +107,8 @@ You can also read additional files within the skill directory like references or
       return {
         success: true,
         output: {
+          skill_id,
+          source: skillMeta.source,
           path: targetPath,
           content,
           size: content.length,

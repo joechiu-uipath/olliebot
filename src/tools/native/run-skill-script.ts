@@ -2,17 +2,20 @@
  * Run Skill Script Tool
  *
  * Executes scripts from within skill directories.
- * Sandboxed to only allow running scripts from the skills directory.
+ * Sandboxed to only allow running scripts from registered skills.
  */
 
 import { spawn } from 'child_process';
 import { existsSync } from 'fs';
 import { join, normalize, resolve, extname, dirname } from 'path';
 import type { NativeTool, NativeToolResult } from './types.js';
+import type { SkillManager } from '../../skills/manager.js';
 
 interface RunSkillScriptParams {
-  /** Path to the script file within a skill directory */
-  scriptPath: string;
+  /** Skill ID containing the script */
+  skill_id: string;
+  /** Name of the script file (e.g., "convert.js") */
+  script_name: string;
   /** Optional arguments to pass to the script */
   args?: string[];
   /** Optional environment variables */
@@ -25,16 +28,22 @@ interface RunSkillScriptParams {
 
 export class RunSkillScriptTool implements NativeTool {
   name = 'run_skill_script';
-  description = `Execute a script from a skill's scripts/ directory. Only scripts within the skills directory can be run.
+  description = `Execute a script from a skill's scripts/ directory.
 Use this when a SKILL.md instructs you to run a script.
-The script path should be the full path to the script file.`;
+
+Example usage:
+- Run a script: { "skill_id": "pdf-converter", "script_name": "convert.js", "args": ["input.pdf"] }`;
 
   inputSchema = {
     type: 'object' as const,
     properties: {
-      scriptPath: {
+      skill_id: {
         type: 'string',
-        description: 'Full path to the script file (e.g., "C:/path/to/skills/pdf/scripts/convert.js")',
+        description: 'The skill ID containing the script',
+      },
+      script_name: {
+        type: 'string',
+        description: 'Name of the script file in the skill\'s scripts/ directory (e.g., "convert.js")',
       },
       args: {
         type: 'array',
@@ -55,40 +64,63 @@ The script path should be the full path to the script file.`;
         description: 'Timeout in milliseconds (default: 60000)',
       },
     },
-    required: ['scriptPath'],
+    required: ['skill_id', 'script_name'],
   };
 
-  private skillsDir: string;
+  private skillManager: SkillManager;
 
-  constructor(skillsDir: string) {
-    this.skillsDir = resolve(skillsDir);
+  constructor(skillManager: SkillManager) {
+    this.skillManager = skillManager;
   }
 
   async execute(params: Record<string, unknown>): Promise<NativeToolResult> {
     const {
-      scriptPath,
+      skill_id,
+      script_name,
       args = [],
       env = {},
       cwd,
       timeout = 60000,
     } = params as unknown as RunSkillScriptParams;
 
-    if (!scriptPath) {
+    if (!skill_id) {
       return {
         success: false,
-        error: 'scriptPath is required',
+        error: 'skill_id is required',
+      };
+    }
+
+    if (!script_name) {
+      return {
+        success: false,
+        error: 'script_name is required',
       };
     }
 
     try {
+      // Get skill metadata to find the directory
+      const skillMeta = this.skillManager.getMetadata(skill_id);
+      if (!skillMeta) {
+        const available = this.skillManager.getAllMetadata().map(m => m.id);
+        return {
+          success: false,
+          error: `Skill not found: "${skill_id}". Available skills: ${available.join(', ')}`,
+        };
+      }
+
+      // Build the script path
+      const scriptsDir = join(skillMeta.dirPath, 'scripts');
+      const scriptPath = join(scriptsDir, script_name);
+
       // Resolve and normalize the path
       const resolvedPath = resolve(normalize(scriptPath));
 
-      // Security check: ensure script is within skills directory
-      if (!resolvedPath.startsWith(this.skillsDir)) {
+      // Security check: ensure script is within skill's scripts directory
+      const normalizedScriptsDir = resolve(scriptsDir);
+      if (!resolvedPath.startsWith(normalizedScriptsDir)) {
         return {
           success: false,
-          error: `Security error: Script must be within skills directory (${this.skillsDir})`,
+          error: `Security error: Script must be within skill's scripts directory`,
         };
       }
 
@@ -96,7 +128,7 @@ The script path should be the full path to the script file.`;
       if (!existsSync(resolvedPath)) {
         return {
           success: false,
-          error: `Script not found: ${resolvedPath}`,
+          error: `Script not found: ${script_name} in skill "${skill_id}"`,
         };
       }
 
@@ -152,9 +184,9 @@ The script path should be the full path to the script file.`;
       });
 
       if (result.exitCode === 0) {
-        console.log(`[RunSkillScript] ✓ ${scriptPath}`);
+        console.log(`[RunSkillScript] ✓ ${skill_id}/${script_name}`);
       } else {
-        console.error(`[RunSkillScript] ✗ ${scriptPath} (exit: ${result.exitCode})`);
+        console.error(`[RunSkillScript] ✗ ${skill_id}/${script_name} (exit: ${result.exitCode})`);
         if (result.stderr) {
           console.error(`[RunSkillScript] stderr: ${result.stderr}`);
         }
@@ -169,7 +201,8 @@ The script path should be the full path to the script file.`;
           exitCode: result.exitCode,
           stdout: result.stdout,
           stderr: result.stderr,
-          scriptPath: resolvedPath,
+          skill_id,
+          script_name,
         },
         error: result.exitCode !== 0
           ? `Script exited with code ${result.exitCode}${result.stderr ? `\n${result.stderr}` : ''}${result.stdout && !result.stderr ? `\n${result.stdout}` : ''}`

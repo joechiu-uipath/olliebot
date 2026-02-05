@@ -1,10 +1,15 @@
 import { watch, type FSWatcher } from 'chokidar';
-import { join } from 'path';
+import { join, dirname } from 'path';
 import { existsSync, mkdirSync } from 'fs';
 import { readFile } from 'fs/promises';
 import { execSync } from 'child_process';
-import type { Skill, SkillMetadata } from './types.js';
+import { fileURLToPath } from 'url';
+import type { Skill, SkillMetadata, SkillSource } from './types.js';
 import { SkillParser } from './parser.js';
+
+// Get the directory of this module (for builtin skills)
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 /**
  * Skill Manager - Discovers, loads, and provides skills to agents
@@ -16,21 +21,25 @@ import { SkillParser } from './parser.js';
  * - Progressive disclosure: metadata loaded at startup, full content on activation
  * - Agent-driven execution: agents read SKILL.md and execute scripts via bash tools
  * - Filesystem-based: skills are directories with SKILL.md files
+ * - Dual sources: builtin skills (shipped with app) and user skills (in user folder)
  */
 export class SkillManager {
   private skills: Map<string, Skill> = new Map();
   private metadata: Map<string, SkillMetadata> = new Map();
   private parser: SkillParser;
   private watcher: FSWatcher | null = null;
-  private skillsDir: string;
+  private userSkillsDir: string;
+  private builtinSkillsDir: string;
 
-  constructor(skillsDir: string) {
-    this.skillsDir = skillsDir;
+  constructor(userSkillsDir: string) {
+    this.userSkillsDir = userSkillsDir;
+    // Builtin skills are in src/skills/builtin/ relative to this file
+    this.builtinSkillsDir = join(__dirname, 'builtin');
     this.parser = new SkillParser();
 
-    // Ensure skills directory exists
-    if (!existsSync(skillsDir)) {
-      mkdirSync(skillsDir, { recursive: true });
+    // Ensure user skills directory exists
+    if (!existsSync(userSkillsDir)) {
+      mkdirSync(userSkillsDir, { recursive: true });
     }
   }
 
@@ -39,10 +48,10 @@ export class SkillManager {
    * Loads metadata for all skills (not full content - progressive disclosure)
    */
   async init(): Promise<void> {
-    // Load metadata for all skills
+    // Load metadata for all skills from both sources
     await this.loadMetadata();
 
-    // Watch for changes
+    // Watch for changes in user skills only (builtin are immutable)
     this.startWatching();
 
     console.log(`[SkillManager] Initialized with ${this.metadata.size} skills`);
@@ -53,13 +62,29 @@ export class SkillManager {
    * This keeps initial context usage low
    */
   private async loadMetadata(): Promise<void> {
-    const metadataList = await this.parser.loadMetadataFromDirectory(this.skillsDir);
-    for (const meta of metadataList) {
-      this.metadata.set(meta.id, meta);
-      console.log(`[SkillManager] Discovered skill: ${meta.name} (${meta.id})`);
+    // Load builtin skills first
+    if (existsSync(this.builtinSkillsDir)) {
+      const builtinMetadata = await this.parser.loadMetadataFromDirectory(this.builtinSkillsDir, 'builtin');
+      for (const meta of builtinMetadata) {
+        this.metadata.set(meta.id, meta);
+        console.log(`[SkillManager] Discovered builtin skill: ${meta.name} (${meta.id})`);
+        // No dependency installation for builtin skills
+      }
+    }
 
-      // Auto-install dependencies if skill has scripts with package.json
-      await this.installSkillDependencies(meta.dirPath);
+    // Load user skills (may override builtin if same ID)
+    if (existsSync(this.userSkillsDir)) {
+      const userMetadata = await this.parser.loadMetadataFromDirectory(this.userSkillsDir, 'user');
+      for (const meta of userMetadata) {
+        if (this.metadata.has(meta.id)) {
+          console.log(`[SkillManager] User skill "${meta.id}" overrides builtin`);
+        }
+        this.metadata.set(meta.id, meta);
+        console.log(`[SkillManager] Discovered user skill: ${meta.name} (${meta.id})`);
+
+        // Auto-install dependencies if skill has scripts with package.json
+        await this.installSkillDependencies(meta.dirPath);
+      }
     }
   }
 
@@ -106,10 +131,10 @@ export class SkillManager {
   }
 
   /**
-   * Watch for skill file changes
+   * Watch for skill file changes (user skills only)
    */
   private startWatching(): void {
-    this.watcher = watch(join(this.skillsDir, '*', 'SKILL.md'), {
+    this.watcher = watch(join(this.userSkillsDir, '*', 'SKILL.md'), {
       persistent: true,
       ignoreInitial: true,
     });
@@ -117,34 +142,36 @@ export class SkillManager {
     this.watcher.on('add', async (filePath) => {
       const skill = await this.parser.parseSkill(
         filePath,
-        join(filePath, '..')
+        join(filePath, '..'),
+        'user'
       );
       if (skill) {
         this.metadata.set(skill.id, skill);
         this.skills.set(skill.id, skill);
-        console.log(`[SkillManager] Added skill: ${skill.name}`);
+        console.log(`[SkillManager] Added user skill: ${skill.name}`);
       }
     });
 
     this.watcher.on('change', async (filePath) => {
       const skill = await this.parser.parseSkill(
         filePath,
-        join(filePath, '..')
+        join(filePath, '..'),
+        'user'
       );
       if (skill) {
         this.metadata.set(skill.id, skill);
         this.skills.set(skill.id, skill);
-        console.log(`[SkillManager] Updated skill: ${skill.name}`);
+        console.log(`[SkillManager] Updated user skill: ${skill.name}`);
       }
     });
 
     this.watcher.on('unlink', (filePath) => {
       // Find and remove the skill
       for (const [id, meta] of this.metadata) {
-        if (meta.filePath === filePath) {
+        if (meta.filePath === filePath && meta.source === 'user') {
           this.metadata.delete(id);
           this.skills.delete(id);
-          console.log(`[SkillManager] Removed skill: ${meta.name}`);
+          console.log(`[SkillManager] Removed user skill: ${meta.name}`);
           break;
         }
       }
@@ -163,9 +190,10 @@ export class SkillManager {
     const skillsXml = Array.from(this.metadata.values())
       .map(
         (meta) => `  <skill>
+    <id>${this.escapeXml(meta.id)}</id>
     <name>${this.escapeXml(meta.name)}</name>
     <description>${this.escapeXml(meta.description)}</description>
-    <location>${this.escapeXml(meta.filePath)}</location>
+    <source>${meta.source}</source>
   </skill>`
       )
       .join('\n');
@@ -190,16 +218,16 @@ You have access to specialized skills that provide domain knowledge and workflow
 Skills are activated by reading their SKILL.md file when relevant to the task.
 
 When a user request matches a skill's description:
-1. Use the read_skill tool with the full path from the <location> tag
+1. Use the read_skill tool with the skill_id from the <id> tag
 2. Follow the instructions in the skill file
 3. If the skill references scripts, use the run_skill_script tool to execute them
 4. If the skill has references/ directory, use read_skill with the file parameter to read additional docs
 
 Tools available:
-- read_skill: Read SKILL.md or reference files (skillPath required, optional file parameter)
-- run_skill_script: Execute scripts from skill directories (scriptPath required, optional args/env/timeout)
+- read_skill: Read SKILL.md or reference files (skill_id required, optional file parameter)
+- run_skill_script: Execute scripts from skill directories (skill_id and script_name required)
 
-IMPORTANT: Use the exact full paths from the skill's <location> tag.`;
+IMPORTANT: Use the skill_id (e.g., "frontend-modifier") to reference skills.`;
   }
 
   /**
@@ -218,7 +246,7 @@ IMPORTANT: Use the exact full paths from the skill's <location> tag.`;
     }
 
     // Load full skill
-    const skill = await this.parser.parseSkill(meta.filePath, meta.dirPath);
+    const skill = await this.parser.parseSkill(meta.filePath, meta.dirPath, meta.source);
     if (skill) {
       this.skills.set(skillId, skill);
     }
@@ -248,10 +276,25 @@ IMPORTANT: Use the exact full paths from the skill's <location> tag.`;
   }
 
   /**
-   * Get the skills directory path
+   * Get the user skills directory path
    */
-  getSkillsDir(): string {
-    return this.skillsDir;
+  getUserSkillsDir(): string {
+    return this.userSkillsDir;
+  }
+
+  /**
+   * Get the builtin skills directory path
+   */
+  getBuiltinSkillsDir(): string {
+    return this.builtinSkillsDir;
+  }
+
+  /**
+   * Get the directory path for a specific skill by ID
+   */
+  getSkillDir(skillId: string): string | null {
+    const meta = this.metadata.get(skillId);
+    return meta?.dirPath || null;
   }
 
   /**

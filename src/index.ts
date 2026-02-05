@@ -384,8 +384,8 @@ async function main(): Promise<void> {
   }
 
   // Skill tools (for Agent Skills spec)
-  toolRunner.registerNativeTool(new ReadSkillTool(CONFIG.skillsDir));
-  toolRunner.registerNativeTool(new RunSkillScriptTool(CONFIG.skillsDir));
+  toolRunner.registerNativeTool(new ReadSkillTool(skillManager));
+  toolRunner.registerNativeTool(new RunSkillScriptTool(skillManager));
 
   // Self-modifying code tools (for frontend code modification)
   toolRunner.registerNativeTool(new ModifyFrontendCodeTool());
