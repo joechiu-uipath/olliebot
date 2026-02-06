@@ -49,7 +49,7 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
       },
       capabilities: {
         canSpawnAgents: true,
-        canAccessTools: ['*', '!read_frontend_code', '!modify_frontend_code'], // Exclude self-coding tools - must delegate to coding-lead
+        canAccessTools: ['*', '!read_frontend_code', '!modify_frontend_code', '!check_frontend_code'], // Exclude self-coding tools - must delegate to coding-lead
         canUseChannels: ['*'],
         maxConcurrentTasks: 10,
       },
