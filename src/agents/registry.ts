@@ -194,7 +194,7 @@ const SPECIALIST_TEMPLATES: SpecialistTemplate[] = [
       restrictedToWorkflow: null,
       supervisorCanInvoke: true,
     },
-    // No skills - coding-lead delegates to planner/worker who have the skills
+    allowedSkills: [], // No skills - coding-lead delegates to planner/worker who have the skills
   },
   {
     type: 'coding-planner',

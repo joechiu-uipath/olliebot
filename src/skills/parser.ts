@@ -209,7 +209,9 @@ export class SkillParser {
    * Extract YAML frontmatter from content
    */
   private extractFrontmatter(content: string): Record<string, unknown> {
-    const match = content.match(/^---\n([\s\S]*?)\n---/);
+    // Normalize line endings (CRLF -> LF) for consistent parsing
+    const normalized = content.replace(/\r\n/g, '\n');
+    const match = normalized.match(/^---\n([\s\S]*?)\n---/);
     if (!match) return {};
 
     const yaml = match[1];
@@ -267,7 +269,9 @@ export class SkillParser {
    * Extract body content (everything after frontmatter)
    */
   private extractBody(content: string): string {
-    const match = content.match(/^---\n[\s\S]*?\n---\n?([\s\S]*)/);
+    // Normalize line endings (CRLF -> LF) for consistent parsing
+    const normalized = content.replace(/\r\n/g, '\n');
+    const match = normalized.match(/^---\n[\s\S]*?\n---\n?([\s\S]*)/);
     return match ? match[1].trim() : content.trim();
   }
 }
