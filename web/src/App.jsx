@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, memo, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
-import rehypeSanitize from 'rehype-sanitize';
+import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 import remarkGfm from 'remark-gfm';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
@@ -19,7 +19,9 @@ const MODES = {
 import { BrowserSessions } from './components/BrowserSessions';
 import { BrowserPreview } from './components/BrowserPreview';
 import RAGProjects from './components/RAGProjects';
-import { SourcePanel } from './components/SourcePanel';
+import { CitationPanel } from './components/CitationPanel';
+import { CitedContent } from './components/CitedContent';
+import { PDFViewerModal } from './components/PDFViewerModal';
 import { ChatInput } from './components/ChatInput';
 import { playAudioData } from './utils/audio';
 
@@ -122,9 +124,23 @@ const staticMarkdownComponents = {
   },
 };
 
+// Custom sanitize schema that allows mark tags for citations
+const sanitizeSchema = {
+  ...defaultSchema,
+  tagNames: [...(defaultSchema.tagNames || []), 'mark'],
+  attributes: {
+    ...defaultSchema.attributes,
+    mark: ['className', 'class'],
+    '*': [...(defaultSchema.attributes?.['*'] || []), 'className'],
+  },
+  // Allow citation-related class names
+  clobber: [],
+  clobberPrefix: '',
+};
+
 // Rehype plugin arrays (stable references)
-const rehypePluginsWithHtml = [rehypeRaw, rehypeSanitize];
-const rehypePluginsDefault = [rehypeSanitize];
+const rehypePluginsWithHtml = [rehypeRaw, [rehypeSanitize, sanitizeSchema]];
+const rehypePluginsDefault = [[rehypeSanitize, sanitizeSchema]];
 const remarkPluginsDefault = [remarkGfm];
 
 // Factory to create code component (only recreated when isStreaming changes)
@@ -163,11 +179,28 @@ function getMarkdownComponents(isStreaming) {
 
 /**
  * Message content component for rendering markdown messages.
+ * Supports citation highlighting when citations prop is provided.
  * Memoized to prevent re-renders when parent re-renders with same props.
  */
-const MessageContent = memo(function MessageContent({ content, html = false, isStreaming = false }) {
+const MessageContent = memo(function MessageContent({ content, html = false, isStreaming = false, citations = null, messageId = null }) {
   const components = getMarkdownComponents(isStreaming);
   const rehypePlugins = html ? rehypePluginsWithHtml : rehypePluginsDefault;
+
+  // Use CitedContent when citations with references are available
+  if (citations?.references?.length > 0 && !isStreaming) {
+    return (
+      <CitedContent
+        content={content}
+        citations={citations}
+        messageId={messageId}
+        html={html}
+        isStreaming={isStreaming}
+        rehypePlugins={rehypePlugins}
+        remarkPlugins={[remarkGfm]}
+        components={components}
+      />
+    );
+  }
 
   return (
     <ReactMarkdown
@@ -183,7 +216,9 @@ const MessageContent = memo(function MessageContent({ content, html = false, isS
   return (
     prevProps.content === nextProps.content &&
     prevProps.html === nextProps.html &&
-    prevProps.isStreaming === nextProps.isStreaming
+    prevProps.isStreaming === nextProps.isStreaming &&
+    prevProps.citations === nextProps.citations &&
+    prevProps.messageId === nextProps.messageId
   );
 });
 
@@ -354,6 +389,14 @@ function App() {
   // Response pending state (disable input while waiting)
   const [isResponsePending, setIsResponsePending] = useState(false);
 
+  // PDF viewer modal state
+  const [pdfViewerState, setPdfViewerState] = useState({
+    isOpen: false,
+    fileUrl: null,
+    filename: null,
+    initialPage: 1,
+  });
+
   // Reasoning mode state
   const [reasoningMode, setReasoningMode] = useState(null); // null | 'high' | 'xhigh'
   const [messageType, setMessageType] = useState(null); // null | 'deep_research'
@@ -376,6 +419,27 @@ function App() {
   useEffect(() => {
     navigateRef.current = navigate;
   }, [navigate]);
+
+  // Listen for PDF view events from citation components
+  useEffect(() => {
+    const handlePdfView = (event) => {
+      const { fileUrl, filename, initialPage } = event.detail;
+      setPdfViewerState({
+        isOpen: true,
+        fileUrl,
+        filename,
+        initialPage: initialPage || 1,
+      });
+    };
+
+    window.addEventListener('pdf-view', handlePdfView);
+    return () => window.removeEventListener('pdf-view', handlePdfView);
+  }, []);
+
+  // Close PDF viewer
+  const closePdfViewer = useCallback(() => {
+    setPdfViewerState((prev) => ({ ...prev, isOpen: false }));
+  }, []);
 
   const handleMessage = (data) => {
     // Helper to check if message belongs to current conversation
@@ -1866,9 +1930,9 @@ function App() {
                 {msg.isError ? '⚠️' : (msg.agentEmoji || '🐙')}
               </div>
               <div className="message-content">
-                <MessageContent content={msg.content} html={msg.html} isStreaming={msg.isStreaming} />
+                <MessageContent content={msg.content} html={msg.html} isStreaming={msg.isStreaming} citations={msg.citations} messageId={msg.id} />
                 {msg.role === 'assistant' && msg.citations && !msg.isStreaming && (
-                  <SourcePanel citations={msg.citations} />
+                  <CitationPanel citations={msg.citations} messageId={msg.id} />
                 )}
               </div>
             </div>
@@ -1887,9 +1951,9 @@ function App() {
           {msg.agentName && msg.role === 'assistant' && (
             <div className="agent-name">{msg.agentName}</div>
           )}
-          <MessageContent content={msg.content} html={msg.html} isStreaming={msg.isStreaming} />
+          <MessageContent content={msg.content} html={msg.html} isStreaming={msg.isStreaming} citations={msg.citations} messageId={msg.id} />
           {msg.role === 'assistant' && msg.citations && !msg.isStreaming && (
-            <SourcePanel citations={msg.citations} />
+            <CitationPanel citations={msg.citations} messageId={msg.id} />
           )}
           {msg.attachments && msg.attachments.length > 0 && (
             <div className="message-attachments">
@@ -1950,7 +2014,7 @@ function App() {
         </div>
       </div>
     );
-  }, [expandedTools, expandedAgentMessages, handleAction, formatFileSize, renderToolResult, toggleToolExpand, toggleAgentMessageExpand]);
+  }, [expandedTools, expandedAgentMessages, handleAction, formatFileSize, renderToolResult, toggleToolExpand, toggleAgentMessageExpand, agentTemplates]);
 
   // Virtuoso header component for loading indicator
   const VirtuosoHeader = useCallback(() => {
@@ -2471,6 +2535,15 @@ function App() {
         </>
         )}
       </div>
+
+      {/* PDF Viewer Modal */}
+      <PDFViewerModal
+        isOpen={pdfViewerState.isOpen}
+        onClose={closePdfViewer}
+        fileUrl={pdfViewerState.fileUrl}
+        filename={pdfViewerState.filename}
+        initialPage={pdfViewerState.initialPage}
+      />
     </div>
   );
 }

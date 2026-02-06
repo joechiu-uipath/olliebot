@@ -16,8 +16,7 @@ import type { ToolRunner, LLMTool } from '../tools/index.js';
 import type { MemoryService } from '../memory/service.js';
 import type { SkillManager } from '../skills/manager.js';
 import type { RagDataManager } from '../rag-projects/data-manager.js';
-import { initializeCitationServiceSync } from '../citations/service.js';
-import { getDefaultExtractors } from '../citations/extractors.js';
+import { generatePostHocCitations, toStoredCitationData } from '../citations/generator.js';
 import type { CitationSource, StoredCitationData } from '../citations/types.js';
 import type { WebChannel } from '../channels/web.js';
 
@@ -326,15 +325,8 @@ export abstract class AbstractAgent implements BaseAgent {
       }
     }
 
-    // Add citation guidelines when tools are available
-    // (Tool definitions are passed via the API's structured 'tools' parameter, not in system prompt)
-    if (this.toolRunner) {
-      const tools = this.getToolsForLLM();
-      if (tools.length > 0) {
-        const citationService = initializeCitationServiceSync(getDefaultExtractors());
-        prompt += citationService.getCitationGuidelines();
-      }
-    }
+    // Note: Citations are generated post-hoc after response completes
+    // No citation guidelines needed in system prompt
 
     // Add skill information per Agent Skills spec (progressive disclosure)
     if (this.skillManager) {
@@ -359,63 +351,43 @@ export abstract class AbstractAgent implements BaseAgent {
   }
 
   /**
-   * Finalize a streaming response with citations
-   * This is the centralized method for ending streams with citation support
+   * Generate citations using post-hoc analysis
+   * Analyzes the completed response against available sources using fast LLM
    *
-   * @param channel - The channel to send the response on
-   * @param streamId - The stream identifier
    * @param fullResponse - The complete response text
    * @param collectedSources - Citation sources collected during tool execution
-   * @param conversationId - Optional conversation ID
    * @returns The stored citation data (only includes cited sources)
    */
-  protected buildCitationData(
-    streamId: string,
+  protected async buildCitationData(
     fullResponse: string,
     collectedSources: CitationSource[]
-  ): StoredCitationData | undefined {
+  ): Promise<StoredCitationData | undefined> {
     if (collectedSources.length === 0) {
       return undefined;
     }
 
-    const citationService = initializeCitationServiceSync(getDefaultExtractors());
-    const citationContext = citationService.buildContext(
-      streamId,
-      fullResponse,
-      collectedSources
-    );
+    try {
+      const result = await generatePostHocCitations(
+        this.llmService,
+        fullResponse,
+        collectedSources
+      );
 
-    // Only include sources that are actually referenced in the response
-    const usedSources = citationService.getUsedSources(citationContext);
+      if (result.references.length === 0) {
+        console.log(`[${this.identity.name}] No citations generated for ${collectedSources.length} source(s)`);
+        return undefined;
+      }
 
-    if (usedSources.length === 0) {
-      console.log(`[${this.identity.name}] No citations referenced in response, discarding ${collectedSources.length} source(s)`);
+      const storedData = toStoredCitationData(result);
+      console.log(
+        `[${this.identity.name}] Citations: ${storedData.sources.length} sources cited, ${storedData.references.length} refs (${result.processingTimeMs}ms)`
+      );
+
+      return storedData;
+    } catch (error) {
+      console.error(`[${this.identity.name}] Citation generation failed:`, error);
       return undefined;
     }
-
-    // Build stored format with only used sources
-    const storedData: StoredCitationData = {
-      sources: usedSources.map((s) => ({
-        id: s.id,
-        type: s.type,
-        toolName: s.toolName,
-        uri: s.uri,
-        title: s.title,
-        domain: s.domain,
-        snippet: s.snippet,
-        pageNumber: s.pageNumber,
-      })),
-      references: citationContext.references.map((r) => ({
-        index: r.index,
-        startIndex: r.startIndex,
-        endIndex: r.endIndex,
-        sourceIds: r.sourceIds,
-      })),
-    };
-
-    console.log(`[${this.identity.name}] Citations: ${storedData.sources.length} sources used (${collectedSources.length - usedSources.length} discarded), ${storedData.references.length} refs`);
-
-    return storedData;
   }
 
   /**

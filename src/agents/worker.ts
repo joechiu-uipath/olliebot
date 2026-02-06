@@ -450,8 +450,8 @@ export class WorkerAgent extends AbstractAgent {
         this.subAgentCitations = []; // Clear after merging
       }
 
-      // Build citation data (only includes sources actually referenced in response)
-      const citationData = this.buildCitationData(streamId, fullResponse, collectedSources);
+      // Generate citations using post-hoc analysis
+      const citationData = await this.buildCitationData(fullResponse, collectedSources);
 
       // End stream with citations
       this.endStreamWithCitations(channel, streamId, this.conversationId || undefined, citationData);

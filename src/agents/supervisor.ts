@@ -380,8 +380,8 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
         }
       }
 
-      // Build citation data (only includes sources actually referenced in response)
-      const citationData = this.buildCitationData(streamId, fullResponse, collectedSources);
+      // Generate citations using post-hoc analysis
+      const citationData = await this.buildCitationData(fullResponse, collectedSources);
 
       // End stream with citations
       this.endStreamWithCitations(channel, streamId, this.currentConversationId || undefined, citationData);

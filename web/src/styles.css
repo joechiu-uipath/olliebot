@@ -4662,6 +4662,7 @@ html, body {
 }
 
 .source-page {
+  margin-left: auto;
   font-size: 0.75rem;
   color: var(--text-secondary);
   background: var(--bg-tertiary);
@@ -4686,4 +4687,372 @@ html, body {
   display: -webkit-box;
   -webkit-line-clamp: 3;
   -webkit-box-orient: vertical;
+}
+
+/* Citation panel highlighted state (for click-to-scroll) */
+.source-card.highlighted {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(233, 69, 96, 0.3);
+  animation: citation-highlight-pulse 2s ease-out;
+}
+
+@keyframes citation-highlight-pulse {
+  0% {
+    box-shadow: 0 0 0 4px rgba(233, 69, 96, 0.4);
+    background: rgba(233, 69, 96, 0.1);
+  }
+  100% {
+    box-shadow: 0 0 0 2px rgba(233, 69, 96, 0.3);
+    background: var(--bg-primary);
+  }
+}
+
+/* ===================================
+   Citation Panel Aliases
+   (For renamed SourcePanel -> CitationPanel)
+   =================================== */
+
+.citation-panel {
+  margin-top: 1rem;
+  border: 1px solid var(--border-color);
+  border-radius: 0.5rem;
+  overflow: hidden;
+  background: var(--bg-secondary);
+}
+
+.citation-panel-toggle {
+  width: 100%;
+  padding: 0.75rem 1rem;
+  background: var(--bg-tertiary);
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  transition: background-color 0.15s, color 0.15s;
+}
+
+.citation-panel-toggle:hover {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+}
+
+.citation-panel-icon {
+  font-size: 1rem;
+}
+
+.citation-panel-text {
+  flex: 1;
+  text-align: left;
+}
+
+.citation-panel-arrow {
+  font-size: 0.75rem;
+  opacity: 0.6;
+}
+
+.citation-source-list {
+  padding: 0.5rem;
+}
+
+/* ============================================
+   Citation Highlights
+   ============================================ */
+
+.cited-content {
+  display: contents;
+}
+
+.citation-highlight {
+  position: relative;
+  background: linear-gradient(
+    to bottom,
+    transparent 60%,
+    rgba(233, 69, 96, 0.2) 60%,
+    rgba(233, 69, 96, 0.2) 100%
+  );
+  border-radius: 2px;
+  cursor: help;
+  transition: background 0.15s ease;
+}
+
+.citation-highlight:hover {
+  background: linear-gradient(
+    to bottom,
+    transparent 60%,
+    rgba(233, 69, 96, 0.35) 60%,
+    rgba(233, 69, 96, 0.35) 100%
+  );
+}
+
+/* Citation tooltip */
+.citation-tooltip {
+  position: absolute;
+  z-index: 1000;
+  min-width: 280px;
+  max-width: 400px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 0.5rem;
+  padding: 0.75rem;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+  pointer-events: auto;
+  animation: tooltip-fade-in 0.15s ease;
+}
+
+@keyframes tooltip-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.citation-tooltip-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.citation-tooltip-icon {
+  font-size: 1rem;
+}
+
+.citation-tooltip-domain {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  flex: 1;
+}
+
+.citation-tooltip-link {
+  font-size: 0.7rem;
+  color: var(--accent);
+  text-decoration: none;
+  padding: 0.125rem 0.375rem;
+  border: 1px solid var(--accent);
+  border-radius: 0.25rem;
+  transition: background-color 0.15s, color 0.15s;
+}
+
+.citation-tooltip-link:hover {
+  background: var(--accent);
+  color: var(--bg-primary);
+}
+
+.citation-tooltip-title {
+  font-weight: 500;
+  font-size: 0.875rem;
+  color: var(--text-primary);
+  margin-bottom: 0.375rem;
+  line-height: 1.4;
+}
+
+.citation-tooltip-snippet {
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  font-style: italic;
+  line-height: 1.5;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  margin-bottom: 0.25rem;
+}
+
+.citation-tooltip-page {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+  margin-top: 0.375rem;
+}
+
+/* ============================================
+   PDF Viewer Styles
+   ============================================ */
+
+.native-pdf-viewer {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+}
+
+.pdf-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.375rem 0.75rem;
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.pdf-nav-btn {
+  padding: 0.25rem 0.5rem;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 0.25rem;
+  color: var(--text-primary);
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: background-color 0.15s, border-color 0.15s;
+  line-height: 1;
+}
+
+.pdf-nav-btn:hover:not(:disabled) {
+  background: var(--bg-primary);
+  border-color: var(--accent);
+}
+
+.pdf-nav-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.pdf-page-info {
+  display: flex;
+  align-items: center;
+  color: var(--text-secondary);
+  font-size: 0.8125rem;
+}
+
+.pdf-page-input {
+  width: 50px;
+  padding: 0.25rem 0.375rem;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 0.25rem;
+  color: var(--text-primary);
+  font-size: 0.8125rem;
+  text-align: center;
+}
+
+.pdf-page-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.pdf-iframe {
+  flex: 1;
+  width: 100%;
+  min-height: 500px;
+  border: none;
+  background: var(--bg-primary);
+}
+
+/* ============================================
+   PDF Modal Styles
+   ============================================ */
+
+.pdf-modal-backdrop {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.75);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+  padding: 2rem;
+  animation: modal-fade-in 0.2s ease;
+}
+
+@keyframes modal-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.pdf-modal-container {
+  display: flex;
+  flex-direction: column;
+  width: 90vw;
+  max-width: 1200px;
+  height: 85vh;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 0.75rem;
+  overflow: hidden;
+  animation: modal-slide-in 0.2s ease;
+}
+
+@keyframes modal-slide-in {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.pdf-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 1rem;
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.pdf-modal-title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pdf-modal-close {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 0.25rem;
+  color: var(--text-secondary);
+  font-size: 1.125rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: background-color 0.15s, color 0.15s;
+}
+
+.pdf-modal-close:hover {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+.pdf-modal-content {
+  flex: 1;
+  overflow: hidden;
+}
+
+/* Clickable PDF source styles */
+.source-title-link,
+.citation-tooltip-pdf-link {
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 2px;
+}
+
+.source-title-link:hover,
+.citation-tooltip-pdf-link:hover {
+  text-decoration-style: solid;
 }

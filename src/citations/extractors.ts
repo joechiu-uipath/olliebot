@@ -182,6 +182,7 @@ export const ragQueryExtractor: CitationExtractor = {
         snippet: result.text.slice(0, 200) + (result.text.length > 200 ? '...' : ''),
         fullContent: result.text,
         pageNumber,
+        projectId: data.projectId, // Include project ID for PDF URL construction
         timestamp: new Date().toISOString(),
       };
     });

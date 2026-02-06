@@ -50,6 +50,9 @@ export interface CitationSource {
   pageNumber?: number; // For PDF sources
   lineStart?: number; // For text files
   lineEnd?: number;
+
+  /** Project context (for RAG file sources) */
+  projectId?: string; // RAG project ID for constructing document URLs
 }
 
 /**
@@ -118,6 +121,7 @@ export interface StoredCitationData {
     domain?: string;
     snippet?: string;
     pageNumber?: number;
+    projectId?: string;
   }>;
   references: Array<{
     index: number;
