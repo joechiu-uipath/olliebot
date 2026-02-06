@@ -189,9 +189,10 @@ export class WorkerAgent extends AbstractAgent {
       ? `tools: ${tools.map(t => t.name).join(', ')}`
       : `${tools.length} tools`;
     // Get skills filtered by allowedSkills if set
+    // Note: allowedSkills=[] means NO skills allowed, allowedSkills=null means ALL skills allowed
     let skills = this.skillManager?.getAllMetadata() || [];
     const allowedSkillIds = this.getAllowedSkills();
-    if (allowedSkillIds && allowedSkillIds.length > 0) {
+    if (allowedSkillIds !== null) {
       skills = skills.filter(s => allowedSkillIds.includes(s.id));
     }
     const skillInfo = skills.length === 0

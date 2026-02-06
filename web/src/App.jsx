@@ -670,6 +670,9 @@ function App() {
         const wellKnownCount = prev.filter((c) => c.isWellKnown).length;
         return [...prev.slice(0, wellKnownCount), newConv, ...prev.slice(wellKnownCount)];
       });
+      // Update ref immediately to prevent race condition with incoming stream events
+      // (React state update is async, but stream_start/chunk events may arrive before re-render)
+      currentConversationIdRef.current = conv.id;
       setCurrentConversationId(conv.id);
       // Navigate to the new conversation URL
       navigateRef.current(`/chat/${encodeURIComponent(conv.id)}`, { replace: true });

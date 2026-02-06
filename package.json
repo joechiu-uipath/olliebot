@@ -18,7 +18,9 @@
     "build:web": "pnpm --filter olliebot-web build",
     "build:tui": "pnpm --filter olliebot-tui build",
     "start": "node dist/index.js",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.30.0",
@@ -57,6 +59,7 @@
     "tsx": "^4.19.1",
     "typescript": "^5.6.2",
     "vite": "^5.4.8",
+    "vitest": "^4.0.18",
     "wait-on": "^9.0.3"
   }
 }

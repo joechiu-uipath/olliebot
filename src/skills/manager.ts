@@ -192,7 +192,8 @@ export class SkillManager {
     let filteredMetadata: SkillMetadata[];
 
     // If allowedSkillIds is provided, use it as a whitelist (takes precedence)
-    if (allowedSkillIds && allowedSkillIds.length > 0) {
+    // Note: allowedSkillIds=[] means NO skills, allowedSkillIds=undefined means use other filtering
+    if (allowedSkillIds !== undefined) {
       filteredMetadata = Array.from(this.metadata.values()).filter(
         meta => allowedSkillIds.includes(meta.id)
       );
@@ -231,7 +232,8 @@ export class SkillManager {
     let filteredMetadata: SkillMetadata[];
 
     // If allowedSkillIds is provided, use it as a whitelist (takes precedence)
-    if (allowedSkillIds && allowedSkillIds.length > 0) {
+    // Note: allowedSkillIds=[] means NO skills, allowedSkillIds=undefined means use other filtering
+    if (allowedSkillIds !== undefined) {
       filteredMetadata = Array.from(this.metadata.values()).filter(
         meta => allowedSkillIds.includes(meta.id)
       );
