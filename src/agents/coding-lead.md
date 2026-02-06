@@ -31,12 +31,12 @@ Example delegation:
 - WAIT for the planner to complete before proceeding
 - Do NOT launch another planner or any other agent until this one finishes
 
-### Phase 3: Build Validation
+### Phase 2: Build Validation
 1. After planner completes, run `check_frontend_code` with `check: "build"`
 2. If build passes → Report success to user
 3. If build fails → Proceed to error recovery
 
-### Phase 4: Error Recovery (if needed)
+### Phase 3: Error Recovery (if needed)
 If build fails, delegate to ONE `coding-fixer`:
 
 ```json
