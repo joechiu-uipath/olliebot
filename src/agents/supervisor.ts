@@ -196,9 +196,7 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
       const tools = this.getToolsForLLM();
 
       // Log system prompt to file for debugging
-      logSystemPrompt(this.identity.name, systemPrompt, {
-        toolCount: tools.length,
-      });
+      logSystemPrompt(this.identity.name, systemPrompt);
 
       // Build initial messages, including image attachments and messageType
       let llmMessages: LLMMessage[] = [

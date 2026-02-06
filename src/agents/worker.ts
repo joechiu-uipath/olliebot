@@ -188,7 +188,12 @@ export class WorkerAgent extends AbstractAgent {
     const toolInfo = tools.length < 5
       ? `tools: ${tools.map(t => t.name).join(', ')}`
       : `${tools.length} tools`;
-    const skills = this.skillManager?.getAllMetadata() || [];
+    // Get skills filtered by allowedSkills if set
+    let skills = this.skillManager?.getAllMetadata() || [];
+    const allowedSkillIds = this.getAllowedSkills();
+    if (allowedSkillIds && allowedSkillIds.length > 0) {
+      skills = skills.filter(s => allowedSkillIds.includes(s.id));
+    }
     const skillInfo = skills.length === 0
       ? ''
       : skills.length < 5
@@ -231,11 +236,7 @@ export class WorkerAgent extends AbstractAgent {
       );
 
       // Log system prompt to file for debugging
-      logSystemPrompt(this.identity.name, systemPrompt, {
-        toolCount: tools.length,
-        skillCount: skills.length,
-        mission,
-      });
+      logSystemPrompt(this.identity.name, systemPrompt);
 
       // Build initial messages
       let llmMessages: LLMMessage[] = [

@@ -180,7 +180,7 @@ export class SkillManager {
 
   /**
    * Get skill metadata for system prompt injection
-   * Returns XML format as recommended by the Agent Skills specification
+   * Returns flat list format matching tools: - skill_id: description
    * @param excludeSources - Optional array of sources to exclude (e.g., ['builtin'])
    * @param allowedSkillIds - Optional array of skill IDs to include (whitelist, takes precedence over excludeSources)
    */
@@ -209,20 +209,16 @@ export class SkillManager {
       return '';
     }
 
-    const skillsXml = filteredMetadata
-      .map(
-        (meta) => `  <skill>
-    <id>${this.escapeXml(meta.id)}</id>
-    <name>${this.escapeXml(meta.name)}</name>
-    <description>${this.escapeXml(meta.description)}</description>
-    <source>${meta.source}</source>
-  </skill>`
-      )
+    // Format skills in flat list format matching tools: - skill_id: description
+    const skillsList = filteredMetadata
+      .map((meta) => {
+        // Remove newlines from description
+        const desc = meta.description.replace(/[\r\n]+/g, ' ').trim();
+        return `- ${meta.id}: ${desc}`;
+      })
       .join('\n');
 
-    return `<available_skills>
-${skillsXml}
-</available_skills>`;
+    return skillsList;
   }
 
   /**
@@ -251,22 +247,9 @@ ${skillsXml}
       return '';
     }
 
-    return `## Agent Skills
+    return `## Available Skills
 
-You have access to specialized skills that provide domain knowledge and workflows.
-Skills are activated by reading their SKILL.md file when relevant to the task.
-
-When a user request matches a skill's description:
-1. Use the read_skill tool with the skill_id from the <id> tag
-2. Follow the instructions in the skill file
-3. If the skill references scripts, use the run_skill_script tool to execute them
-4. If the skill has references/ directory, use read_skill with the file parameter to read additional docs
-
-Tools available:
-- read_skill: Read SKILL.md or reference files (skill_id required, optional file parameter)
-- run_skill_script: Execute scripts from skill directories (skill_id and script_name required)
-
-IMPORTANT: Use the skill_id (e.g., "frontend-modifier") to reference skills.`;
+Skills provide domain knowledge and workflows. Use read_skill tool with skill_id to activate.`;
   }
 
   /**

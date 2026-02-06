@@ -191,30 +191,29 @@ const MessageContent = memo(function MessageContent({ content, html = false, isS
 // (Strict Mode unmounts/remounts component, so refs don't persist)
 let appInitialLoadDone = false;
 
-// Agent types that should have their responses collapsed by default (module-level constant)
-const COLLAPSE_BY_DEFAULT_AGENT_TYPES = new Set([
-  'research-worker',
-  'research-reviewer',
-]);
-
-// Map display names to agent type IDs (for legacy messages without agentType)
-const AGENT_NAME_TO_TYPE = {
-  'Research Worker': 'research-worker',
-  'Research Reviewer': 'research-reviewer',
-  'Deep Research Lead': 'deep-research-lead',
-};
-
 // Helper function to check if an agent type should collapse by default
-function shouldCollapseByDefault(agentType, agentName) {
-  if (agentType && COLLAPSE_BY_DEFAULT_AGENT_TYPES.has(agentType)) {
-    return true;
+// Uses agentTemplates data from backend (passed as parameter)
+function shouldCollapseByDefault(agentType, agentName, agentTemplates) {
+  if (!agentTemplates || agentTemplates.length === 0) {
+    return false; // No templates loaded yet
   }
-  if (agentName) {
-    const mappedType = AGENT_NAME_TO_TYPE[agentName];
-    if (mappedType && COLLAPSE_BY_DEFAULT_AGENT_TYPES.has(mappedType)) {
+
+  // Check by agentType first
+  if (agentType) {
+    const template = agentTemplates.find(t => t.type === agentType);
+    if (template?.collapseResponseByDefault) {
       return true;
     }
   }
+
+  // Fall back to matching by display name (for legacy messages without agentType)
+  if (agentName) {
+    const template = agentTemplates.find(t => t.name === agentName);
+    if (template?.collapseResponseByDefault) {
+      return true;
+    }
+  }
+
   return false;
 }
 
@@ -318,6 +317,9 @@ function App() {
   // RAG projects state
   const [ragProjects, setRagProjects] = useState([]);
   const [ragIndexingProgress, setRagIndexingProgress] = useState({}); // { projectId: { status, ... } }
+
+  // Agent templates metadata (fetched from backend for collapse settings, display names, etc.)
+  const [agentTemplates, setAgentTemplates] = useState([]);
 
   // Actions menu state
   const [openMenuId, setOpenMenuId] = useState(null);
@@ -809,6 +811,11 @@ function App() {
       setRagProjects(ragProjectsData);
     } else {
       setRagProjects([]);
+    }
+
+    // Agent templates (for collapse settings, display names, etc.)
+    if (data.agentTemplates) {
+      setAgentTemplates(data.agentTemplates);
     }
   }, []);
 
@@ -1836,8 +1843,8 @@ function App() {
       );
     }
 
-    if (shouldCollapseByDefault(msg.agentType, msg.agentName)) {
-      // Collapsible agent message (e.g., research-worker)
+    if (shouldCollapseByDefault(msg.agentType, msg.agentName, agentTemplates)) {
+      // Collapsible agent message (uses collapseResponseByDefault from backend)
       return (
         <div className={`collapsible-agent-message ${expandedAgentMessages.has(msg.id) ? 'expanded' : 'collapsed'}`}>
           <div

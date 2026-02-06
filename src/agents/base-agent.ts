@@ -363,37 +363,25 @@ export abstract class AbstractAgent implements BaseAgent {
 
   /**
    * Create a summary of available tools for the system prompt
+   * Lists ALL tools in a flat format: - tool_name: description
    */
   private summarizeTools(tools: LLMTool[]): string {
-    // Group tools by category
-    const categories: Record<string, LLMTool[]> = {
-      mcp: [],
-      native: [],
+    const MAX_DESC_LENGTH = 200;
+
+    // Format a single tool description
+    const formatTool = (tool: LLMTool): string => {
+      let desc = tool.description || 'No description';
+      // Remove newlines from description
+      desc = desc.replace(/[\r\n]+/g, ' ').trim();
+      // Truncate if too long
+      if (desc.length > MAX_DESC_LENGTH) {
+        desc = desc.substring(0, MAX_DESC_LENGTH) + '...(truncated)';
+      }
+      return `- ${tool.name}: ${desc}`;
     };
 
-    for (const tool of tools) {
-      if (tool.name.startsWith('mcp.')) {
-        // MCP tools (format: mcp.serverId__toolName)
-        categories.mcp.push(tool);
-      } else {
-        // Native tools (no prefix) and user tools (user. prefix)
-        categories.native.push(tool);
-      }
-    }
-
-    const parts: string[] = [];
-
-    if (categories.mcp.length > 0) {
-      const mcpSummary = categories.mcp.slice(0, 10).map(t => `- ${t.name}: ${t.description?.substring(0, 100) || 'No description'}`).join('\n');
-      parts.push(`**MCP Tools (${categories.mcp.length} available):**\n${mcpSummary}${categories.mcp.length > 10 ? `\n... and ${categories.mcp.length - 10} more` : ''}`);
-    }
-
-    if (categories.native.length > 0) {
-      const nativeSummary = categories.native.map(t => `- ${t.name}: ${t.description?.substring(0, 100) || 'No description'}`).join('\n');
-      parts.push(`**Native Tools (${categories.native.length} available):**\n${nativeSummary}`);
-    }
-
-    return parts.join('\n\n');
+    // List all tools in a flat format (no grouping, no truncation of list)
+    return tools.map(formatTool).join('\n');
   }
 
   /**

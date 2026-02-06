@@ -194,6 +194,7 @@ const SPECIALIST_TEMPLATES: SpecialistTemplate[] = [
       restrictedToWorkflow: null,
       supervisorCanInvoke: true,
     },
+    // No skills - coding-lead delegates to planner/worker who have the skills
   },
   {
     type: 'coding-planner',
@@ -259,6 +260,7 @@ const SPECIALIST_TEMPLATES: SpecialistTemplate[] = [
       supervisorCanInvoke: false, // Only invocable by coding-lead
     },
     collapseResponseByDefault: true,
+    allowedSkills: ['frontend-modifier'], // Only frontend-modifier skill, not docx/pdf/pptx
   },
 ];
 

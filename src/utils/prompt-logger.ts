@@ -22,11 +22,6 @@ function ensureLogDir(): void {
 export function logSystemPrompt(
   agentName: string,
   systemPrompt: string,
-  context?: {
-    toolCount?: number;
-    skillCount?: number;
-    mission?: string;
-  }
 ): void {
   try {
     ensureLogDir();
@@ -37,23 +32,7 @@ export function logSystemPrompt(
     const filename = `${timestamp}_${safeName}.txt`;
     const filepath = join(LOG_DIR, filename);
 
-    // Build log content
-    let content = `=== System Prompt Log ===\n`;
-    content += `Agent: ${agentName}\n`;
-    content += `Timestamp: ${new Date().toISOString()}\n`;
-    if (context?.toolCount !== undefined) {
-      content += `Tools: ${context.toolCount}\n`;
-    }
-    if (context?.skillCount !== undefined) {
-      content += `Skills: ${context.skillCount}\n`;
-    }
-    if (context?.mission) {
-      content += `Mission: ${context.mission}\n`;
-    }
-    content += `\n${'='.repeat(50)}\n\n`;
-    content += systemPrompt;
-
-    writeFileSync(filepath, content, 'utf-8');
+    writeFileSync(filepath, systemPrompt, 'utf-8');
   } catch (error) {
     // Don't fail the main operation if logging fails
     console.error('[PromptLogger] Failed to log system prompt:', error);

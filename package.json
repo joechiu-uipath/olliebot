@@ -9,6 +9,7 @@
   ],
   "scripts": {
     "dev:server": "nodemon --watch src --watch .env -e ts,json --exec \"tsx --inspect src/index.ts\"",
+    "dev:server-proxy": "set HTTP_PROXY=http://127.0.0.1:8888&& set HTTPS_PROXY=http://127.0.0.1:8888&& set NODE_TLS_REJECT_UNAUTHORIZED=0&& nodemon --watch src --watch .env -e ts,json --exec \"tsx --inspect src/index.ts\"",
     "dev:console": "tsx src/index.ts console",
     "dev:web": "pnpm --filter olliebot-web dev",
     "dev:tui": "pnpm --filter olliebot-tui dev",
