@@ -27,6 +27,7 @@ const rehypePluginsDefault = [[rehypeSanitize, sanitizeSchema]];
 /**
  * Message content component for rendering markdown messages.
  * Supports citation highlighting when citations prop is provided.
+ * Supports applet rendering when onReplyRequest prop is provided.
  * Memoized to prevent re-renders when parent re-renders with same props.
  */
 export const MessageContent = memo(function MessageContent({
@@ -34,9 +35,13 @@ export const MessageContent = memo(function MessageContent({
   html = false,
   isStreaming = false,
   citations = null,
-  messageId = null
+  messageId = null,
+  onReplyRequest = null,
+  replies = []
 }) {
-  const components = getMarkdownComponents(isStreaming);
+  // Build applet props if reply functionality is needed
+  const appletProps = onReplyRequest ? { messageId, onReplyRequest, replies } : null;
+  const components = getMarkdownComponents(isStreaming, appletProps);
   const rehypePlugins = html ? rehypePluginsWithHtml : rehypePluginsDefault;
 
   // Use CitedContent when citations with references are available
@@ -71,7 +76,9 @@ export const MessageContent = memo(function MessageContent({
     prevProps.html === nextProps.html &&
     prevProps.isStreaming === nextProps.isStreaming &&
     prevProps.citations === nextProps.citations &&
-    prevProps.messageId === nextProps.messageId
+    prevProps.messageId === nextProps.messageId &&
+    prevProps.onReplyRequest === nextProps.onReplyRequest &&
+    prevProps.replies === nextProps.replies
   );
 });
 

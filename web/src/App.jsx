@@ -74,6 +74,9 @@ function App() {
   const [ragProjects, setRagProjects] = useState([]);
   const [ragIndexingProgress, setRagIndexingProgress] = useState({}); // { projectId: { status, ... } }
 
+  // Message replies state (for applet revision threads)
+  const [messageReplies, setMessageReplies] = useState({}); // { messageId: [reply, ...] }
+
   // Eval state (shared via WebSocket, not a separate connection)
   const [evalJobId, setEvalJobId] = useState(null);
   const [evalProgress, setEvalProgress] = useState(null);
@@ -190,6 +193,8 @@ function App() {
     setExpandedAccordions,
     setRagProjects,
     setRagIndexingProgress,
+    // Message reply state
+    setMessageReplies,
     // Eval state (shared WebSocket, no separate connection needed)
     getEvalJobId: () => evalJobIdRef.current,
     setEvalProgress,
@@ -1099,6 +1104,16 @@ function App() {
     toggleAccordion('browserSessions');
   }, [toggleAccordion]);
 
+  // Handle message reply request (for applet revisions)
+  const handleMessageReply = useCallback((messageId, content) => {
+    sendMessage({
+      type: 'message-reply',
+      messageId,
+      content,
+      conversationId: currentConversationId,
+    });
+  }, [sendMessage, currentConversationId]);
+
   // Toggle RAG projects accordion - memoized
   const handleToggleRagProjects = useCallback(() => {
     toggleAccordion('ragProjects');
@@ -1266,7 +1281,7 @@ function App() {
                 {msg.isError ? '⚠️' : (msg.agentEmoji || '🐙')}
               </div>
               <div className="message-content">
-                <MessageContent content={msg.content} html={msg.html} isStreaming={msg.isStreaming} citations={msg.citations} messageId={msg.id} />
+                <MessageContent content={msg.content} html={msg.html} isStreaming={msg.isStreaming} citations={msg.citations} messageId={msg.id} onReplyRequest={handleMessageReply} replies={messageReplies[msg.id] || []} />
                 {msg.role === 'assistant' && msg.citations && !msg.isStreaming && (
                   <CitationPanel citations={msg.citations} messageId={msg.id} />
                 )}
@@ -1287,7 +1302,7 @@ function App() {
           {msg.agentName && msg.role === 'assistant' && (
             <div className="agent-name">{msg.agentName}</div>
           )}
-          <MessageContent content={msg.content} html={msg.html} isStreaming={msg.isStreaming} citations={msg.citations} messageId={msg.id} />
+          <MessageContent content={msg.content} html={msg.html} isStreaming={msg.isStreaming} citations={msg.citations} messageId={msg.id} onReplyRequest={handleMessageReply} replies={messageReplies[msg.id] || []} />
           {msg.role === 'assistant' && msg.citations && !msg.isStreaming && (
             <CitationPanel citations={msg.citations} messageId={msg.id} />
           )}

@@ -81,11 +81,10 @@ export class WebChannel implements Channel {
       conversationId?: string;
       requestId?: string;
       sessionId?: string;
-      messageId?: string;
+      messageId?: string; // Client-provided ID for deduplication
       attachments?: Array<{ name: string; type: string; size: number; data: string }>;
       reasoningEffort?: 'medium' | 'high' | 'xhigh';
       messageType?: string; // e.g., 'deep_research'
-      messageId?: string; // Client-provided ID for deduplication
     };
 
     if (msg.type === 'message' && (msg.content || msg.attachments?.length) && this.messageHandler) {

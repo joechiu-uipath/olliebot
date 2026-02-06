@@ -34,6 +34,8 @@ export function createMessageHandler(deps) {
     setExpandedAccordions,
     setRagProjects,
     setRagIndexingProgress,
+    // Message reply state
+    setMessageReplies,
     // Eval state setters
     getEvalJobId,
     setEvalProgress,
@@ -140,6 +142,12 @@ export function createMessageHandler(deps) {
         break;
       case 'eval_error':
         handleEvalError(data);
+        break;
+      case 'message_update':
+        handleMessageUpdate(data);
+        break;
+      case 'message-reply-added':
+        handleMessageReplyAdded(data);
         break;
       default:
         // Unknown message type - ignore
@@ -537,5 +545,36 @@ export function createMessageHandler(deps) {
       setEvalProgress?.(null);
       setEvalLoading?.(false);
     }
+  }
+
+  // ============================================================================
+  // Message Update/Reply Handlers (for applet revisions)
+  // ============================================================================
+
+  function handleMessageUpdate(data) {
+    if (!isForCurrentConversation(data.conversationId)) return;
+
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.id === data.messageId
+          ? {
+              ...m,
+              content: data.content !== undefined ? data.content : m.content,
+              ...(data.html !== undefined && { html: data.html }),
+              revisionCount: (m.revisionCount || 0) + 1,
+            }
+          : m
+      )
+    );
+  }
+
+  function handleMessageReplyAdded(data) {
+    if (!isForCurrentConversation(data.conversationId)) return;
+    if (!setMessageReplies) return;
+
+    setMessageReplies((prev) => ({
+      ...prev,
+      [data.messageId]: [...(prev[data.messageId] || []), data.reply],
+    }));
   }
 }

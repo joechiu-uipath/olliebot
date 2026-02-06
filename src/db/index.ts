@@ -127,6 +127,21 @@ export interface EmbeddingRepository {
   deleteBySource(source: string): void;
 }
 
+export interface MessageReply {
+  id: string;
+  messageId: string;
+  role: 'user' | 'assistant';
+  content: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface MessageReplyRepository {
+  findByMessageId(messageId: string): MessageReply[];
+  create(reply: MessageReply): void;
+  delete(id: string): void;
+}
+
 // ============================================================================
 // Database Implementation
 // ============================================================================
@@ -141,6 +156,7 @@ class Database {
   messages: MessageRepository;
   tasks: TaskRepository;
   embeddings: EmbeddingRepository;
+  messageReplies: MessageReplyRepository;
 
   constructor(dbPath: string) {
     this.dbPath = dbPath.endsWith('.json') ? dbPath : dbPath.replace(/\.[^.]+$/, '') + '.json';
@@ -150,6 +166,7 @@ class Database {
     this.messages = this.createMessageRepository();
     this.tasks = this.createTaskRepository();
     this.embeddings = this.createEmbeddingRepository();
+    this.messageReplies = this.createMessageReplyRepository();
   }
 
   async init(): Promise<void> {
@@ -201,6 +218,17 @@ class Database {
         chunkIndex INT,
         content STRING,
         embedding STRING,
+        metadata STRING,
+        createdAt STRING
+      )
+    `);
+
+    alasql(`
+      CREATE TABLE IF NOT EXISTS message_replies (
+        id STRING PRIMARY KEY,
+        messageId STRING,
+        role STRING,
+        content STRING,
         metadata STRING,
         createdAt STRING
       )
@@ -617,6 +645,41 @@ class Database {
 
       deleteBySource: (source: string): void => {
         alasql('DELETE FROM embeddings WHERE source = ?', [source]);
+        this.scheduleSave();
+      },
+    };
+  }
+
+  private createMessageReplyRepository(): MessageReplyRepository {
+    const deserializeReply = (row: Record<string, unknown>): MessageReply => ({
+      id: row.id as string,
+      messageId: row.messageId as string,
+      role: row.role as 'user' | 'assistant',
+      content: row.content as string,
+      metadata: typeof row.metadata === 'string' ? JSON.parse(row.metadata as string) : row.metadata as Record<string, unknown>,
+      createdAt: row.createdAt as string,
+    });
+
+    return {
+      findByMessageId: (messageId: string): MessageReply[] => {
+        const rows = alasql(
+          'SELECT * FROM message_replies WHERE messageId = ? ORDER BY createdAt ASC',
+          [messageId]
+        ) as Array<Record<string, unknown>>;
+        return rows.map(deserializeReply);
+      },
+
+      create: (reply: MessageReply): void => {
+        const row = {
+          ...reply,
+          metadata: JSON.stringify(reply.metadata || {}),
+        };
+        alasql('INSERT INTO message_replies VALUES ?', [row]);
+        this.scheduleSave();
+      },
+
+      delete: (id: string): void => {
+        alasql('DELETE FROM message_replies WHERE id = ?', [id]);
         this.scheduleSave();
       },
     };

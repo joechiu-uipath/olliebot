@@ -945,6 +945,20 @@ export class OllieBotServer {
       });
     }
 
+    // Handle message reply requests (for applet revisions)
+    this.webChannel.onMessageReply(async (messageId, content, conversationId) => {
+      console.log(`[Server] Message reply request for message ${messageId}`);
+      try {
+        await this.supervisor.handleMessageReply(messageId, content, conversationId);
+      } catch (error) {
+        console.error('[Server] Failed to handle message reply:', error);
+        this.webChannel.sendError(
+          'Failed to process message reply',
+          error instanceof Error ? error.message : String(error)
+        );
+      }
+    });
+
     // Listen for task updates and broadcast to frontend
     if (this.taskManager) {
       this.taskManager.on('task:updated', ({ task }) => {

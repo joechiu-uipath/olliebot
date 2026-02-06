@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import HtmlPreview from './HtmlPreview';
+import AppletPreview from './AppletPreview';
 
 /**
  * Code block component with copy button and language header.
@@ -106,9 +107,11 @@ const staticMarkdownComponents = {
 
 /**
  * Factory to create code component for markdown rendering.
- * Only recreated when isStreaming changes.
+ * Supports applet rendering with optional reply props.
  */
-function createCodeComponent(isStreaming) {
+function createCodeComponent(isStreaming, appletProps = {}) {
+  const { messageId, onReplyRequest, replies } = appletProps;
+
   return function CodeComponent({ node, className, children, ...props }) {
     const match = /language-(\w+)/.exec(className || '');
     const language = match ? match[1] : null;
@@ -116,6 +119,20 @@ function createCodeComponent(isStreaming) {
 
     if (isBlock) {
       const codeContent = String(children).replace(/\n$/, '');
+
+      // Check if this is an interactive applet
+      if (language === 'applet' || language === 'interactive') {
+        return (
+          <AppletPreview
+            code={codeContent}
+            isStreaming={isStreaming}
+            messageId={messageId}
+            onReplyRequest={onReplyRequest}
+            replies={replies || []}
+          />
+        );
+      }
+
       if (language === 'html' || language === 'htm') {
         return <HtmlPreview html={codeContent} isStreaming={isStreaming} />;
       }
@@ -129,14 +146,24 @@ function createCodeComponent(isStreaming) {
   };
 }
 
-// Cache for markdown components keyed by isStreaming value
+// Cache for markdown components keyed by isStreaming value (for non-applet use)
 const markdownComponentsCache = new Map();
 
 /**
  * Get markdown components for ReactMarkdown.
- * Caches components to avoid recreating them on every render.
+ * When appletProps are provided, creates fresh components (for messages with applets).
+ * Otherwise, caches components to avoid recreating them on every render.
  */
-export function getMarkdownComponents(isStreaming) {
+export function getMarkdownComponents(isStreaming, appletProps = null) {
+  // If applet props provided, create fresh components (needed for reply callbacks)
+  if (appletProps && (appletProps.messageId || appletProps.onReplyRequest)) {
+    return {
+      ...staticMarkdownComponents,
+      code: createCodeComponent(isStreaming, appletProps),
+    };
+  }
+
+  // Otherwise use cached components
   if (!markdownComponentsCache.has(isStreaming)) {
     markdownComponentsCache.set(isStreaming, {
       ...staticMarkdownComponents,
