@@ -284,6 +284,8 @@ Requirements:
 
 ## Part 4: Networking — Exposing OllieBot to the Internet
 
+> **Deep dive**: See [Cloudflare Tunnel Integration Guide](./cloudflare-tunnel-guide.md) for step-by-step setup instructions, config examples, URL patterns, and security layering with Cloudflare Access.
+
 Both webhook subscriptions (Microsoft Graph, IFTTT) and inbound webhooks require OllieBot to have a publicly accessible HTTPS endpoint. Here are the options.
 
 ### Tunnel / Forwarding Service Comparison
