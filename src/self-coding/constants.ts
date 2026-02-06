@@ -25,6 +25,8 @@ export const AGENT_IDS = {
   PLANNER: 'coding-planner',
   /** Executes individual code changes using modify_frontend_code tool */
   WORKER: 'coding-worker',
+  /** Fixes or refines code changes produced by other coding agents */
+  FIXER: 'coding-fixer',
 } as const;
 
 // ============================================================
