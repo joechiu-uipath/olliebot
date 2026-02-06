@@ -76,19 +76,6 @@ export const PROTECTED_FILES = [
   'package.json',
 ];
 
-/**
- * Allowed file extensions for modification.
- */
-export const ALLOWED_EXTENSIONS = [
-  '.jsx',
-  '.js',
-  '.css',
-  '.html',
-  '.json',
-  '.ts',
-  '.tsx',
-];
-
 // ============================================================
 // BUILD COMMANDS
 // ============================================================
