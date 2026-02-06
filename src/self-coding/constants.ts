@@ -56,8 +56,8 @@ export const BUILD_TIMEOUT_MS = 60_000; // 1 minute
 
 /**
  * Maximum number of coding workers that can run in parallel.
- */
-export const MAX_PARALLEL_WORKERS = 3;
+ * Set to 1 to enforce strictly sequential execution and avoid race conditions.
+export const MAX_PARALLEL_WORKERS = 1;
 
 // ============================================================
 // FILE PATH RESTRICTIONS
