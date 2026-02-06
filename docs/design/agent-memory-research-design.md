@@ -845,5 +845,1170 @@ interface MemoryConfig {
 
 ---
 
+## Part 7: Conversation Search System Design
+
+This section details the design for a `conversation_search` tool, inspired by MemGPT's archival memory search, that enables semantic search across past conversations. The system reuses OllieBot's existing RAG infrastructure (LanceDB + embedding providers).
+
+### 7.1 Overview & Motivation
+
+**Problem**: Agents have no way to search past conversations. When context windows fill up or conversations are archived, valuable context is lost. Users may reference past discussions that the agent cannot recall.
+
+**Solution**: Index conversation messages in a vector database, enabling semantic search across chat history. This complements the memory system (which stores facts) by providing access to the raw conversation context.
+
+**Key Distinction:**
+| Memory System | Conversation Search |
+|---------------|---------------------|
+| Stores extracted facts | Stores raw messages |
+| Compact, curated | Complete history |
+| Always in context | Retrieved on-demand |
+| Agent-curated | Automatic indexing |
+
+### 7.2 Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                    Conversation Search System                        │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  ┌────────────────┐         ┌─────────────────────────────────┐     │
+│  │  Chat Messages │────────→│   Conversation Indexer Service   │     │
+│  │  (AlaSQL DB)   │         │   - Message batching             │     │
+│  └────────────────┘         │   - Chunking strategy            │     │
+│         ↑                   │   - Embedding generation         │     │
+│         │                   └─────────────────────────────────┘     │
+│         │ sync                              │                        │
+│         │                                   ↓                        │
+│  ┌────────────────┐         ┌─────────────────────────────────┐     │
+│  │  Sync Manager  │←────────│      LanceDB Vector Store        │     │
+│  │  - Deletions   │         │   Table: "conversation_vectors"  │     │
+│  │  - Updates     │         │   - Reuses RAG embedding provider│     │
+│  │  - Consistency │         └─────────────────────────────────┘     │
+│  └────────────────┘                         ↑                        │
+│                                             │ search                 │
+│                             ┌─────────────────────────────────┐     │
+│                             │   conversation_search Tool       │     │
+│                             │   - Semantic query              │     │
+│                             │   - Filters (time, conversation)│     │
+│                             │   - Result formatting           │     │
+│                             └─────────────────────────────────┘     │
+│                                                                      │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### 7.3 Vector Schema
+
+Reusing LanceDB infrastructure, create a dedicated table for conversation vectors:
+
+```typescript
+// Location: src/conversation-search/types.ts
+
+interface ConversationVector {
+  // Primary identifier
+  id: string;                      // Format: "{conversationId}:{messageId}:{chunkIndex}"
+
+  // Source references
+  conversationId: string;          // FK to conversations table
+  messageId: string;               // FK to messages table
+  chunkIndex: number;              // Position within message (for long messages)
+
+  // Content
+  text: string;                    // Actual chunk content
+  vector: number[];                // Embedding vector (dimension matches provider)
+
+  // Metadata for filtering & ranking
+  role: 'user' | 'assistant' | 'system' | 'tool';
+  channel: string;                 // 'web', 'console', 'teams'
+  createdAt: string;               // ISO timestamp from message
+  conversationTitle: string;       // For context in results
+
+  // Sync tracking
+  indexedAt: string;               // When this was indexed
+  messageHash: string;             // Hash of content for change detection
+}
+
+interface ConversationSearchIndex {
+  // Metadata about the index
+  version: number;
+  lastSyncAt: string;              // Last full sync timestamp
+  totalVectors: number;
+  embeddingProvider: string;       // Provider used (for re-index detection)
+  embeddingDimensions: number;
+}
+```
+
+### 7.4 Indexing Strategy
+
+#### 7.4.1 Message Chunking
+
+Unlike documents, messages are typically shorter. The chunking strategy differs:
+
+```typescript
+interface ConversationChunkingConfig {
+  // Chunk settings
+  maxChunkSize: number;            // 500 chars (smaller than RAG's 1000)
+  chunkOverlap: number;            // 50 chars
+
+  // Message handling
+  combineShortMessages: boolean;   // Combine adjacent short messages
+  shortMessageThreshold: number;   // Messages under this are combined (100 chars)
+  maxCombinedMessages: number;     // Max messages to combine (5)
+
+  // Role handling
+  includeRoles: ('user' | 'assistant' | 'system' | 'tool')[];
+  excludeToolResults: boolean;     // Tool outputs can be verbose
+
+  // Context enrichment
+  includeConversationTitle: boolean;
+  includeTimestamp: boolean;
+  includePrecedingContext: boolean; // Add previous message for context
+}
+
+// Default configuration
+const DEFAULT_CONFIG: ConversationChunkingConfig = {
+  maxChunkSize: 500,
+  chunkOverlap: 50,
+  combineShortMessages: true,
+  shortMessageThreshold: 100,
+  maxCombinedMessages: 5,
+  includeRoles: ['user', 'assistant'],
+  excludeToolResults: true,
+  includeConversationTitle: true,
+  includeTimestamp: true,
+  includePrecedingContext: true
+};
+```
+
+#### 7.4.2 Indexing Pipeline
+
+```typescript
+// Location: src/conversation-search/indexer.ts
+
+class ConversationIndexer {
+  private lanceStore: LanceStore;
+  private embeddingProvider: EmbeddingProvider;
+  private db: Database;  // AlaSQL reference
+
+  /**
+   * Index a single message (called on new messages)
+   */
+  async indexMessage(message: Message, conversation: Conversation): Promise<void> {
+    // Skip if role excluded
+    if (!this.config.includeRoles.includes(message.role)) return;
+
+    // Skip tool results if configured
+    if (this.config.excludeToolResults && message.role === 'tool') return;
+
+    // Get preceding message for context
+    const precedingMessage = this.config.includePrecedingContext
+      ? await this.db.getMessageBefore(message.conversationId, message.createdAt)
+      : null;
+
+    // Chunk the message
+    const chunks = this.chunkMessage(message, precedingMessage, conversation);
+
+    // Generate embeddings
+    const embeddings = await this.embeddingProvider.embedBatch(
+      chunks.map(c => c.text)
+    );
+
+    // Create vectors
+    const vectors: ConversationVector[] = chunks.map((chunk, i) => ({
+      id: `${conversation.id}:${message.id}:${i}`,
+      conversationId: conversation.id,
+      messageId: message.id,
+      chunkIndex: i,
+      text: chunk.text,
+      vector: embeddings[i],
+      role: message.role,
+      channel: message.channel,
+      createdAt: message.createdAt,
+      conversationTitle: conversation.title,
+      indexedAt: new Date().toISOString(),
+      messageHash: this.hashContent(message.content)
+    }));
+
+    // Upsert to LanceDB
+    await this.lanceStore.upsert('conversation_vectors', vectors);
+  }
+
+  /**
+   * Batch index all unindexed messages
+   */
+  async indexPendingMessages(): Promise<IndexingResult> {
+    const lastSync = await this.getLastSyncTimestamp();
+
+    // Get messages created after last sync
+    const pendingMessages = await this.db.query(`
+      SELECT m.*, c.title as conversationTitle
+      FROM messages m
+      JOIN conversations c ON m.conversationId = c.id
+      WHERE m.createdAt > ?
+        AND c.deletedAt IS NULL
+      ORDER BY m.createdAt ASC
+    `, [lastSync]);
+
+    let indexed = 0;
+    let skipped = 0;
+
+    // Process in batches for efficiency
+    const batches = this.batchMessages(pendingMessages, 50);
+
+    for (const batch of batches) {
+      const chunks: ConversationVector[] = [];
+
+      for (const msg of batch) {
+        const messageChunks = await this.prepareMessageChunks(msg);
+        chunks.push(...messageChunks);
+      }
+
+      if (chunks.length > 0) {
+        const embeddings = await this.embeddingProvider.embedBatch(
+          chunks.map(c => c.text)
+        );
+
+        chunks.forEach((chunk, i) => {
+          chunk.vector = embeddings[i];
+        });
+
+        await this.lanceStore.upsert('conversation_vectors', chunks);
+        indexed += batch.length;
+      }
+    }
+
+    await this.updateLastSyncTimestamp();
+
+    return { indexed, skipped, total: pendingMessages.length };
+  }
+
+  /**
+   * Chunk a message with context
+   */
+  private chunkMessage(
+    message: Message,
+    precedingMessage: Message | null,
+    conversation: Conversation
+  ): ChunkResult[] {
+    const chunks: ChunkResult[] = [];
+    let content = message.content;
+
+    // Add context prefix
+    let prefix = '';
+    if (this.config.includeConversationTitle) {
+      prefix += `[Conversation: ${conversation.title}] `;
+    }
+    if (this.config.includeTimestamp) {
+      prefix += `[${new Date(message.createdAt).toLocaleDateString()}] `;
+    }
+    prefix += `[${message.role}]: `;
+
+    // Add preceding context for better semantic understanding
+    if (precedingMessage && this.config.includePrecedingContext) {
+      const precedingSnippet = precedingMessage.content.slice(0, 100);
+      prefix = `Context: "${precedingSnippet}..." → ${prefix}`;
+    }
+
+    content = prefix + content;
+
+    // Chunk if too long
+    if (content.length <= this.config.maxChunkSize) {
+      chunks.push({ text: content, index: 0 });
+    } else {
+      // Sliding window chunking
+      let start = 0;
+      let index = 0;
+      while (start < content.length) {
+        const end = Math.min(start + this.config.maxChunkSize, content.length);
+        chunks.push({
+          text: content.slice(start, end),
+          index: index++
+        });
+        start = end - this.config.chunkOverlap;
+      }
+    }
+
+    return chunks;
+  }
+}
+```
+
+### 7.5 The `conversation_search` Tool
+
+```typescript
+// Location: src/tools/native/conversation-search.ts
+
+import { NativeTool, ToolInput, ToolResult } from '../types';
+import { ConversationSearchService } from '../../conversation-search/service';
+
+export class ConversationSearchTool implements NativeTool {
+  name = 'conversation_search';
+
+  description = `Search through past conversation history using semantic search.
+Use this tool to:
+- Find previous discussions on a topic
+- Recall what the user said about something
+- Look up decisions or conclusions from past conversations
+- Find context from earlier in a long conversation
+
+Returns relevant message snippets with conversation context.`;
+
+  inputSchema = {
+    type: 'object',
+    properties: {
+      query: {
+        type: 'string',
+        description: 'Natural language search query describing what you want to find'
+      },
+      limit: {
+        type: 'number',
+        description: 'Maximum results to return (default: 5, max: 20)',
+        default: 5
+      },
+      conversationId: {
+        type: 'string',
+        description: 'Optional: limit search to a specific conversation'
+      },
+      timeRange: {
+        type: 'object',
+        description: 'Optional: filter by time range',
+        properties: {
+          start: { type: 'string', description: 'ISO date string' },
+          end: { type: 'string', description: 'ISO date string' }
+        }
+      },
+      roles: {
+        type: 'array',
+        items: { type: 'string', enum: ['user', 'assistant'] },
+        description: 'Optional: filter by message role (default: both)'
+      },
+      minScore: {
+        type: 'number',
+        description: 'Minimum similarity score 0-1 (default: 0.5)',
+        default: 0.5
+      }
+    },
+    required: ['query']
+  };
+
+  constructor(private searchService: ConversationSearchService) {}
+
+  async execute(input: ConversationSearchInput): Promise<ToolResult> {
+    // Validate input
+    if (!input.query || input.query.trim().length === 0) {
+      return {
+        success: false,
+        error: 'Query is required'
+      };
+    }
+
+    const limit = Math.min(input.limit || 5, 20);
+    const minScore = input.minScore ?? 0.5;
+
+    // Perform search
+    const results = await this.searchService.search({
+      query: input.query,
+      limit,
+      minScore,
+      filters: {
+        conversationId: input.conversationId,
+        timeRange: input.timeRange,
+        roles: input.roles || ['user', 'assistant']
+      }
+    });
+
+    if (results.length === 0) {
+      return {
+        success: true,
+        data: {
+          message: 'No relevant conversations found for this query.',
+          results: []
+        }
+      };
+    }
+
+    // Format results for agent consumption
+    const formatted = results.map((r, i) => ({
+      rank: i + 1,
+      score: r.score.toFixed(3),
+      conversation: r.conversationTitle,
+      date: new Date(r.createdAt).toLocaleDateString(),
+      role: r.role,
+      content: r.text,
+      conversationId: r.conversationId,
+      messageId: r.messageId
+    }));
+
+    return {
+      success: true,
+      data: {
+        query: input.query,
+        totalResults: results.length,
+        results: formatted
+      }
+    };
+  }
+}
+
+interface ConversationSearchInput {
+  query: string;
+  limit?: number;
+  conversationId?: string;
+  timeRange?: {
+    start?: string;
+    end?: string;
+  };
+  roles?: ('user' | 'assistant')[];
+  minScore?: number;
+}
+```
+
+### 7.6 Search Service Implementation
+
+```typescript
+// Location: src/conversation-search/service.ts
+
+import { LanceStore } from '../rag-projects/lance-store';
+import { EmbeddingProvider } from '../rag-projects/embedding-providers';
+
+export class ConversationSearchService {
+  private lanceStore: LanceStore;
+  private embeddingProvider: EmbeddingProvider;
+  private indexer: ConversationIndexer;
+
+  constructor(
+    dataDir: string,
+    embeddingProvider: EmbeddingProvider
+  ) {
+    // Use dedicated LanceDB for conversations
+    this.lanceStore = new LanceStore(
+      path.join(dataDir, '.olliebot', 'conversations.lance')
+    );
+    this.embeddingProvider = embeddingProvider;
+    this.indexer = new ConversationIndexer(
+      this.lanceStore,
+      embeddingProvider
+    );
+  }
+
+  async init(): Promise<void> {
+    await this.lanceStore.init();
+
+    // Ensure table exists with schema
+    await this.lanceStore.createTableIfNotExists('conversation_vectors', {
+      id: 'string',
+      conversationId: 'string',
+      messageId: 'string',
+      chunkIndex: 'int',
+      text: 'string',
+      vector: `vector[${this.embeddingProvider.dimensions}]`,
+      role: 'string',
+      channel: 'string',
+      createdAt: 'string',
+      conversationTitle: 'string',
+      indexedAt: 'string',
+      messageHash: 'string'
+    });
+  }
+
+  /**
+   * Semantic search across conversations
+   */
+  async search(options: SearchOptions): Promise<SearchResult[]> {
+    // Generate query embedding
+    const queryEmbedding = await this.embeddingProvider.embed(options.query);
+
+    // Build filter conditions
+    const filters: FilterCondition[] = [];
+
+    if (options.filters?.conversationId) {
+      filters.push({
+        field: 'conversationId',
+        op: '=',
+        value: options.filters.conversationId
+      });
+    }
+
+    if (options.filters?.roles && options.filters.roles.length > 0) {
+      filters.push({
+        field: 'role',
+        op: 'IN',
+        value: options.filters.roles
+      });
+    }
+
+    if (options.filters?.timeRange?.start) {
+      filters.push({
+        field: 'createdAt',
+        op: '>=',
+        value: options.filters.timeRange.start
+      });
+    }
+
+    if (options.filters?.timeRange?.end) {
+      filters.push({
+        field: 'createdAt',
+        op: '<=',
+        value: options.filters.timeRange.end
+      });
+    }
+
+    // Execute vector search
+    const rawResults = await this.lanceStore.search('conversation_vectors', {
+      vector: queryEmbedding,
+      limit: options.limit * 2,  // Over-fetch for deduplication
+      filters
+    });
+
+    // Convert L2 distance to similarity score
+    const scored = rawResults.map(r => ({
+      ...r,
+      score: 1 / (1 + r._distance)  // Convert distance to 0-1 similarity
+    }));
+
+    // Filter by minimum score
+    const filtered = scored.filter(r => r.score >= options.minScore);
+
+    // Deduplicate by messageId (keep highest scoring chunk)
+    const deduped = this.deduplicateByMessage(filtered);
+
+    // Return top results
+    return deduped.slice(0, options.limit);
+  }
+
+  /**
+   * Get search service stats
+   */
+  async getStats(): Promise<ConversationSearchStats> {
+    const vectorCount = await this.lanceStore.count('conversation_vectors');
+    const indexMeta = await this.getIndexMetadata();
+
+    return {
+      totalVectors: vectorCount,
+      lastSyncAt: indexMeta.lastSyncAt,
+      embeddingProvider: indexMeta.embeddingProvider,
+      status: 'ready'
+    };
+  }
+
+  private deduplicateByMessage(results: SearchResult[]): SearchResult[] {
+    const seen = new Map<string, SearchResult>();
+
+    for (const result of results) {
+      const existing = seen.get(result.messageId);
+      if (!existing || result.score > existing.score) {
+        seen.set(result.messageId, result);
+      }
+    }
+
+    return Array.from(seen.values())
+      .sort((a, b) => b.score - a.score);
+  }
+}
+```
+
+### 7.7 Sync Manager: Handling Deletions & Consistency
+
+The critical challenge is keeping the vector index in sync with the source database, especially for deletions.
+
+```typescript
+// Location: src/conversation-search/sync-manager.ts
+
+export class ConversationSyncManager {
+  private lanceStore: LanceStore;
+  private db: Database;
+  private indexer: ConversationIndexer;
+
+  /**
+   * Sync strategies for different scenarios
+   */
+  readonly strategies = {
+    // Real-time: Index as messages arrive
+    REALTIME: 'realtime',
+
+    // Batch: Periodic bulk sync
+    BATCH: 'batch',
+
+    // Hybrid: Real-time for new, batch for cleanup
+    HYBRID: 'hybrid'
+  };
+
+  constructor(
+    lanceStore: LanceStore,
+    db: Database,
+    indexer: ConversationIndexer
+  ) {
+    this.lanceStore = lanceStore;
+    this.db = db;
+    this.indexer = indexer;
+  }
+
+  /**
+   * Handle conversation deletion
+   * Called when user deletes a conversation
+   */
+  async onConversationDeleted(conversationId: string): Promise<void> {
+    console.log(`[ConversationSync] Removing vectors for conversation: ${conversationId}`);
+
+    // Delete all vectors for this conversation
+    await this.lanceStore.delete('conversation_vectors', {
+      field: 'conversationId',
+      op: '=',
+      value: conversationId
+    });
+
+    // Log for audit
+    await this.logSyncEvent({
+      type: 'conversation_deleted',
+      conversationId,
+      vectorsRemoved: 'all',
+      timestamp: new Date().toISOString()
+    });
+  }
+
+  /**
+   * Handle message deletion
+   * Called when individual messages are deleted
+   */
+  async onMessageDeleted(messageId: string): Promise<void> {
+    console.log(`[ConversationSync] Removing vectors for message: ${messageId}`);
+
+    await this.lanceStore.delete('conversation_vectors', {
+      field: 'messageId',
+      op: '=',
+      value: messageId
+    });
+  }
+
+  /**
+   * Handle message edit
+   * Re-index the edited message
+   */
+  async onMessageEdited(messageId: string): Promise<void> {
+    // First, remove old vectors
+    await this.onMessageDeleted(messageId);
+
+    // Fetch updated message
+    const message = await this.db.findMessageById(messageId);
+    if (!message) return;
+
+    const conversation = await this.db.findConversationById(message.conversationId);
+    if (!conversation || conversation.deletedAt) return;
+
+    // Re-index
+    await this.indexer.indexMessage(message, conversation);
+  }
+
+  /**
+   * Full consistency check
+   * Run periodically (e.g., daily) to catch any sync issues
+   */
+  async fullConsistencyCheck(): Promise<ConsistencyReport> {
+    const report: ConsistencyReport = {
+      startedAt: new Date().toISOString(),
+      orphanedVectors: 0,
+      missingVectors: 0,
+      staleVectors: 0,
+      actionsRequired: []
+    };
+
+    // 1. Find orphaned vectors (conversation deleted but vectors remain)
+    const deletedConversations = await this.db.query(`
+      SELECT id FROM conversations WHERE deletedAt IS NOT NULL
+    `);
+
+    for (const conv of deletedConversations) {
+      const orphanCount = await this.lanceStore.count('conversation_vectors', {
+        field: 'conversationId',
+        op: '=',
+        value: conv.id
+      });
+
+      if (orphanCount > 0) {
+        report.orphanedVectors += orphanCount;
+        report.actionsRequired.push({
+          action: 'delete_orphaned',
+          conversationId: conv.id,
+          count: orphanCount
+        });
+      }
+    }
+
+    // 2. Find missing vectors (messages exist but not indexed)
+    const unindexedMessages = await this.db.query(`
+      SELECT m.id, m.conversationId
+      FROM messages m
+      JOIN conversations c ON m.conversationId = c.id
+      WHERE c.deletedAt IS NULL
+        AND m.role IN ('user', 'assistant')
+        AND NOT EXISTS (
+          SELECT 1 FROM conversation_vector_index cvi
+          WHERE cvi.messageId = m.id
+        )
+    `);
+
+    report.missingVectors = unindexedMessages.length;
+    if (unindexedMessages.length > 0) {
+      report.actionsRequired.push({
+        action: 'index_missing',
+        count: unindexedMessages.length
+      });
+    }
+
+    // 3. Find stale vectors (content changed since indexing)
+    const staleVectors = await this.findStaleVectors();
+    report.staleVectors = staleVectors.length;
+
+    report.completedAt = new Date().toISOString();
+    return report;
+  }
+
+  /**
+   * Repair sync issues found in consistency check
+   */
+  async repairSync(report: ConsistencyReport): Promise<RepairResult> {
+    const result: RepairResult = {
+      orphanedDeleted: 0,
+      missingIndexed: 0,
+      staleReindexed: 0
+    };
+
+    for (const action of report.actionsRequired) {
+      switch (action.action) {
+        case 'delete_orphaned':
+          await this.lanceStore.delete('conversation_vectors', {
+            field: 'conversationId',
+            op: '=',
+            value: action.conversationId!
+          });
+          result.orphanedDeleted += action.count!;
+          break;
+
+        case 'index_missing':
+          await this.indexer.indexPendingMessages();
+          result.missingIndexed = action.count!;
+          break;
+
+        case 'reindex_stale':
+          // Re-index stale messages
+          for (const messageId of action.messageIds!) {
+            await this.onMessageEdited(messageId);
+            result.staleReindexed++;
+          }
+          break;
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * Listen for database events
+   * Set up real-time sync hooks
+   */
+  setupEventListeners(): void {
+    // Hook into database events
+    this.db.on('message:created', async (message: Message) => {
+      const conversation = await this.db.findConversationById(message.conversationId);
+      if (conversation && !conversation.deletedAt) {
+        await this.indexer.indexMessage(message, conversation);
+      }
+    });
+
+    this.db.on('message:deleted', async (messageId: string) => {
+      await this.onMessageDeleted(messageId);
+    });
+
+    this.db.on('message:updated', async (message: Message) => {
+      await this.onMessageEdited(message.id);
+    });
+
+    this.db.on('conversation:deleted', async (conversationId: string) => {
+      await this.onConversationDeleted(conversationId);
+    });
+
+    // Also handle soft deletes
+    this.db.on('conversation:soft-deleted', async (conversationId: string) => {
+      await this.onConversationDeleted(conversationId);
+    });
+  }
+}
+
+interface ConsistencyReport {
+  startedAt: string;
+  completedAt?: string;
+  orphanedVectors: number;
+  missingVectors: number;
+  staleVectors: number;
+  actionsRequired: SyncAction[];
+}
+
+interface SyncAction {
+  action: 'delete_orphaned' | 'index_missing' | 'reindex_stale';
+  conversationId?: string;
+  messageIds?: string[];
+  count?: number;
+}
+```
+
+### 7.8 Database Event Integration
+
+Modify the existing database to emit events for sync:
+
+```typescript
+// Location: src/db/index.ts (modifications)
+
+import { EventEmitter } from 'events';
+
+class Database extends EventEmitter {
+  // ... existing code ...
+
+  /**
+   * Soft delete a conversation
+   */
+  async deleteConversation(id: string): Promise<void> {
+    const now = new Date().toISOString();
+
+    await this.query(
+      `UPDATE conversations SET deletedAt = ? WHERE id = ?`,
+      [now, id]
+    );
+
+    // Emit event for sync manager
+    this.emit('conversation:deleted', id);
+    this.emit('conversation:soft-deleted', id);
+  }
+
+  /**
+   * Hard delete a conversation (permanent)
+   */
+  async hardDeleteConversation(id: string): Promise<void> {
+    // Delete messages first
+    const messages = await this.findMessagesByConversationId(id);
+    for (const msg of messages) {
+      this.emit('message:deleted', msg.id);
+    }
+
+    await this.query(`DELETE FROM messages WHERE conversationId = ?`, [id]);
+    await this.query(`DELETE FROM conversations WHERE id = ?`, [id]);
+
+    this.emit('conversation:deleted', id);
+  }
+
+  /**
+   * Create a message with event emission
+   */
+  async createMessage(message: Message): Promise<Message> {
+    // ... existing insert code ...
+
+    // Emit event for real-time indexing
+    this.emit('message:created', message);
+
+    return message;
+  }
+}
+```
+
+### 7.9 Initialization & Integration
+
+```typescript
+// Location: src/index.ts (additions)
+
+import { ConversationSearchService } from './conversation-search/service';
+import { ConversationSyncManager } from './conversation-search/sync-manager';
+import { ConversationSearchTool } from './tools/native/conversation-search';
+
+// In initialization section:
+
+// Initialize conversation search (reuse embedding provider from RAG)
+console.log('[Init] Initializing conversation search service...');
+const conversationSearchService = new ConversationSearchService(
+  process.cwd(),
+  embeddingProvider  // Same provider used for RAG
+);
+await conversationSearchService.init();
+
+// Set up sync manager
+const conversationSyncManager = new ConversationSyncManager(
+  conversationSearchService.getLanceStore(),
+  db,
+  conversationSearchService.getIndexer()
+);
+conversationSyncManager.setupEventListeners();
+
+// Index any pending messages from before sync was set up
+console.log('[Init] Indexing pending conversation messages...');
+const indexResult = await conversationSearchService.indexPendingMessages();
+console.log(`[Init] Indexed ${indexResult.indexed} messages`);
+
+// Register the search tool
+toolRunner.registerNativeTool(new ConversationSearchTool(conversationSearchService));
+
+// Schedule periodic consistency check (optional)
+if (config.conversationSearch?.periodicSync) {
+  setInterval(async () => {
+    const report = await conversationSyncManager.fullConsistencyCheck();
+    if (report.actionsRequired.length > 0) {
+      console.log('[ConversationSync] Repairing sync issues:', report);
+      await conversationSyncManager.repairSync(report);
+    }
+  }, 24 * 60 * 60 * 1000); // Daily
+}
+```
+
+### 7.10 Configuration Options
+
+```typescript
+// Location: src/conversation-search/config.ts
+
+export interface ConversationSearchConfig {
+  // Feature toggle
+  enabled: boolean;
+
+  // Indexing settings
+  indexing: {
+    // Which roles to index
+    roles: ('user' | 'assistant' | 'system' | 'tool')[];
+
+    // Chunking
+    maxChunkSize: number;
+    chunkOverlap: number;
+
+    // Context enrichment
+    includeConversationTitle: boolean;
+    includeTimestamp: boolean;
+    includePrecedingContext: boolean;
+
+    // Batch settings
+    batchSize: number;
+
+    // Exclude patterns (regex)
+    excludePatterns: string[];
+  };
+
+  // Search settings
+  search: {
+    defaultLimit: number;
+    maxLimit: number;
+    defaultMinScore: number;
+
+    // Result formatting
+    maxSnippetLength: number;
+    highlightMatches: boolean;
+  };
+
+  // Sync settings
+  sync: {
+    strategy: 'realtime' | 'batch' | 'hybrid';
+    batchInterval: number;        // ms, for batch strategy
+    consistencyCheckInterval: number;  // ms, 0 to disable
+    autoRepair: boolean;
+  };
+
+  // Storage
+  storage: {
+    // Separate from RAG to avoid conflicts
+    lanceDbPath: string;
+  };
+}
+
+export const DEFAULT_CONFIG: ConversationSearchConfig = {
+  enabled: true,
+
+  indexing: {
+    roles: ['user', 'assistant'],
+    maxChunkSize: 500,
+    chunkOverlap: 50,
+    includeConversationTitle: true,
+    includeTimestamp: true,
+    includePrecedingContext: true,
+    batchSize: 50,
+    excludePatterns: []
+  },
+
+  search: {
+    defaultLimit: 5,
+    maxLimit: 20,
+    defaultMinScore: 0.5,
+    maxSnippetLength: 500,
+    highlightMatches: false
+  },
+
+  sync: {
+    strategy: 'hybrid',
+    batchInterval: 5 * 60 * 1000,     // 5 minutes
+    consistencyCheckInterval: 24 * 60 * 60 * 1000,  // Daily
+    autoRepair: true
+  },
+
+  storage: {
+    lanceDbPath: '.olliebot/conversations.lance'
+  }
+};
+```
+
+### 7.11 API Endpoints (Optional Web Interface)
+
+```typescript
+// Location: src/conversation-search/routes.ts
+
+import { Router } from 'express';
+
+export function createConversationSearchRoutes(
+  searchService: ConversationSearchService,
+  syncManager: ConversationSyncManager
+): Router {
+  const router = Router();
+
+  // Search endpoint
+  router.post('/search', async (req, res) => {
+    try {
+      const { query, limit, conversationId, timeRange, roles, minScore } = req.body;
+
+      const results = await searchService.search({
+        query,
+        limit: limit || 5,
+        minScore: minScore || 0.5,
+        filters: { conversationId, timeRange, roles }
+      });
+
+      res.json({ success: true, results });
+    } catch (error) {
+      res.status(500).json({ success: false, error: error.message });
+    }
+  });
+
+  // Get index stats
+  router.get('/stats', async (req, res) => {
+    const stats = await searchService.getStats();
+    res.json(stats);
+  });
+
+  // Trigger re-index
+  router.post('/reindex', async (req, res) => {
+    const { force } = req.body;
+
+    if (force) {
+      // Clear and rebuild entire index
+      await searchService.clearIndex();
+    }
+
+    const result = await searchService.indexPendingMessages();
+    res.json({ success: true, ...result });
+  });
+
+  // Run consistency check
+  router.post('/consistency-check', async (req, res) => {
+    const report = await syncManager.fullConsistencyCheck();
+    res.json(report);
+  });
+
+  // Repair sync issues
+  router.post('/repair', async (req, res) => {
+    const report = await syncManager.fullConsistencyCheck();
+    const result = await syncManager.repairSync(report);
+    res.json({ report, result });
+  });
+
+  return router;
+}
+```
+
+### 7.12 Implementation Phases
+
+| Phase | Tasks | Duration |
+|-------|-------|----------|
+| **Phase 1: Core Infrastructure** | Create LanceDB table schema, implement basic indexer, create ConversationSearchService | 1 week |
+| **Phase 2: Search Tool** | Implement conversation_search tool, integrate with tool runner, test basic search | 1 week |
+| **Phase 3: Sync Manager** | Implement deletion handling, add database event hooks, create consistency checker | 1 week |
+| **Phase 4: Polish** | Add API endpoints, configuration options, monitoring, documentation | 1 week |
+
+### 7.13 Key Design Decisions
+
+1. **Separate LanceDB Instance**: Conversations use their own LanceDB (`.olliebot/conversations.lance`) separate from RAG projects to avoid conflicts and allow independent scaling.
+
+2. **Same Embedding Provider**: Reuse the RAG embedding provider for consistency and to avoid multiple API costs.
+
+3. **Real-time + Batch Hybrid**: Index messages in real-time as they arrive, but run periodic consistency checks to catch any edge cases.
+
+4. **Soft Delete Awareness**: The system watches for both soft deletes (`deletedAt` set) and hard deletes to maintain sync.
+
+5. **Context Enrichment**: Include conversation title and preceding message context in embeddings to improve semantic search quality.
+
+6. **Deduplication**: When a message is chunked, only return the highest-scoring chunk to avoid duplicate results.
+
+### 7.14 Architecture Diagram
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         Message Lifecycle                                    │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  User Message → Database.createMessage() → emit('message:created')          │
+│                         ↓                              ↓                     │
+│                 [Stored in AlaSQL]          [SyncManager listens]            │
+│                                                        ↓                     │
+│                                              ConversationIndexer             │
+│                                                        ↓                     │
+│                                              EmbeddingProvider.embed()       │
+│                                                        ↓                     │
+│                                              LanceDB.upsert()                │
+│                                                                              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                         Deletion Lifecycle                                   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  User deletes conversation → Database.deleteConversation()                   │
+│                                       ↓                                      │
+│                              emit('conversation:deleted')                    │
+│                                       ↓                                      │
+│                              SyncManager.onConversationDeleted()             │
+│                                       ↓                                      │
+│                              LanceDB.delete(conversationId)                  │
+│                                                                              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                         Search Flow                                          │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  Agent calls conversation_search(query)                                      │
+│           ↓                                                                  │
+│  ConversationSearchService.search()                                          │
+│           ↓                                                                  │
+│  EmbeddingProvider.embed(query)                                              │
+│           ↓                                                                  │
+│  LanceDB.search(vector, filters)                                             │
+│           ↓                                                                  │
+│  Score conversion (L2 → cosine similarity)                                   │
+│           ↓                                                                  │
+│  Deduplicate by messageId                                                    │
+│           ↓                                                                  │
+│  Format results for agent                                                    │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## References
+
+### Industry Sources
+- [OpenAI Memory Announcement](https://openai.com/index/memory-and-new-controls-for-chatgpt/)
+- [OpenAI Memory FAQ](https://help.openai.com/en/articles/8590148-memory-faq)
+- [Google Personal Intelligence](https://blog.google/innovation-and-ai/products/gemini-app/personal-intelligence/)
+- [Anthropic Memory Announcement](https://www.anthropic.com/news/memory)
+- [Simon Willison on ChatGPT Memory](https://simonwillison.net/2025/May/21/chatgpt-new-memory/)
+
+### Academic Papers
+1. Park, J.S. et al. (2023). "Generative Agents: Interactive Simulacra of Human Behavior" - [arXiv:2304.03442](https://arxiv.org/abs/2304.03442)
+2. Packer, C. et al. (2023). "MemGPT: Towards LLMs as Operating Systems" - [arXiv:2310.08560](https://arxiv.org/abs/2310.08560)
+3. Xu, Y. et al. (2025). "A-MEM: Agentic Memory for LLM Agents" - [arXiv:2502.12110](https://arxiv.org/abs/2502.12110)
+4. Chhikara, P. et al. (2025). "Mem0: Building Production-Ready AI Agents" - [arXiv:2504.19413](https://arxiv.org/abs/2504.19413)
+
+### Surveys
+- "A Survey on the Memory Mechanism of Large Language Model-based Agents" - ACM TOIS
+- "Memory in the Age of AI Agents: A Survey" - [arXiv:2512.13564](https://arxiv.org/abs/2512.13564)
+- [Agent Memory Paper List (GitHub)](https://github.com/Shichun-Liu/Agent-Memory-Paper-List)
+
+---
+
 *Document created: 2026-02-03*
+*Updated: 2026-02-06 - Added Part 7: Conversation Search System Design*
 *Author: OllieBot Development Team*
