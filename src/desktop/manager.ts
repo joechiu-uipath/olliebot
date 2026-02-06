@@ -3,6 +3,12 @@
  *
  * Manages sandboxed desktop sessions with VNC control.
  * Similar to BrowserSessionManager but for desktop environments.
+ *
+ * Automatically handles:
+ * - Copying setup scripts to temp folder
+ * - Generating dynamic sandbox configuration
+ * - Launching sandbox with VNC server
+ * - Connecting via VNC for screenshots and control
  */
 
 import { exec, spawn, ChildProcess } from 'child_process';
@@ -39,6 +45,7 @@ import { createProvider } from '../browser/strategies/computer-use/providers/ind
 import type { ComputerUseProvider } from '../browser/strategies/computer-use/providers/types';
 
 const execAsync = promisify(exec);
+const fsPromises = fs.promises;
 
 /**
  * Interface for WebChannel-like broadcast capability.
@@ -84,6 +91,7 @@ const DEFAULT_CONFIG: Required<Pick<DesktopSessionManagerConfig, 'defaultSandbox
 export class DesktopSessionManager {
   private sessions: Map<string, DesktopSessionInstance> = new Map();
   private sandboxProcesses: Map<string, ChildProcess> = new Map();
+  private sessionTempDirs: Map<string, string> = new Map(); // session ID -> temp dir path
   private webChannel?: IBroadcaster;
   private config: DesktopSessionManagerConfig;
   private sandboxConfigPath: string;
@@ -91,6 +99,7 @@ export class DesktopSessionManager {
   constructor(config: DesktopSessionManagerConfig = {}) {
     this.config = config;
     this.webChannel = config.webChannel;
+    // Path to source sandbox scripts (in the project)
     this.sandboxConfigPath = config.sandboxConfigPath || path.join(__dirname, '../../sandbox');
   }
 
@@ -322,7 +331,13 @@ export class DesktopSessionManager {
   }
 
   /**
-   * Launches Windows Sandbox.
+   * Launches Windows Sandbox with automatic setup.
+   *
+   * This method:
+   * 1. Creates a temp directory for this session
+   * 2. Copies/generates the VNC setup script
+   * 3. Generates a dynamic .wsb config file
+   * 4. Launches Windows Sandbox
    */
   private async launchWindowsSandbox(sessionId: string, config: SandboxConfig): Promise<void> {
     // Check if Windows Sandbox is available
@@ -330,24 +345,222 @@ export class DesktopSessionManager {
       throw new Error('Windows Sandbox is only available on Windows');
     }
 
-    // Path to .wsb config file
-    const wsbPath = config.configPath || path.join(this.sandboxConfigPath, 'desktop-sandbox.wsb');
+    // Create temp directory for this session
+    const tempDir = path.join(os.tmpdir(), `olliebot-desktop-${sessionId}`);
+    await fsPromises.mkdir(tempDir, { recursive: true });
+    this.sessionTempDirs.set(sessionId, tempDir);
 
-    if (!fs.existsSync(wsbPath)) {
-      throw new Error(`Sandbox config not found: ${wsbPath}`);
-    }
+    console.log(`[Desktop] Created temp directory: ${tempDir}`);
+
+    // Copy or generate the VNC setup script
+    const setupScriptPath = path.join(tempDir, 'setup-vnc.ps1');
+    await this.generateVNCSetupScript(setupScriptPath, config);
+
+    console.log(`[Desktop] Generated setup script: ${setupScriptPath}`);
+
+    // Generate the .wsb config file
+    const wsbPath = path.join(tempDir, 'sandbox.wsb');
+    await this.generateWindowsSandboxConfig(wsbPath, tempDir, config);
+
+    console.log(`[Desktop] Generated sandbox config: ${wsbPath}`);
 
     // Launch Windows Sandbox
-    const process = spawn('WindowsSandbox.exe', [wsbPath], {
+    console.log(`[Desktop] Launching Windows Sandbox...`);
+    const sandboxProcess = spawn('cmd.exe', ['/c', 'start', '', 'WindowsSandbox.exe', wsbPath], {
       detached: true,
       stdio: 'ignore',
+      shell: true,
     });
 
-    process.unref();
-    this.sandboxProcesses.set(sessionId, process);
+    sandboxProcess.unref();
+    this.sandboxProcesses.set(sessionId, sandboxProcess);
 
-    // Windows Sandbox takes time to start
-    await new Promise((resolve) => setTimeout(resolve, 15000));
+    // Windows Sandbox takes time to start and run the setup script
+    // The setup script installs VNC which takes additional time
+    console.log(`[Desktop] Waiting for sandbox to initialize (this may take 30-60 seconds)...`);
+    await new Promise((resolve) => setTimeout(resolve, 20000));
+  }
+
+  /**
+   * Generates the VNC setup PowerShell script.
+   */
+  private async generateVNCSetupScript(scriptPath: string, config: SandboxConfig): Promise<void> {
+    const vncPassword = 'olliebot'; // Default password, could be made configurable
+    const vncPort = 5900;
+
+    const script = `
+# OllieBot Desktop Sandbox Setup Script
+# Auto-generated for session
+
+$ErrorActionPreference = "Stop"
+$LogFile = "C:\\OllieBot\\setup.log"
+
+function Write-Log {
+    param([string]$Message)
+    $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    "$timestamp - $Message" | Out-File -FilePath $LogFile -Append -Force
+    Write-Host $Message
+}
+
+# Create log directory
+New-Item -ItemType Directory -Force -Path "C:\\OllieBot" | Out-Null
+Write-Log "Starting OllieBot Desktop Sandbox setup..."
+
+# Create working directory
+$WorkDir = "C:\\OllieBot\\temp"
+New-Item -ItemType Directory -Force -Path $WorkDir | Out-Null
+
+# Configure firewall for VNC
+Write-Log "Configuring firewall for VNC..."
+try {
+    New-NetFirewallRule -DisplayName "OllieBot VNC" -Direction Inbound -Protocol TCP -LocalPort ${vncPort} -Action Allow -ErrorAction SilentlyContinue
+    Write-Log "Firewall configured"
+} catch {
+    Write-Log "Firewall configuration failed: $_"
+}
+
+# Download and install TightVNC
+Write-Log "Downloading TightVNC..."
+
+$vncUrl = "https://www.tightvnc.com/download/2.8.81/tightvnc-2.8.81-gpl-setup-64bit.msi"
+$vncInstaller = "$WorkDir\\tightvnc.msi"
+
+try {
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    Invoke-WebRequest -Uri $vncUrl -OutFile $vncInstaller -UseBasicParsing
+    Write-Log "TightVNC downloaded successfully"
+} catch {
+    Write-Log "Failed to download TightVNC: $_"
+
+    # Fallback: Try alternative download method
+    Write-Log "Trying alternative download method..."
+    try {
+        $webClient = New-Object System.Net.WebClient
+        $webClient.DownloadFile($vncUrl, $vncInstaller)
+        Write-Log "TightVNC downloaded via WebClient"
+    } catch {
+        Write-Log "All download methods failed: $_"
+        exit 1
+    }
+}
+
+Write-Log "Installing TightVNC..."
+
+# Silent install with predefined password
+$arguments = @(
+    "/i", $vncInstaller,
+    "/quiet",
+    "/norestart",
+    "SET_USEVNCAUTHENTICATION=1",
+    "VALUE_OF_USEVNCAUTHENTICATION=1",
+    "SET_PASSWORD=1",
+    "VALUE_OF_PASSWORD=${vncPassword}",
+    "SET_USECONTROLAUTHENTICATION=1",
+    "VALUE_OF_USECONTROLAUTHENTICATION=0",
+    "SET_ACCEPTHTTPCONNECTIONS=1",
+    "VALUE_OF_ACCEPTHTTPCONNECTIONS=0",
+    "SET_RUNCONTROLINTERFACE=1",
+    "VALUE_OF_RUNCONTROLINTERFACE=0"
+)
+
+$process = Start-Process -FilePath "msiexec.exe" -ArgumentList $arguments -Wait -PassThru
+
+if ($process.ExitCode -eq 0) {
+    Write-Log "TightVNC installed successfully"
+} else {
+    Write-Log "TightVNC installation failed with exit code: $($process.ExitCode)"
+}
+
+# Wait for service to be available
+Start-Sleep -Seconds 3
+
+# Start VNC server service
+Write-Log "Starting VNC server..."
+$vncService = Get-Service -Name "tvnserver" -ErrorAction SilentlyContinue
+if ($vncService) {
+    if ($vncService.Status -ne "Running") {
+        Start-Service -Name "tvnserver"
+        Write-Log "TightVNC service started"
+    } else {
+        Write-Log "TightVNC service already running"
+    }
+} else {
+    # Try to start the server directly
+    $vncExe = "C:\\Program Files\\TightVNC\\tvnserver.exe"
+    if (Test-Path $vncExe) {
+        Start-Process -FilePath $vncExe -ArgumentList "-start" -NoNewWindow
+        Write-Log "TightVNC server started directly"
+    } else {
+        Write-Log "TightVNC executable not found at $vncExe"
+    }
+}
+
+# Create ready signal file
+$readyFile = "C:\\OllieBot\\ready.json"
+$readyData = @{
+    status = "ready"
+    vnc_port = ${vncPort}
+    timestamp = (Get-Date -Format "o")
+    hostname = $env:COMPUTERNAME
+} | ConvertTo-Json
+
+$readyData | Out-File -FilePath $readyFile -Encoding UTF8
+Write-Log "Ready signal written to $readyFile"
+
+Write-Log "=== Setup Complete ==="
+Write-Log "VNC should be available on port ${vncPort}"
+Write-Log "Password: ${vncPassword}"
+
+# Keep the PowerShell window open for debugging (optional)
+# Start-Sleep -Seconds 3600
+`;
+
+    await fsPromises.writeFile(scriptPath, script, 'utf-8');
+  }
+
+  /**
+   * Generates the Windows Sandbox .wsb configuration file.
+   */
+  private async generateWindowsSandboxConfig(
+    wsbPath: string,
+    hostFolder: string,
+    config: SandboxConfig
+  ): Promise<void> {
+    const memory = config.memory || 4096;
+    const enableGpu = config.enableGpu !== false ? 'Enable' : 'Disable';
+    const enableNetwork = config.enableNetwork !== false ? 'Enabled' : 'Disabled';
+
+    // Windows Sandbox config XML
+    const wsbConfig = `<Configuration>
+  <!-- OllieBot Desktop Sandbox Configuration -->
+  <!-- Auto-generated - do not edit -->
+
+  <!-- Map the setup scripts folder into the sandbox -->
+  <MappedFolders>
+    <MappedFolder>
+      <HostFolder>${hostFolder}</HostFolder>
+      <SandboxFolder>C:\\OllieBot</SandboxFolder>
+      <ReadOnly>false</ReadOnly>
+    </MappedFolder>
+  </MappedFolders>
+
+  <!-- Enable networking for VNC access -->
+  <Networking>${enableNetwork}</Networking>
+
+  <!-- Enable GPU for better performance -->
+  <vGPU>${enableGpu}</vGPU>
+
+  <!-- Memory allocation -->
+  <MemoryInMB>${memory}</MemoryInMB>
+
+  <!-- Run setup script on logon -->
+  <LogonCommand>
+    <Command>powershell.exe -ExecutionPolicy Bypass -File C:\\OllieBot\\setup-vnc.ps1</Command>
+  </LogonCommand>
+</Configuration>
+`;
+
+    await fsPromises.writeFile(wsbPath, wsbConfig, 'utf-8');
   }
 
   /**
@@ -410,7 +623,7 @@ export class DesktopSessionManager {
   }
 
   /**
-   * Stops a sandbox.
+   * Stops a sandbox and cleans up resources.
    */
   private async stopSandbox(sessionId: string): Promise<void> {
     const process = this.sandboxProcesses.get(sessionId);
@@ -423,10 +636,17 @@ export class DesktopSessionManager {
     try {
       switch (sandboxType) {
         case 'windows-sandbox':
-          // Windows Sandbox closes when the window is closed
-          // Try to terminate the process
+          // Windows Sandbox - try to close it gracefully
+          // The sandbox window needs to be closed
           if (process) {
             process.kill();
+          }
+          // Also try to close via taskkill (more reliable)
+          try {
+            await execAsync('taskkill /IM WindowsSandbox.exe /F').catch(() => {});
+            await execAsync('taskkill /IM WindowsSandboxClient.exe /F').catch(() => {});
+          } catch {
+            // Ignore - sandbox may already be closed
           }
           break;
 
@@ -455,6 +675,18 @@ export class DesktopSessionManager {
     }
 
     this.sandboxProcesses.delete(sessionId);
+
+    // Clean up temp directory
+    const tempDir = this.sessionTempDirs.get(sessionId);
+    if (tempDir) {
+      try {
+        await fsPromises.rm(tempDir, { recursive: true, force: true });
+        console.log(`[Desktop] Cleaned up temp directory: ${tempDir}`);
+      } catch (error) {
+        console.warn(`[Desktop] Failed to clean up temp directory: ${error}`);
+      }
+      this.sessionTempDirs.delete(sessionId);
+    }
   }
 
   /**
