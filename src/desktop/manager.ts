@@ -13,9 +13,14 @@
 
 import { exec, spawn, ChildProcess } from 'child_process';
 import { promisify } from 'util';
+import { fileURLToPath } from 'url';
+import { dirname } from 'path';
 import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 import type {
   DesktopSession,
@@ -41,8 +46,8 @@ import {
 } from './events';
 
 // Import Computer Use provider factory (reuse from browser module)
-import { createProvider } from '../browser/strategies/computer-use/providers/index';
-import type { ComputerUseProvider } from '../browser/strategies/computer-use/providers/types';
+import { createComputerUseProvider } from '../browser/strategies/computer-use/providers/index';
+import type { ComputerUseProvider } from '../browser/types';
 
 const execAsync = promisify(exec);
 const fsPromises = fs.promises;
@@ -163,7 +168,7 @@ export class DesktopSessionManager {
 
       // Set up Computer Use provider if configured
       if (config.computerUseProvider) {
-        const provider = createProvider(config.computerUseProvider as ComputerUseProvider);
+        const provider = createComputerUseProvider(config.computerUseProvider as ComputerUseProvider);
         if (provider && provider.isAvailable()) {
           session.setComputerUseProvider(provider);
           console.log(`[Desktop] Computer Use provider set: ${config.computerUseProvider}`);

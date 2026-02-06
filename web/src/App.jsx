@@ -3,8 +3,9 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { Virtuoso } from 'react-virtuoso';
 import { useWebSocket } from './hooks/useWebSocket';
 
-import { BrowserSessions } from './components/BrowserSessions';
+import { ComputerUseSessions } from './components/ComputerUseSessions';
 import { BrowserPreview } from './components/BrowserPreview';
+import { DesktopPreview } from './components/DesktopPreview';
 import RAGProjects from './components/RAGProjects';
 import { CitationPanel } from './components/CitationPanel';
 import { PDFViewerModal } from './components/PDFViewerModal';
@@ -55,8 +56,7 @@ function App() {
     skills: false,
     mcps: false,
     tools: false,
-    browserSessions: false,
-    desktopSessions: false,
+    computerUse: false,
     ragProjects: false,
   });
   const [agentTasks, setAgentTasks] = useState([]);
@@ -195,6 +195,11 @@ function App() {
     setSelectedBrowserSessionId,
     setClickMarkers,
     setExpandedAccordions,
+    // Desktop session state setters
+    setDesktopSessions,
+    setDesktopScreenshots,
+    setSelectedDesktopSessionId,
+    setDesktopClickMarkers,
     setRagProjects,
     setRagIndexingProgress,
     // Eval state (shared WebSocket, no separate connection needed)
@@ -1076,10 +1081,6 @@ function App() {
 
   // Note: Eval mode handlers are now in useEvalMode hook (App.Eval.jsx)
 
-  // Handle browser session selection - memoized
-  const handleSelectBrowserSession = useCallback((sessionId) => {
-    setSelectedBrowserSessionId(sessionId);
-  }, []);
 
   // Close browser preview
   const handleCloseBrowserPreview = useCallback(() => {
@@ -1101,14 +1102,18 @@ function App() {
     sendMessage({ type: 'browser-action', action: 'close', sessionId });
   }, [sendMessage]);
 
-  // Toggle browser sessions accordion - memoized
-  const handleToggleBrowserSessions = useCallback(() => {
-    toggleAccordion('browserSessions');
+  // Toggle computer use accordion - memoized
+  const handleToggleComputerUse = useCallback(() => {
+    toggleAccordion('computerUse');
   }, [toggleAccordion]);
 
-  // Select desktop session for preview - memoized
-  const handleSelectDesktopSession = useCallback((sessionId) => {
-    setSelectedDesktopSessionId(sessionId);
+  // Select session for preview - routes to browser or desktop based on kind
+  const handleSelectSession = useCallback((sessionId, kind) => {
+    if (kind === 'desktop') {
+      setSelectedDesktopSessionId(sessionId);
+    } else {
+      setSelectedBrowserSessionId(sessionId);
+    }
   }, []);
 
   // Close desktop preview
@@ -1131,10 +1136,6 @@ function App() {
     sendMessage({ type: 'desktop-action', action: 'close', sessionId });
   }, [sendMessage]);
 
-  // Toggle desktop sessions accordion - memoized
-  const handleToggleDesktopSessions = useCallback(() => {
-    toggleAccordion('desktopSessions');
-  }, [toggleAccordion]);
 
   // Toggle RAG projects accordion - memoized
   const handleToggleRagProjects = useCallback(() => {
@@ -1767,26 +1768,18 @@ function App() {
               )}
             </div>
 
-            {/* Browser Sessions Accordion - always visible */}
-            <BrowserSessions
-              sessions={browserSessions}
-              screenshots={browserScreenshots}
-              selectedSessionId={selectedBrowserSessionId}
-              onSelectSession={handleSelectBrowserSession}
-              onCloseSession={handleCloseBrowserSession}
-              expanded={expandedAccordions.browserSessions}
-              onToggle={handleToggleBrowserSessions}
-            />
-
-            {/* Desktop Sessions Accordion - always visible */}
-            <DesktopSessions
-              sessions={desktopSessions}
-              screenshots={desktopScreenshots}
-              selectedSessionId={selectedDesktopSessionId}
-              onSelectSession={handleSelectDesktopSession}
-              onCloseSession={handleCloseDesktopSession}
-              expanded={expandedAccordions.desktopSessions}
-              onToggle={handleToggleDesktopSessions}
+            {/* Computer Use Sessions Accordion - browser + desktop */}
+            <ComputerUseSessions
+              browserSessions={browserSessions}
+              desktopSessions={desktopSessions}
+              browserScreenshots={browserScreenshots}
+              desktopScreenshots={desktopScreenshots}
+              selectedSessionId={selectedBrowserSessionId || selectedDesktopSessionId}
+              onSelectSession={handleSelectSession}
+              onCloseBrowserSession={handleCloseBrowserSession}
+              onCloseDesktopSession={handleCloseDesktopSession}
+              expanded={expandedAccordions.computerUse}
+              onToggle={handleToggleComputerUse}
             />
           </div>
           </>
