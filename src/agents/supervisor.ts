@@ -17,8 +17,10 @@ import { getDb } from '../db/index.js';
 import type { WebChannel } from '../channels/web.js';
 import type { ToolEvent } from '../tools/types.js';
 import { formatToolResultBlocks } from '../utils/index.js';
+import { logSystemPrompt } from '../utils/prompt-logger.js';
 import type { CitationSource, StoredCitationData } from '../citations/types.js';
 import { DEEP_RESEARCH_WORKFLOW_ID, AGENT_IDS } from '../deep-research/constants.js';
+import { SELF_CODING_WORKFLOW_ID, AGENT_IDS as CODING_AGENT_IDS } from '../self-coding/constants.js';
 import { getMessageEventService } from '../services/message-event-service.js';
 
 export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAgent {
@@ -47,7 +49,7 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
       },
       capabilities: {
         canSpawnAgents: true,
-        canAccessTools: ['*'],
+        canAccessTools: ['*', '!read_frontend_code', '!modify_frontend_code', '!check_frontend_code'], // Exclude self-coding tools - must delegate to coding-lead
         canUseChannels: ['*'],
         maxConcurrentTasks: 10,
       },
@@ -168,6 +170,11 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
     let unsubscribeTool: (() => void) | undefined;
     if (this.toolRunner) {
       unsubscribeTool = this.toolRunner.onToolEvent((event) => {
+        // Only emit events for tools THIS agent called (filter by callerId)
+        if (event.callerId && event.callerId !== this.identity.id) {
+          return; // This event is for a different agent
+        }
+
         const webChannel = channel as WebChannel;
         const messageEventService = getMessageEventService();
         messageEventService.setWebChannel(webChannel);
@@ -192,6 +199,9 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
 
       const systemPrompt = this.buildSystemPrompt();
       const tools = this.getToolsForLLM();
+
+      // Log system prompt to file for debugging
+      logSystemPrompt(this.identity.name, systemPrompt);
 
       // Build initial messages, including image attachments and messageType
       let llmMessages: LLMMessage[] = [
@@ -267,8 +277,9 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
           // Check if LLM requested tool use
           if (response.toolUse && response.toolUse.length > 0) {
             // Execute requested tools with citation extraction
+            // Pass this.identity.id as callerId so tool events are attributed to this agent only
             const toolRequests = response.toolUse.map((tu) =>
-              this.toolRunner!.createRequest(tu.id, tu.name, tu.input)
+              this.toolRunner!.createRequest(tu.id, tu.name, tu.input, undefined, this.identity.id)
             );
 
             const { results, citations } = await this.toolRunner.executeToolsWithCitations(toolRequests);
@@ -313,15 +324,18 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
                 this.saveAssistantMessage(message.channel, fullResponse.trim(), reasoningMode);
               }
 
-              console.log(`[${this.identity.name}] Delegating to ${delegationParams.type} for message ${message.id}`);
+              // Delegation logging handled by handleDelegationFromTool
+
+              // Unsubscribe from tool events BEFORE delegating
+              // This prevents duplicate tool events when the sub-agent uses the same toolRunner
+              if (unsubscribeTool) {
+                unsubscribeTool();
+                unsubscribeTool = undefined; // Prevent double unsubscribe in finally block
+              }
 
               // Perform the delegation
               await this.handleDelegationFromTool(delegationParams, message, channel);
 
-              // Clean up and return - delegation takes over
-              if (unsubscribeTool) {
-                unsubscribeTool();
-              }
               return;
             }
 
@@ -408,11 +422,7 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
       const delegation = JSON.parse(delegationJson.trim());
       const { type, mission, customName, customEmoji, rationale } = delegation;
 
-      // Log agent selection rationale
-      console.log(`[${this.identity.name}] Agent Selection:`);
-      console.log(`  Type: ${type}`);
-      console.log(`  Rationale: ${rationale || 'Not provided'}`);
-      console.log(`  Mission: ${mission}`);
+      console.log(`[${this.identity.name}] Delegating to ${type}`);
 
       // Spawn appropriate agent (pass type explicitly for prompt loading)
       const agentId = await this.spawnAgent(
@@ -497,11 +507,7 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
     const { type, mission, customName, customEmoji, rationale } = params;
 
     try {
-      // Log agent selection rationale
-      console.log(`[${this.identity.name}] Agent Selection (via tool):`);
-      console.log(`  Type: ${type}`);
-      console.log(`  Rationale: ${rationale || 'Not provided'}`);
-      console.log(`  Mission: ${mission}`);
+      console.log(`[${this.identity.name}] Delegating to ${type}`);
 
       // Spawn appropriate agent (pass type explicitly for prompt loading)
       const agentId = await this.spawnAgent(
@@ -636,9 +642,26 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
       agent.setWorkflowId(DEEP_RESEARCH_WORKFLOW_ID);
     }
 
+    // Set workflow context for self-coding agents
+    if (type === CODING_AGENT_IDS.LEAD) {
+      agent.setWorkflowId(SELF_CODING_WORKFLOW_ID);
+    }
+
     // Pass the tool runner to worker agents so they can use MCP, skills, and native tools
     if (this.toolRunner) {
       agent.setToolRunner(this.toolRunner);
+    }
+
+    // Pass the skill manager to worker agents so they can see and use skills
+    // Note: Workers do NOT inherit excludedSkillSources - they have full access to skills
+    if (this.skillManager) {
+      agent.setSkillManager(this.skillManager);
+    }
+
+    // Set allowed skills if this agent type has restrictions
+    const allowedSkills = this.agentRegistry.getAllowedSkillsForSpecialist(type);
+    if (allowedSkills) {
+      agent.setAllowedSkills(allowedSkills);
     }
 
     // Pass the RAG data manager to worker agents
@@ -649,8 +672,6 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
     await agent.init();
     this.subAgents.set(agent.identity.id, agent);
     this.agentRegistry.registerAgent(agent);
-
-    console.log(`[${this.identity.name}] Spawned ${agent.identity.emoji} ${agent.identity.name} (type: ${type}, prompt: ${systemPrompt.length} chars)`);
 
     return agent.identity.id;
   }
@@ -713,8 +734,7 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
         break;
       }
       case 'status_update': {
-        // Just log for now
-        console.log(`[${this.identity.name}] Status from ${comm.fromAgent}:`, comm.payload);
+        // Status updates from sub-agents - no logging needed
         break;
       }
     }

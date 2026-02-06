@@ -328,7 +328,7 @@ export class RAGProjectService extends EventEmitter {
             try {
               fileSummary = await this.summarizationProvider.summarize(
                 combinedText,
-                'Summarize this document content in 2-3 sentences. Focus on the main topics and key information.'
+                'Summarize this document content in 1-2 sentences. Focus on the main topics and key information.'
               );
             } catch (error) {
               console.warn(`[RAGProjects] Failed to summarize ${relativePath}:`, error);
@@ -398,7 +398,7 @@ export class RAGProjectService extends EventEmitter {
           try {
             manifest.summary = await this.summarizationProvider.summarize(
               fileSummaries,
-              'Summarize this collection of document summaries into a cohesive overview in 3-5 sentences. Describe what this project contains and its main themes.'
+              'Summarize this collection of document summaries into a cohesive overview in 2-3 sentences. Describe what this project contains and its main themes.'
             );
           } catch (error) {
             console.warn(`[RAGProjects] Failed to generate project summary:`, error);

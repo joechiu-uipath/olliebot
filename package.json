@@ -9,6 +9,7 @@
   ],
   "scripts": {
     "dev:server": "nodemon --watch src --watch .env -e ts,json --exec \"tsx --inspect src/index.ts\"",
+    "dev:server-proxy": "cross-env HTTP_PROXY=http://127.0.0.1:8888 HTTPS_PROXY=http://127.0.0.1:8888 NODE_TLS_REJECT_UNAUTHORIZED=0 nodemon --watch src --watch .env -e ts,json --exec \"tsx --inspect src/index.ts\"",
     "dev:console": "tsx src/index.ts console",
     "dev:web": "pnpm --filter olliebot-web dev",
     "dev:tui": "pnpm --filter olliebot-tui dev",
@@ -51,6 +52,7 @@
     "@types/ws": "^8.5.12",
     "@vitejs/plugin-react": "^4.3.2",
     "concurrently": "^8.2.2",
+    "cross-env": "^7.0.3",
     "nodemon": "^3.1.0",
     "tsx": "^4.19.1",
     "typescript": "^5.6.2",

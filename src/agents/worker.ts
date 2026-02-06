@@ -13,6 +13,7 @@ import type { LLMMessage } from '../llm/types.js';
 import { getDb } from '../db/index.js';
 import type { WebChannel } from '../channels/web.js';
 import { formatToolResultBlocks } from '../utils/index.js';
+import { logSystemPrompt } from '../utils/prompt-logger.js';
 import type { CitationSource, CitationSourceType, StoredCitationData } from '../citations/types.js';
 import { SUB_AGENT_TIMEOUT_MS } from '../deep-research/constants.js';
 import { getMessageEventService } from '../services/message-event-service.js';
@@ -66,7 +67,6 @@ export class WorkerAgent extends AbstractAgent {
 
   async init(): Promise<void> {
     await super.init();
-    console.log(`[${this.identity.name}] Worker initialized - ${this.config.mission || 'awaiting task'}`);
   }
 
   async handleMessage(message: Message): Promise<void> {
@@ -184,12 +184,32 @@ export class WorkerAgent extends AbstractAgent {
     // Citation tracking - sources collected from tool executions
     const collectedSources: CitationSource[] = [];
 
-    console.log(`[${this.identity.name}] Starting task (${tools.length} tools)`);
+    // Log tools and skills info
+    const toolInfo = tools.length < 5
+      ? `tools: ${tools.map(t => t.name).join(', ')}`
+      : `${tools.length} tools`;
+    // Get skills filtered by allowedSkills if set
+    let skills = this.skillManager?.getAllMetadata() || [];
+    const allowedSkillIds = this.getAllowedSkills();
+    if (allowedSkillIds && allowedSkillIds.length > 0) {
+      skills = skills.filter(s => allowedSkillIds.includes(s.id));
+    }
+    const skillInfo = skills.length === 0
+      ? ''
+      : skills.length < 5
+        ? `, skills: ${skills.map(s => s.id).join(', ')}`
+        : `, ${skills.length} skills`;
+    console.log(`[${this.identity.name}] Starting task (${toolInfo}${skillInfo})`);
 
     // Setup tool event broadcasting and persistence via MessageEventService
     let unsubscribeTool: (() => void) | undefined;
     if (this.toolRunner) {
       unsubscribeTool = this.toolRunner.onToolEvent((event) => {
+        // Only emit events for tools THIS agent called (filter by callerId)
+        if (event.callerId && event.callerId !== this.identity.id) {
+          return; // This event is for a different agent
+        }
+
         const webChannel = channel as WebChannel;
         const messageEventService = getMessageEventService();
         messageEventService.setWebChannel(webChannel);
@@ -219,6 +239,9 @@ export class WorkerAgent extends AbstractAgent {
       const systemPrompt = this.buildSystemPrompt(
         `Your mission: ${mission}\n\nYou have access to tools including MCP servers, skills, and native tools. Use them to complete your mission.`
       );
+
+      // Log system prompt to file for debugging
+      logSystemPrompt(this.identity.name, systemPrompt);
 
       // Build initial messages
       let llmMessages: LLMMessage[] = [
@@ -258,22 +281,29 @@ export class WorkerAgent extends AbstractAgent {
 
         const llmDuration = Date.now() - llmStartTime;
         const toolCount = response.toolUse?.length || 0;
-        console.log(`[${this.identity.name}] LLM (${llmDuration}ms) → ${toolCount > 0 ? `${toolCount} tool(s)` : 'done'}`);
+        const toolNames = response.toolUse?.map(t => t.name).join(', ') || '';
+        // Log LLM response: duration, whether it requested tools or finished with text
+        if (toolCount > 0) {
+          console.log(`[${this.identity.name}] LLM response (${llmDuration}ms): requesting ${toolCount} tool(s): ${toolNames}`);
+        } else {
+          console.log(`[${this.identity.name}] LLM response (${llmDuration}ms): text complete (no tool calls)`);
+        }
 
         // Check if LLM requested tool use
         if (response.toolUse && response.toolUse.length > 0) {
           // Execute requested tools with citation extraction
+          // Pass this.identity.id as callerId so tool events are attributed to this agent only
           const toolRequests = response.toolUse.map((tu) =>
-            this.toolRunner!.createRequest(tu.id, tu.name, tu.input)
+            this.toolRunner!.createRequest(tu.id, tu.name, tu.input, undefined, this.identity.id)
           );
 
           const { results, citations } = await this.toolRunner!.executeToolsWithCitations(toolRequests);
 
-          // Log tool results concisely
+          // Log tool execution results
           for (const result of results) {
             const status = result.success ? '✓' : '✗';
             const info = result.success ? `${result.durationMs}ms` : result.error;
-            console.log(`[${this.identity.name}] ${status} ${result.toolName} (${info})`);
+            console.log(`[${this.identity.name}] Tool executed: ${status} ${result.toolName} (${info})`);
           }
 
           // Collect citations from this execution
@@ -290,9 +320,13 @@ export class WorkerAgent extends AbstractAgent {
             const delegationConfig = this.agentRegistry.getDelegationConfigForSpecialist(this.agentType);
 
             if (delegationConfig.canDelegate) {
-              console.log(`[${this.identity.name}] Processing ${delegateResults.length} delegation(s) in parallel`);
+              // Unsubscribe from tool events BEFORE delegating to sub-agents
+              // This prevents duplicate tool events when sub-agents use the same toolRunner
+              if (unsubscribeTool) {
+                unsubscribeTool();
+              }
 
-              // Process all delegations in parallel
+              // Process all delegations sequentially (one at a time to avoid file conflicts)
               const delegationPromises = delegateResults.map(async (delegateResult, idx) => {
                 const delegationParams = delegateResult.output as {
                   type: string;
@@ -357,7 +391,25 @@ export class WorkerAgent extends AbstractAgent {
                 }
               }
 
-              console.log(`[${this.identity.name}] All ${delegateResults.length} delegation(s) completed`);
+              // Re-subscribe to tool events after delegations complete
+              // (this worker may execute more tools in subsequent iterations)
+              if (this.toolRunner) {
+                unsubscribeTool = this.toolRunner.onToolEvent((event) => {
+                  // Only emit events for tools THIS agent called (filter by callerId)
+                  if (event.callerId && event.callerId !== this.identity.id) {
+                    return; // This event is for a different agent
+                  }
+                  const webChannel = channel as WebChannel;
+                  const messageEventService = getMessageEventService();
+                  messageEventService.setWebChannel(webChannel);
+                  messageEventService.emitToolEvent(event, this.conversationId, channel.id, {
+                    id: this.identity.id,
+                    name: this.identity.name,
+                    emoji: this.identity.emoji,
+                    type: this.agentType,
+                  }, this.turnId || undefined);
+                });
+              }
             } else {
               console.warn(`[${this.identity.name}] Agent type '${this.agentType}' cannot delegate`);
             }
@@ -449,10 +501,7 @@ export class WorkerAgent extends AbstractAgent {
   ): Promise<string> {
     const { type, mission, rationale, customName, customEmoji } = params;
 
-    console.log(`[${this.identity.name}] Delegating to sub-agent:`);
-    console.log(`  Type: ${type}`);
-    console.log(`  Rationale: ${rationale || 'Not provided'}`);
-    console.log(`  Mission: ${mission.substring(0, 100)}...`);
+    console.log(`[${this.identity.name}] Delegating to ${type}`);
 
     if (!this.agentRegistry) {
       throw new Error('Agent registry not available for delegation');
@@ -498,19 +547,26 @@ export class WorkerAgent extends AbstractAgent {
       subAgent.setWorkflowId(this.currentWorkflowId);
     }
 
-    // Pass tool runner and RAG manager
+    // Pass tool runner, skill manager, and RAG manager
     if (this.toolRunner) {
       subAgent.setToolRunner(this.toolRunner);
+    }
+    if (this.skillManager) {
+      subAgent.setSkillManager(this.skillManager);
     }
     if (this.ragDataManager) {
       subAgent.setRagDataManager(this.ragDataManager);
     }
 
+    // Set allowed skills if this agent type has restrictions
+    const allowedSkills = this.agentRegistry.getAllowedSkillsForSpecialist(type);
+    if (allowedSkills) {
+      subAgent.setAllowedSkills(allowedSkills);
+    }
+
     await subAgent.init();
     this.subAgents.set(subAgent.identity.id, subAgent);
     this.agentRegistry.registerAgent(subAgent);
-
-    console.log(`[${this.identity.name}] Spawned sub-agent ${subAgent.identity.emoji} ${subAgent.identity.name} (${subAgent.identity.id})`);
 
     // Emit delegation event via MessageEventService (broadcasts AND persists)
     const webChannel = channel as WebChannel;
@@ -662,8 +718,7 @@ export class WorkerAgent extends AbstractAgent {
         break;
       }
       case 'status_update': {
-        // Log status updates from sub-agents
-        console.log(`[${this.identity.name}] Sub-agent status: ${JSON.stringify(comm.payload)}`);
+        // Status updates from sub-agents - no logging needed
         break;
       }
     }

@@ -4,6 +4,7 @@ import { createServer, type Server } from 'http';
 import { WebSocketServer } from 'ws';
 import { setupVoiceProxy } from './voice-proxy.js';
 import type { SupervisorAgent } from '../agents/types.js';
+import { getAgentRegistry } from '../agents/index.js';
 import { WebChannel } from '../channels/index.js';
 import { getDb } from '../db/index.js';
 import { isWellKnownConversation, getWellKnownConversationMeta } from '../db/well-known-conversations.js';
@@ -367,6 +368,16 @@ export class OllieBotServer {
           }
         }
 
+        // 9. Agent metadata (for UI display, collapse settings, etc.)
+        const registry = getAgentRegistry();
+        const agentTemplates = registry.getSpecialistTemplates().map(t => ({
+          type: t.type,
+          name: t.identity.name,
+          emoji: t.identity.emoji,
+          description: t.identity.description,
+          collapseResponseByDefault: t.collapseResponseByDefault || false,
+        }));
+
         res.json({
           modelCapabilities,
           conversations,
@@ -376,6 +387,7 @@ export class OllieBotServer {
           mcps,
           tools: { builtin, user, mcp },
           ragProjects,
+          agentTemplates,
         });
       } catch (error) {
         console.error('[API] Startup data fetch failed:', error);

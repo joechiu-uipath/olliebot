@@ -28,6 +28,8 @@ export interface SpecialistTemplate {
   delegation?: AgentDelegationConfig;
   /** Whether the agent's response should be collapsed by default in the UI */
   collapseResponseByDefault?: boolean;
+  /** Whitelist of skill IDs this agent can use (if set, restricts to only these skills) */
+  allowedSkills?: string[];
 }
 
 /** Default tool exclusions for all specialists (supervisor-only tools) */
@@ -171,6 +173,95 @@ const SPECIALIST_TEMPLATES: SpecialistTemplate[] = [
     },
     collapseResponseByDefault: true, // Collapse reviewer responses in UI
   },
+  // ============================================================================
+  // SELF-CODING AGENTS (Frontend Self-Modification)
+  // ============================================================================
+  {
+    type: 'coding-lead',
+    identity: {
+      name: 'Coding Lead',
+      emoji: '👨‍💻',
+      role: 'specialist',
+      description: 'Orchestrates frontend code modifications, validates builds, and commits changes',
+    },
+    canAccessTools: [
+      'delegate', // Can delegate to coding-planner and coding-fixer
+      'check_frontend_code', // To validate build after changes
+    ],
+    delegation: {
+      canDelegate: true,
+      allowedDelegates: ['coding-planner', 'coding-fixer'], // Workers go through planner
+      restrictedToWorkflow: null,
+      supervisorCanInvoke: true,
+    },
+    // No skills - coding-lead delegates to planner/worker who have the skills
+  },
+  {
+    type: 'coding-planner',
+    identity: {
+      name: 'Coding Planner',
+      emoji: '📐',
+      role: 'specialist',
+      description: 'Analyzes frontend modification requests, creates change plans, and delegates to workers',
+    },
+    canAccessTools: [
+      'read_skill', // To read skill instructions (e.g., frontend-modifier)
+      'read_frontend_code', // Read-only access to understand current state
+      'delegate', // Can delegate to coding-worker
+    ],
+    delegation: {
+      canDelegate: true,
+      allowedDelegates: ['coding-worker'],
+      restrictedToWorkflow: 'self-coding',
+      supervisorCanInvoke: false, // Only invocable by coding-lead
+    },
+    collapseResponseByDefault: true,
+    allowedSkills: ['frontend-modifier'], // Only frontend-modifier skill, not docx/pdf/pptx
+  },
+  {
+    type: 'coding-worker',
+    identity: {
+      name: 'Coding Worker',
+      emoji: '🔧',
+      role: 'specialist',
+      description: 'Executes individual code changes using the modify_frontend_code tool',
+    },
+    canAccessTools: [
+      'read_skill', // To read skill instructions if needed
+      'read_frontend_code', // To verify file state before/after changes
+      'modify_frontend_code', // Write access for creating, editing, deleting files
+    ],
+    delegation: {
+      canDelegate: false,
+      allowedDelegates: [],
+      restrictedToWorkflow: 'self-coding',
+      supervisorCanInvoke: false, // Only invocable by coding-planner
+    },
+    collapseResponseByDefault: true,
+    allowedSkills: ['frontend-modifier'], // Only frontend-modifier skill, not docx/pdf/pptx
+  },
+  {
+    type: 'coding-fixer',
+    identity: {
+      name: 'Coding Fixer',
+      emoji: '🔨',
+      role: 'specialist',
+      description: 'Fixes build errors in frontend code, focusing on syntax issues like mismatched tags and brackets',
+    },
+    canAccessTools: [
+      'read_frontend_code', // To examine files with errors
+      'modify_frontend_code', // To fix the errors
+      'check_frontend_code', // To verify fixes work
+    ],
+    delegation: {
+      canDelegate: false,
+      allowedDelegates: [],
+      restrictedToWorkflow: 'self-coding',
+      supervisorCanInvoke: false, // Only invocable by coding-lead
+    },
+    collapseResponseByDefault: true,
+    allowedSkills: ['frontend-modifier'], // Only frontend-modifier skill, not docx/pdf/pptx
+  },
 ];
 
 export class AgentRegistry {
@@ -306,6 +397,15 @@ export class AgentRegistry {
   getDelegationConfigForSpecialist(type: string): AgentDelegationConfig {
     const template = this.specialists.get(type);
     return template?.delegation || DEFAULT_DELEGATION_CONFIG;
+  }
+
+  /**
+   * Get allowed skills for a specialist type (whitelist)
+   * Returns null if no restrictions (agent can use all skills)
+   */
+  getAllowedSkillsForSpecialist(type: string): string[] | null {
+    const template = this.specialists.get(type);
+    return template?.allowedSkills || null;
   }
 
   /**

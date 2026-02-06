@@ -16,7 +16,6 @@ import { OllieBotServer } from './server/index.js';
 import { MCPClient } from './mcp/index.js';
 import type { MCPServerConfig } from './mcp/types.js';
 import { SkillManager } from './skills/index.js';
-import { A2UIManager } from './a2ui/index.js';
 import {
   RAGProjectService,
   GoogleEmbeddingProvider,
@@ -40,6 +39,9 @@ import {
   DelegateTool,
   QueryRAGProjectTool,
   SpeakTool,
+  ReadFrontendCodeTool,
+  ModifyFrontendCodeTool,
+  CheckFrontendCodeTool,
 } from './tools/index.js';
 import { TaskManager } from './tasks/index.js';
 import { MemoryService } from './memory/index.js';
@@ -285,10 +287,6 @@ async function main(): Promise<void> {
   const skillManager = new SkillManager(CONFIG.skillsDir);
   await skillManager.init();
 
-  // Initialize A2UI Manager
-  console.log('[Init] Initializing A2UI manager...');
-  const a2uiManager = new A2UIManager();
-
   // Initialize RAG Project Service (folder-based RAG with vector storage)
   let ragProjectService: RAGProjectService | null = null;
   const embeddingProvider = createEmbeddingProvider();
@@ -389,8 +387,14 @@ async function main(): Promise<void> {
   }
 
   // Skill tools (for Agent Skills spec)
-  toolRunner.registerNativeTool(new ReadSkillTool(CONFIG.skillsDir));
-  toolRunner.registerNativeTool(new RunSkillScriptTool(CONFIG.skillsDir));
+  toolRunner.registerNativeTool(new ReadSkillTool(skillManager));
+  toolRunner.registerNativeTool(new RunSkillScriptTool(skillManager));
+
+  // Self-modifying code tools (for frontend code modification)
+  toolRunner.registerNativeTool(new ReadFrontendCodeTool());
+  toolRunner.registerNativeTool(new ModifyFrontendCodeTool());
+  toolRunner.registerNativeTool(new CheckFrontendCodeTool());
+  console.log('[Init] Frontend code tools enabled (read + modify + check)');
 
   // Initialize Browser Session Manager
   console.log('[Init] Initializing browser session manager...');
@@ -462,6 +466,8 @@ async function main(): Promise<void> {
   supervisor.setToolRunner(toolRunner);
   supervisor.setMemoryService(memoryService);
   supervisor.setSkillManager(skillManager);
+  // Exclude builtin skills from supervisor - these are for specialists only
+  supervisor.setExcludedSkillSources(['builtin']);
 
   // Set RAG data manager on supervisor (if RAG service is available)
   if (ragProjectService) {

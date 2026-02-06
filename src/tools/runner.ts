@@ -201,6 +201,7 @@ export class ToolRunner {
       source: request.source,
       parameters: request.parameters,
       timestamp: new Date(),
+      callerId: request.callerId,
     });
 
     let result: ToolResult;
@@ -248,6 +249,7 @@ export class ToolRunner {
       endTime: result.endTime,
       durationMs: result.durationMs,
       timestamp: new Date(),
+      callerId: request.callerId,
     });
 
     return result;
@@ -385,12 +387,14 @@ export class ToolRunner {
 
   /**
    * Create a tool request from LLM tool_use block
+   * @param callerId - ID of the agent making this request (for event filtering)
    */
   createRequest(
     toolUseId: string,
     toolName: string,
     parameters: Record<string, unknown>,
-    groupId?: string
+    groupId?: string,
+    callerId?: string
   ): ToolRequest {
     const { source } = this.parseToolName(toolName);
     return {
@@ -399,6 +403,7 @@ export class ToolRunner {
       source,
       parameters,
       groupId,
+      callerId,
     };
   }
 }

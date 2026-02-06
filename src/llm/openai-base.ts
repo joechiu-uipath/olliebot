@@ -79,6 +79,9 @@ export abstract class OpenAIBaseProvider implements LLMProvider {
             await new Promise(resolve => setTimeout(resolve, backoffMs));
             continue;
           }
+
+          // Exhausted retries - throw error since we've already consumed the body
+          throw lastError;
         }
 
         return response;

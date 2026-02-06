@@ -37,6 +37,8 @@ export abstract class AbstractAgent implements BaseAgent {
   protected ragDataManager: RagDataManager | null = null;
   private ragDataCache: string | null = null;
   private ragDataCacheTime = 0;
+  private excludedSkillSources: Array<'builtin' | 'user'> = [];
+  private allowedSkills: string[] | null = null; // Whitelist of skill IDs (takes precedence over excludedSkillSources)
 
   constructor(config: AgentConfig, llmService: LLMService) {
     this.config = config;
@@ -64,7 +66,6 @@ export abstract class AbstractAgent implements BaseAgent {
    */
   setToolRunner(runner: ToolRunner): void {
     this.toolRunner = runner;
-    console.log(`[${this.identity.name}] Tool runner configured with ${runner.getToolsForLLM().length} tools`);
   }
 
   /**
@@ -80,10 +81,6 @@ export abstract class AbstractAgent implements BaseAgent {
    */
   setSkillManager(manager: SkillManager): void {
     this.skillManager = manager;
-    const skillCount = manager.getAllMetadata().length;
-    if (skillCount > 0) {
-      console.log(`[${this.identity.name}] Skill manager configured with ${skillCount} skills`);
-    }
   }
 
   /**
@@ -92,6 +89,30 @@ export abstract class AbstractAgent implements BaseAgent {
    */
   setRagDataManager(manager: RagDataManager): void {
     this.ragDataManager = manager;
+  }
+
+  /**
+   * Set skill sources to exclude from this agent's system prompt
+   * Used to prevent supervisor from accessing specialist-only skills
+   */
+  setExcludedSkillSources(sources: Array<'builtin' | 'user'>): void {
+    this.excludedSkillSources = sources;
+  }
+
+  /**
+   * Set allowed skills for this agent (whitelist by skill ID)
+   * Takes precedence over excludedSkillSources
+   * Used to restrict coding agents to only frontend-modifier skill
+   */
+  setAllowedSkills(skillIds: string[]): void {
+    this.allowedSkills = skillIds;
+  }
+
+  /**
+   * Get allowed skills for this agent
+   */
+  getAllowedSkills(): string[] | null {
+    return this.allowedSkills;
   }
 
   /**
@@ -175,11 +196,10 @@ export abstract class AbstractAgent implements BaseAgent {
 
   registerChannel(channel: Channel): void {
     this.channels.set(channel.id, channel);
-    console.log(`[${this.identity.name}] Registered channel: ${channel.id}`);
   }
 
   async init(): Promise<void> {
-    console.log(`[${this.identity.name}] Initialized - ${this.identity.description}`);
+    // Initialization complete - no log needed, task start will log
   }
 
   async shutdown(): Promise<void> {
@@ -238,9 +258,6 @@ export abstract class AbstractAgent implements BaseAgent {
   }
 
   async receiveFromAgent(comm: AgentCommunication): Promise<void> {
-    console.log(
-      `[${this.identity.name}] Received ${comm.type} from agent ${comm.fromAgent}`
-    );
     await this.handleAgentCommunication(comm);
   }
 
@@ -309,14 +326,11 @@ export abstract class AbstractAgent implements BaseAgent {
       }
     }
 
-    // Add available tools info if we have a tool runner
+    // Add citation guidelines when tools are available
+    // (Tool definitions are passed via the API's structured 'tools' parameter, not in system prompt)
     if (this.toolRunner) {
       const tools = this.getToolsForLLM();
       if (tools.length > 0) {
-        const toolSummary = this.summarizeTools(tools);
-        prompt += `\n\n## Available Tools\n\nYou have access to ${tools.length} tools. USE THEM to complete tasks:\n\n${toolSummary}`;
-
-        // Add citation guidelines when tools are available
         const citationService = initializeCitationServiceSync(getDefaultExtractors());
         prompt += citationService.getCitationGuidelines();
       }
@@ -324,8 +338,12 @@ export abstract class AbstractAgent implements BaseAgent {
 
     // Add skill information per Agent Skills spec (progressive disclosure)
     if (this.skillManager) {
-      const skillInstructions = this.skillManager.getSkillUsageInstructions();
-      const skillsXml = this.skillManager.getSkillsForSystemPrompt();
+      // Determine filtering: allowedSkills (whitelist) takes precedence over excludedSkillSources
+      const excludeSources = this.excludedSkillSources.length > 0 ? this.excludedSkillSources : undefined;
+      const allowedIds = this.allowedSkills;
+
+      const skillInstructions = this.skillManager.getSkillUsageInstructions(excludeSources, allowedIds || undefined);
+      const skillsXml = this.skillManager.getSkillsForSystemPrompt(excludeSources, allowedIds || undefined);
 
       if (skillInstructions && skillsXml) {
         prompt += `\n\n${skillInstructions}\n\n${skillsXml}`;
@@ -338,41 +356,6 @@ export abstract class AbstractAgent implements BaseAgent {
     }
 
     return prompt;
-  }
-
-  /**
-   * Create a summary of available tools for the system prompt
-   */
-  private summarizeTools(tools: LLMTool[]): string {
-    // Group tools by category
-    const categories: Record<string, LLMTool[]> = {
-      mcp: [],
-      native: [],
-    };
-
-    for (const tool of tools) {
-      if (tool.name.startsWith('mcp.')) {
-        // MCP tools (format: mcp.serverId__toolName)
-        categories.mcp.push(tool);
-      } else {
-        // Native tools (no prefix) and user tools (user. prefix)
-        categories.native.push(tool);
-      }
-    }
-
-    const parts: string[] = [];
-
-    if (categories.mcp.length > 0) {
-      const mcpSummary = categories.mcp.slice(0, 10).map(t => `- ${t.name}: ${t.description?.substring(0, 100) || 'No description'}`).join('\n');
-      parts.push(`**MCP Tools (${categories.mcp.length} available):**\n${mcpSummary}${categories.mcp.length > 10 ? `\n... and ${categories.mcp.length - 10} more` : ''}`);
-    }
-
-    if (categories.native.length > 0) {
-      const nativeSummary = categories.native.map(t => `- ${t.name}: ${t.description?.substring(0, 100) || 'No description'}`).join('\n');
-      parts.push(`**Native Tools (${categories.native.length} available):**\n${nativeSummary}`);
-    }
-
-    return parts.join('\n\n');
   }
 
   /**
@@ -484,6 +467,7 @@ export interface AgentRegistry {
   findSpecialistTypeByName(name: string): string | undefined;
   loadAgentPrompt(type: string): string;
   getToolAccessForSpecialist(type: string): string[];
+  getAllowedSkillsForSpecialist(type: string): string[] | null;
   // Delegation methods
   getDelegationConfigForSpecialist(type: string): import('./types.js').AgentDelegationConfig;
   canDelegate(sourceAgentType: string, targetAgentType: string, currentWorkflowId: string | null): boolean;

@@ -191,30 +191,29 @@ const MessageContent = memo(function MessageContent({ content, html = false, isS
 // (Strict Mode unmounts/remounts component, so refs don't persist)
 let appInitialLoadDone = false;
 
-// Agent types that should have their responses collapsed by default (module-level constant)
-const COLLAPSE_BY_DEFAULT_AGENT_TYPES = new Set([
-  'research-worker',
-  'research-reviewer',
-]);
-
-// Map display names to agent type IDs (for legacy messages without agentType)
-const AGENT_NAME_TO_TYPE = {
-  'Research Worker': 'research-worker',
-  'Research Reviewer': 'research-reviewer',
-  'Deep Research Lead': 'deep-research-lead',
-};
-
 // Helper function to check if an agent type should collapse by default
-function shouldCollapseByDefault(agentType, agentName) {
-  if (agentType && COLLAPSE_BY_DEFAULT_AGENT_TYPES.has(agentType)) {
-    return true;
+// Uses agentTemplates data from backend (passed as parameter)
+function shouldCollapseByDefault(agentType, agentName, agentTemplates) {
+  if (!agentTemplates || agentTemplates.length === 0) {
+    return false; // No templates loaded yet
   }
-  if (agentName) {
-    const mappedType = AGENT_NAME_TO_TYPE[agentName];
-    if (mappedType && COLLAPSE_BY_DEFAULT_AGENT_TYPES.has(mappedType)) {
+
+  // Check by agentType first
+  if (agentType) {
+    const template = agentTemplates.find(t => t.type === agentType);
+    if (template?.collapseResponseByDefault) {
       return true;
     }
   }
+
+  // Fall back to matching by display name (for legacy messages without agentType)
+  if (agentName) {
+    const template = agentTemplates.find(t => t.name === agentName);
+    if (template?.collapseResponseByDefault) {
+      return true;
+    }
+  }
+
   return false;
 }
 
@@ -286,7 +285,6 @@ function App() {
   const [attachments, setAttachments] = useState([]);
   const [isDragOver, setIsDragOver] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
-  const [pendingInteraction, setPendingInteraction] = useState(null);
 
   // Sidebar state
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -319,6 +317,9 @@ function App() {
   // RAG projects state
   const [ragProjects, setRagProjects] = useState([]);
   const [ragIndexingProgress, setRagIndexingProgress] = useState({}); // { projectId: { status, ... } }
+
+  // Agent templates metadata (fetched from backend for collapse settings, display names, etc.)
+  const [agentTemplates, setAgentTemplates] = useState([]);
 
   // Actions menu state
   const [openMenuId, setOpenMenuId] = useState(null);
@@ -495,9 +496,6 @@ function App() {
       setIsResponsePending(false);
     } else if (data.type === 'connected') {
       setIsConnected(true);
-    } else if (data.type === 'interaction') {
-      // A2UI interaction request
-      setPendingInteraction(data.request);
     } else if (data.type === 'tool_requested') {
       // Only show tool requests for current conversation
       if (!isForCurrentConversation(data.conversationId)) return;
@@ -518,6 +516,11 @@ function App() {
             parameters: data.parameters,
             status: 'running',
             timestamp: data.timestamp,
+            // Include agent info for attribution
+            agentId: data.agentId,
+            agentName: data.agentName,
+            agentEmoji: data.agentEmoji,
+            agentType: data.agentType,
           },
         ];
       });
@@ -808,6 +811,11 @@ function App() {
       setRagProjects(ragProjectsData);
     } else {
       setRagProjects([]);
+    }
+
+    // Agent templates (for collapse settings, display names, etc.)
+    if (data.agentTemplates) {
+      setAgentTemplates(data.agentTemplates);
     }
   }, []);
 
@@ -1407,17 +1415,6 @@ function App() {
     sendMessage({ type: 'action', action, data, conversationId: currentConversationId });
   };
 
-  const handleInteractionResponse = (response) => {
-    if (!pendingInteraction) return;
-    sendMessage({
-      type: 'interaction-response',
-      requestId: pendingInteraction.id,
-      conversationId: currentConversationId,
-      ...response,
-    });
-    setPendingInteraction(null);
-  };
-
   // Run a task immediately
   const handleRunTask = async (taskId) => {
     let success = false;
@@ -1784,6 +1781,15 @@ function App() {
           </div>
           {expandedTools.has(msg.id) && (
             <div className="tool-details">
+              {(msg.agentName || msg.agentEmoji) && (
+                <div className="tool-details-section">
+                  <div className="tool-details-label">Called By</div>
+                  <div className="tool-details-agent">
+                    {msg.agentEmoji && <span className="tool-agent-emoji">{msg.agentEmoji}</span>}
+                    {msg.agentName && <span className="tool-agent-name">{msg.agentName}</span>}
+                  </div>
+                </div>
+              )}
               {msg.parameters && Object.keys(msg.parameters).length > 0 && (
                 <div className="tool-details-section">
                   <div className="tool-details-label">Parameters</div>
@@ -1837,8 +1843,8 @@ function App() {
       );
     }
 
-    if (shouldCollapseByDefault(msg.agentType, msg.agentName)) {
-      // Collapsible agent message (e.g., research-worker)
+    if (shouldCollapseByDefault(msg.agentType, msg.agentName, agentTemplates)) {
+      // Collapsible agent message (uses collapseResponseByDefault from backend)
       return (
         <div className={`collapsible-agent-message ${expandedAgentMessages.has(msg.id) ? 'expanded' : 'collapsed'}`}>
           <div
@@ -2428,88 +2434,6 @@ function App() {
               ↓ Scroll to bottom
             </button>
           )}
-
-          {/* A2UI Interaction Modal */}
-        {pendingInteraction && (
-          <div className="interaction-overlay">
-            <div className="interaction-modal">
-              <h3>{pendingInteraction.title}</h3>
-              <p>{pendingInteraction.message}</p>
-
-              {pendingInteraction.options && (
-                <div className="interaction-options">
-                  {pendingInteraction.options.map((opt) => (
-                    <button
-                      key={opt.id}
-                      className={`interaction-btn ${opt.style || 'secondary'}`}
-                      onClick={() =>
-                        handleInteractionResponse({ selectedOption: opt.id })
-                      }
-                    >
-                      {opt.label}
-                    </button>
-                  ))}
-                </div>
-              )}
-
-              {pendingInteraction.fields && (
-                <form
-                  className="interaction-form"
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    const formData = {};
-                    pendingInteraction.fields.forEach((field) => {
-                      formData[field.id] = e.target[field.id]?.value;
-                    });
-                    handleInteractionResponse({ formData });
-                  }}
-                >
-                  {pendingInteraction.fields.map((field) => (
-                    <div key={field.id} className="form-field">
-                      <label htmlFor={field.id}>{field.label}</label>
-                      {field.type === 'textarea' ? (
-                        <textarea
-                          id={field.id}
-                          name={field.id}
-                          placeholder={field.placeholder}
-                          required={field.required}
-                        />
-                      ) : field.type === 'select' ? (
-                        <select id={field.id} name={field.id} required={field.required}>
-                          {field.options?.map((opt) => (
-                            <option key={opt.value} value={opt.value}>
-                              {opt.label}
-                            </option>
-                          ))}
-                        </select>
-                      ) : (
-                        <input
-                          id={field.id}
-                          name={field.id}
-                          type={field.type}
-                          placeholder={field.placeholder}
-                          required={field.required}
-                        />
-                      )}
-                    </div>
-                  ))}
-                  <button type="submit" className="interaction-btn primary">
-                    Submit
-                  </button>
-                </form>
-              )}
-
-              <button
-                className="interaction-cancel"
-                onClick={() =>
-                  handleInteractionResponse({ status: 'cancelled' })
-                }
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        )}
 
         {/* Browser Preview Modal */}
         {selectedBrowserSession && (

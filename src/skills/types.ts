@@ -8,6 +8,9 @@
  * and markdown instructions that agents load dynamically.
  */
 
+/** Source of the skill */
+export type SkillSource = 'builtin' | 'user';
+
 /**
  * Skill metadata - loaded at startup for all skills
  * Kept minimal to reduce context usage (~50-100 tokens per skill)
@@ -23,6 +26,8 @@ export interface SkillMetadata {
   filePath: string;
   /** Absolute path to skill directory */
   dirPath: string;
+  /** Source of the skill: 'builtin' or 'user' */
+  source: SkillSource;
 }
 
 /**
