@@ -1,10 +1,11 @@
 // Worker Agent - handles delegated tasks from supervisor
 
 import { v4 as uuid } from 'uuid';
-import { AbstractAgent } from './base-agent.js';
+import { AbstractAgent, type AgentRegistry } from './base-agent.js';
 import type {
   AgentConfig,
   AgentCommunication,
+  AgentIdentity,
 } from './types.js';
 import type { Channel, Message } from '../channels/types.js';
 import type { LLMService } from '../llm/service.js';
@@ -12,21 +13,60 @@ import type { LLMMessage } from '../llm/types.js';
 import { getDb } from '../db/index.js';
 import type { WebChannel } from '../channels/web.js';
 import { formatToolResultBlocks } from '../utils/index.js';
-import type { CitationSource, StoredCitationData } from '../citations/types.js';
+import { logSystemPrompt } from '../utils/prompt-logger.js';
+import type { CitationSource, CitationSourceType, StoredCitationData } from '../citations/types.js';
+import { SUB_AGENT_TIMEOUT_MS } from '../deep-research/constants.js';
+import { getMessageEventService } from '../services/message-event-service.js';
 
 export class WorkerAgent extends AbstractAgent {
   private currentTaskId?: string;
   private parentId: string;
   public conversationId: string | null = null; // Set by supervisor when spawning
+  public turnId: string | null = null; // Set by supervisor when spawning - ID of originating message for this turn
+  private subAgents: Map<string, WorkerAgent> = new Map();
+  private agentType: string; // The type of this agent (e.g., 'deep-research-lead')
+  private currentWorkflowId: string | null = null; // Current workflow context
+  // Map of sub-agent IDs to their result promises
+  private pendingSubAgentResults: Map<string, {
+    resolve: (result: string) => void;
+    reject: (error: Error) => void;
+  }> = new Map();
+  // Collected citations from sub-agents (aggregated when building final response)
+  // Stored in simplified format matching StoredCitationData.sources
+  private subAgentCitations: Array<{
+    subAgentId: string; // Track which sub-agent provided this citation
+    id: string;
+    type: CitationSourceType;
+    toolName: string;
+    uri?: string;
+    title?: string;
+    domain?: string;
+    snippet?: string;
+    pageNumber?: number;
+  }> = [];
 
-  constructor(config: AgentConfig, llmService: LLMService) {
+  constructor(config: AgentConfig, llmService: LLMService, agentType?: string) {
     super(config, llmService);
     this.parentId = config.parentId || '';
+    this.agentType = agentType || 'custom';
+  }
+
+  /**
+   * Set the workflow context for this agent
+   */
+  setWorkflowId(workflowId: string | null): void {
+    this.currentWorkflowId = workflowId;
+  }
+
+  /**
+   * Get the agent type
+   */
+  getAgentType(): string {
+    return this.agentType;
   }
 
   async init(): Promise<void> {
     await super.init();
-    console.log(`[${this.identity.name}] Worker initialized - ${this.config.mission || 'awaiting task'}`);
   }
 
   async handleMessage(message: Message): Promise<void> {
@@ -144,21 +184,44 @@ export class WorkerAgent extends AbstractAgent {
     // Citation tracking - sources collected from tool executions
     const collectedSources: CitationSource[] = [];
 
-    console.log(`[${this.identity.name}] Starting task (${tools.length} tools)`);
+    // Log tools and skills info
+    const toolInfo = tools.length < 5
+      ? `tools: ${tools.map(t => t.name).join(', ')}`
+      : `${tools.length} tools`;
+    // Get skills filtered by allowedSkills if set
+    // Note: allowedSkills=[] means NO skills allowed, allowedSkills=null means ALL skills allowed
+    let skills = this.skillManager?.getAllMetadata() || [];
+    const allowedSkillIds = this.getAllowedSkills();
+    if (allowedSkillIds !== null) {
+      skills = skills.filter(s => allowedSkillIds.includes(s.id));
+    }
+    const skillInfo = skills.length === 0
+      ? ''
+      : skills.length < 5
+        ? `, skills: ${skills.map(s => s.id).join(', ')}`
+        : `, ${skills.length} skills`;
+    console.log(`[${this.identity.name}] Starting task (${toolInfo}${skillInfo})`);
 
-    // Setup tool event broadcasting
+    // Setup tool event broadcasting and persistence via MessageEventService
     let unsubscribeTool: (() => void) | undefined;
     if (this.toolRunner) {
       unsubscribeTool = this.toolRunner.onToolEvent((event) => {
-        const webChannel = channel as WebChannel;
-        if (typeof webChannel.broadcast === 'function') {
-          webChannel.broadcast({
-            ...event,
-            timestamp: event.timestamp.toISOString(),
-            startTime: 'startTime' in event ? event.startTime.toISOString() : undefined,
-            endTime: 'endTime' in event ? event.endTime.toISOString() : undefined,
-          });
+        // Only emit events for tools THIS agent called (filter by callerId)
+        if (event.callerId && event.callerId !== this.identity.id) {
+          return; // This event is for a different agent
         }
+
+        const webChannel = channel as WebChannel;
+        const messageEventService = getMessageEventService();
+        messageEventService.setWebChannel(webChannel);
+
+        // Use centralized service that broadcasts AND persists
+        messageEventService.emitToolEvent(event, this.conversationId, channel.id, {
+          id: this.identity.id,
+          name: this.identity.name,
+          emoji: this.identity.emoji,
+          type: this.agentType,
+        }, this.turnId || undefined);
       });
     }
 
@@ -169,6 +232,7 @@ export class WorkerAgent extends AbstractAgent {
           agentId: this.identity.id,
           agentName: this.identity.name,
           agentEmoji: this.identity.emoji,
+          agentType: this.agentType,
           conversationId: this.conversationId || undefined,
         });
       }
@@ -176,6 +240,9 @@ export class WorkerAgent extends AbstractAgent {
       const systemPrompt = this.buildSystemPrompt(
         `Your mission: ${mission}\n\nYou have access to tools including MCP servers, skills, and native tools. Use them to complete your mission.`
       );
+
+      // Log system prompt to file for debugging
+      logSystemPrompt(this.identity.name, systemPrompt);
 
       // Build initial messages
       let llmMessages: LLMMessage[] = [
@@ -215,27 +282,138 @@ export class WorkerAgent extends AbstractAgent {
 
         const llmDuration = Date.now() - llmStartTime;
         const toolCount = response.toolUse?.length || 0;
-        console.log(`[${this.identity.name}] LLM (${llmDuration}ms) → ${toolCount > 0 ? `${toolCount} tool(s)` : 'done'}`);
+        const toolNames = response.toolUse?.map(t => t.name).join(', ') || '';
+        // Log LLM response: duration, whether it requested tools or finished with text
+        if (toolCount > 0) {
+          console.log(`[${this.identity.name}] LLM response (${llmDuration}ms): requesting ${toolCount} tool(s): ${toolNames}`);
+        } else {
+          console.log(`[${this.identity.name}] LLM response (${llmDuration}ms): text complete (no tool calls)`);
+        }
 
         // Check if LLM requested tool use
         if (response.toolUse && response.toolUse.length > 0) {
           // Execute requested tools with citation extraction
+          // Pass this.identity.id as callerId so tool events are attributed to this agent only
           const toolRequests = response.toolUse.map((tu) =>
-            this.toolRunner!.createRequest(tu.id, tu.name, tu.input)
+            this.toolRunner!.createRequest(tu.id, tu.name, tu.input, undefined, this.identity.id)
           );
 
           const { results, citations } = await this.toolRunner!.executeToolsWithCitations(toolRequests);
 
-          // Log tool results concisely
+          // Log tool execution results
           for (const result of results) {
             const status = result.success ? '✓' : '✗';
             const info = result.success ? `${result.durationMs}ms` : result.error;
-            console.log(`[${this.identity.name}] ${status} ${result.toolName} (${info})`);
+            console.log(`[${this.identity.name}] Tool executed: ${status} ${result.toolName} (${info})`);
           }
 
           // Collect citations from this execution
           if (citations.length > 0) {
             collectedSources.push(...citations);
+          }
+
+          // Check if delegate tool was called - handle sub-agent delegation
+          // Find ALL delegate results (there may be multiple parallel delegations)
+          const delegateResults = results.filter(r => r.toolName === 'delegate' && r.success);
+
+          if (delegateResults.length > 0 && this.agentRegistry) {
+            // Check if this agent is allowed to delegate
+            const delegationConfig = this.agentRegistry.getDelegationConfigForSpecialist(this.agentType);
+
+            if (delegationConfig.canDelegate) {
+              // Unsubscribe from tool events BEFORE delegating to sub-agents
+              // This prevents duplicate tool events when sub-agents use the same toolRunner
+              if (unsubscribeTool) {
+                unsubscribeTool();
+              }
+
+              // Process all delegations sequentially (one at a time to avoid file conflicts)
+              const delegationPromises = delegateResults.map(async (delegateResult, idx) => {
+                const delegationParams = delegateResult.output as {
+                  type: string;
+                  mission: string;
+                  rationale?: string;
+                  customName?: string;
+                  customEmoji?: string;
+                };
+
+                try {
+                  // Validate delegation is allowed
+                  this.agentRegistry!.canDelegate(
+                    this.agentType,
+                    delegationParams.type,
+                    this.currentWorkflowId
+                  );
+
+                  // Perform the delegation to sub-agent
+                  const subAgentResult = await this.delegateToSubAgent(
+                    delegationParams,
+                    originalMessage,
+                    channel
+                  );
+
+                  return {
+                    index: results.indexOf(delegateResult),
+                    success: true,
+                    output: {
+                      delegated: true,
+                      agentType: delegationParams.type,
+                      result: subAgentResult,
+                    },
+                  };
+                } catch (error) {
+                  console.error(`[${this.identity.name}] Delegation ${idx + 1} failed:`, error);
+                  return {
+                    index: results.indexOf(delegateResult),
+                    success: false,
+                    error: String(error),
+                  };
+                }
+              });
+
+              // Wait for all delegations to complete
+              const delegationOutcomes = await Promise.all(delegationPromises);
+
+              // Update results with delegation outcomes
+              for (const outcome of delegationOutcomes) {
+                if (outcome.index >= 0) {
+                  if (outcome.success) {
+                    results[outcome.index] = {
+                      ...results[outcome.index],
+                      output: outcome.output,
+                    };
+                  } else {
+                    results[outcome.index] = {
+                      ...results[outcome.index],
+                      success: false,
+                      error: outcome.error,
+                    };
+                  }
+                }
+              }
+
+              // Re-subscribe to tool events after delegations complete
+              // (this worker may execute more tools in subsequent iterations)
+              if (this.toolRunner) {
+                unsubscribeTool = this.toolRunner.onToolEvent((event) => {
+                  // Only emit events for tools THIS agent called (filter by callerId)
+                  if (event.callerId && event.callerId !== this.identity.id) {
+                    return; // This event is for a different agent
+                  }
+                  const webChannel = channel as WebChannel;
+                  const messageEventService = getMessageEventService();
+                  messageEventService.setWebChannel(webChannel);
+                  messageEventService.emitToolEvent(event, this.conversationId, channel.id, {
+                    id: this.identity.id,
+                    name: this.identity.name,
+                    emoji: this.identity.emoji,
+                    type: this.agentType,
+                  }, this.turnId || undefined);
+                });
+              }
+            } else {
+              console.warn(`[${this.identity.name}] Agent type '${this.agentType}' cannot delegate`);
+            }
           }
 
           // Add assistant message with tool use to conversation
@@ -261,8 +439,20 @@ export class WorkerAgent extends AbstractAgent {
         console.warn(`[${this.identity.name}] Max iterations reached`);
       }
 
-      // Build citation data (only includes sources actually referenced in response)
-      const citationData = this.buildCitationData(streamId, fullResponse, collectedSources);
+      // Merge citations from sub-agents into collected sources
+      if (this.subAgentCitations.length > 0) {
+        console.log(`[${this.identity.name}] Merging ${this.subAgentCitations.length} citation(s) from sub-agents`);
+        // Convert stored format to CitationSource format
+        const convertedCitations: CitationSource[] = this.subAgentCitations.map(src => ({
+          ...src,
+          toolRequestId: `${src.subAgentId}-${src.id}`, // Include sub-agent ID for traceability
+        }));
+        collectedSources.push(...convertedCitations);
+        this.subAgentCitations = []; // Clear after merging
+      }
+
+      // Generate citations using post-hoc analysis
+      const citationData = await this.buildCitationData(fullResponse, collectedSources);
 
       // End stream with citations
       this.endStreamWithCitations(channel, streamId, this.conversationId || undefined, citationData);
@@ -278,6 +468,7 @@ export class WorkerAgent extends AbstractAgent {
           taskId: this.currentTaskId,
           result: fullResponse,
           status: 'completed',
+          citations: citationData, // Pass citations to parent for aggregation
         },
       });
     } finally {
@@ -295,6 +486,196 @@ export class WorkerAgent extends AbstractAgent {
     });
   }
 
+  /**
+   * Delegate a task to a sub-agent and wait for its result
+   */
+  private async delegateToSubAgent(
+    params: {
+      type: string;
+      mission: string;
+      rationale?: string;
+      customName?: string;
+      customEmoji?: string;
+    },
+    originalMessage: Message,
+    channel: Channel
+  ): Promise<string> {
+    const { type, mission, rationale, customName, customEmoji } = params;
+
+    console.log(`[${this.identity.name}] Delegating to ${type}`);
+
+    if (!this.agentRegistry) {
+      throw new Error('Agent registry not available for delegation');
+    }
+
+    // Create agent identity from template
+    const identity = this.createSubAgentIdentity(type, customName, customEmoji);
+
+    // Load prompt from registry
+    const systemPrompt = this.agentRegistry.loadAgentPrompt(type) || '';
+    const toolAccess = this.agentRegistry.getToolAccessForSpecialist(type);
+
+    // Create sub-agent config
+    const config: AgentConfig = {
+      identity,
+      capabilities: {
+        canSpawnAgents: false, // Sub-agents of workers generally can't spawn more agents
+        canAccessTools: toolAccess,
+        canUseChannels: ['*'],
+        maxConcurrentTasks: 1,
+      },
+      systemPrompt,
+      parentId: this.identity.id,
+      mission,
+    };
+
+    // Create and initialize sub-agent
+    const subAgent = new WorkerAgent(config, this.llmService, type);
+    subAgent.setRegistry(this.agentRegistry);
+
+    // Defensive check for conversationId - log error if missing
+    if (!this.conversationId) {
+      console.error(
+        `[${this.identity.name}] WARNING: conversationId is null when spawning sub-agent ${type}. ` +
+          `Parent agent: ${this.parentId}. This will cause persistence issues.`
+      );
+    }
+    subAgent.conversationId = this.conversationId;
+    subAgent.turnId = this.turnId;
+
+    // Set workflow context for restricted agents
+    if (this.currentWorkflowId) {
+      subAgent.setWorkflowId(this.currentWorkflowId);
+    }
+
+    // Pass tool runner, skill manager, and RAG manager
+    if (this.toolRunner) {
+      subAgent.setToolRunner(this.toolRunner);
+    }
+    if (this.skillManager) {
+      subAgent.setSkillManager(this.skillManager);
+    }
+    if (this.ragDataManager) {
+      subAgent.setRagDataManager(this.ragDataManager);
+    }
+
+    // Set allowed skills if this agent type has restrictions
+    const allowedSkills = this.agentRegistry.getAllowedSkillsForSpecialist(type);
+    if (allowedSkills) {
+      subAgent.setAllowedSkills(allowedSkills);
+    }
+
+    await subAgent.init();
+    this.subAgents.set(subAgent.identity.id, subAgent);
+    this.agentRegistry.registerAgent(subAgent);
+
+    // Emit delegation event via MessageEventService (broadcasts AND persists)
+    const webChannel = channel as WebChannel;
+    const messageEventService = getMessageEventService();
+    messageEventService.setWebChannel(webChannel);
+    messageEventService.emitDelegationEvent(
+      {
+        agentId: subAgent.identity.id,
+        agentName: subAgent.identity.name,
+        agentEmoji: subAgent.identity.emoji,
+        agentType: type,
+        parentAgentId: this.identity.id,
+        parentAgentName: this.identity.name,
+        mission,
+        rationale,
+      },
+      this.conversationId,
+      channel.id,
+      this.turnId || undefined
+    );
+
+    // Create a promise to wait for the sub-agent's result
+    // The result will come via handleAgentCommunication when sub-agent sends task_result
+    let timeoutId: ReturnType<typeof setTimeout>;
+    const resultPromise = new Promise<string>((resolve, reject) => {
+      this.pendingSubAgentResults.set(subAgent.identity.id, { resolve, reject });
+
+      // Set a timeout to prevent hanging forever
+      timeoutId = setTimeout(() => {
+        if (this.pendingSubAgentResults.has(subAgent.identity.id)) {
+          this.pendingSubAgentResults.delete(subAgent.identity.id);
+          reject(new Error(`Sub-agent ${subAgent.identity.id} timed out after ${SUB_AGENT_TIMEOUT_MS / 1000}s`));
+        }
+      }, SUB_AGENT_TIMEOUT_MS);
+    });
+
+    // Clean up timeout when promise resolves (declared outside promise constructor)
+    resultPromise.finally(() => clearTimeout(timeoutId)).catch(() => {});
+
+    // Start the sub-agent's task (don't await - let it run while we wait for result via message)
+    subAgent.registerChannel(channel);
+    subAgent.handleDelegatedTask(originalMessage, mission, channel).catch((error) => {
+      console.error(`[${this.identity.name}] Sub-agent ${subAgent.identity.id} threw error:`, error);
+      const pending = this.pendingSubAgentResults.get(subAgent.identity.id);
+      if (pending) {
+        this.pendingSubAgentResults.delete(subAgent.identity.id);
+        pending.reject(error);
+      }
+    });
+
+    // Wait for the result
+    try {
+      const result = await resultPromise;
+
+      // Cleanup sub-agent after successful completion
+      await subAgent.shutdown();
+      this.subAgents.delete(subAgent.identity.id);
+      this.agentRegistry?.unregisterAgent(subAgent.identity.id);
+
+      return result;
+    } catch (error) {
+      // Cleanup sub-agent on error
+      await subAgent.shutdown();
+      this.subAgents.delete(subAgent.identity.id);
+      this.agentRegistry?.unregisterAgent(subAgent.identity.id);
+      throw error;
+    }
+  }
+
+  /**
+   * Create an agent identity for a sub-agent
+   */
+  private createSubAgentIdentity(
+    type: string,
+    customName?: string,
+    customEmoji?: string
+  ): AgentIdentity {
+    if (!this.agentRegistry) {
+      return {
+        id: `${type}-${uuid().slice(0, 8)}`,
+        name: customName || 'Worker',
+        emoji: customEmoji || '⚙️',
+        role: 'worker',
+        description: 'Worker agent',
+      };
+    }
+
+    const template = this.agentRegistry.getSpecialistTemplate(type);
+
+    if (template) {
+      return {
+        ...template.identity,
+        id: `${type}-${uuid().slice(0, 8)}`,
+        name: customName || template.identity.name,
+        emoji: customEmoji || template.identity.emoji,
+      };
+    }
+
+    // Custom agent
+    return {
+      id: `custom-${uuid().slice(0, 8)}`,
+      name: customName || 'Assistant',
+      emoji: customEmoji || '🔧',
+      role: 'worker',
+      description: 'Custom worker agent',
+    };
+  }
+
   protected async handleAgentCommunication(comm: AgentCommunication): Promise<void> {
     switch (comm.type) {
       case 'terminate':
@@ -308,6 +689,39 @@ export class WorkerAgent extends AbstractAgent {
         }
         break;
       }
+      case 'task_result': {
+        // Handle results from sub-agents
+        const payload = comm.payload as { taskId: string; result?: string; error?: string; status: string; citations?: StoredCitationData };
+        const pendingResult = this.pendingSubAgentResults.get(comm.fromAgent);
+
+        if (pendingResult) {
+          this.pendingSubAgentResults.delete(comm.fromAgent);
+
+          if (payload.status === 'completed' && payload.result) {
+            console.log(`[${this.identity.name}] Sub-agent ${comm.fromAgent} completed task`);
+
+            // Collect citations from sub-agent for aggregation
+            if (payload.citations?.sources) {
+              console.log(`[${this.identity.name}] Collected ${payload.citations.sources.length} citation(s) from sub-agent ${comm.fromAgent}`);
+              this.subAgentCitations.push(
+                ...payload.citations.sources.map(src => ({ ...src, subAgentId: comm.fromAgent }))
+              );
+            }
+
+            pendingResult.resolve(payload.result);
+          } else {
+            console.log(`[${this.identity.name}] Sub-agent ${comm.fromAgent} failed: ${payload.error}`);
+            pendingResult.reject(new Error(payload.error || 'Sub-agent task failed'));
+          }
+        } else {
+          console.log(`[${this.identity.name}] Received unexpected task_result from ${comm.fromAgent}`);
+        }
+        break;
+      }
+      case 'status_update': {
+        // Status updates from sub-agents - no logging needed
+        break;
+      }
     }
   }
 
@@ -316,6 +730,7 @@ export class WorkerAgent extends AbstractAgent {
       agentId: this.identity.id,
       agentName: this.identity.name,
       agentEmoji: this.identity.emoji,
+      agentType: this.agentType,
     };
 
     // Include citations in metadata if present
@@ -334,7 +749,11 @@ export class WorkerAgent extends AbstractAgent {
     this.conversationHistory.push(message);
 
     if (!this.conversationId) {
-      console.warn(`[${this.identity.name}] No conversationId set, skipping message save`);
+      console.error(
+        `[${this.identity.name}] ERROR: conversationId is null, cannot save assistant message. ` +
+          `Agent type: ${this.agentType}, Parent: ${this.parentId}. ` +
+          `This is a bug - the supervisor should have set conversationId when spawning this agent.`
+      );
       return;
     }
 
@@ -348,9 +767,11 @@ export class WorkerAgent extends AbstractAgent {
         content: message.content,
         metadata: message.metadata || {},
         createdAt: message.createdAt.toISOString(),
+        turnId: this.turnId || undefined,
       });
     } catch (error) {
       console.error(`[${this.identity.name}] Failed to save message:`, error);
     }
   }
+
 }

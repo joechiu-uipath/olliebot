@@ -1,6 +1,6 @@
 import { readFile, readdir, stat } from 'fs/promises';
 import { join, basename, dirname } from 'path';
-import type { Skill, SkillMetadata } from './types.js';
+import type { Skill, SkillMetadata, SkillSource } from './types.js';
 
 /**
  * Skill Parser - Loads and parses SKILL.md files
@@ -46,8 +46,10 @@ export class SkillParser {
   /**
    * Load only metadata from all skills (for system prompt injection)
    * This is more efficient as it only parses frontmatter
+   * @param dirPath - Directory to scan for skills
+   * @param source - Source of the skills ('builtin' or 'user')
    */
-  async loadMetadataFromDirectory(dirPath: string): Promise<SkillMetadata[]> {
+  async loadMetadataFromDirectory(dirPath: string, source: SkillSource = 'user'): Promise<SkillMetadata[]> {
     const metadata: SkillMetadata[] = [];
 
     try {
@@ -60,7 +62,7 @@ export class SkillParser {
           const skillMdPath = join(fullPath, 'SKILL.md');
           try {
             await stat(skillMdPath);
-            const meta = await this.parseMetadataOnly(skillMdPath, fullPath);
+            const meta = await this.parseMetadataOnly(skillMdPath, fullPath, source);
             if (meta) {
               metadata.push(meta);
             }
@@ -79,8 +81,11 @@ export class SkillParser {
   /**
    * Parse only the metadata from a SKILL.md file (frontmatter only)
    * Used for initial loading to keep context usage low
+   * @param skillMdPath - Path to SKILL.md file
+   * @param dirPath - Directory containing the skill
+   * @param source - Source of the skill ('builtin' or 'user')
    */
-  async parseMetadataOnly(skillMdPath: string, dirPath: string): Promise<SkillMetadata | null> {
+  async parseMetadataOnly(skillMdPath: string, dirPath: string, source: SkillSource = 'user'): Promise<SkillMetadata | null> {
     try {
       const content = await readFile(skillMdPath, 'utf-8');
       const frontmatter = this.extractFrontmatter(content);
@@ -89,8 +94,9 @@ export class SkillParser {
       const fmName = typeof frontmatter.name === 'string' ? frontmatter.name : '';
       const fmDescription = typeof frontmatter.description === 'string' ? frontmatter.description : '';
 
-      // Get skill ID from frontmatter name or directory name
-      const id = fmName || basename(dirPath);
+      // Get skill ID from frontmatter id field, name field, or directory name
+      const fmId = typeof frontmatter.id === 'string' ? frontmatter.id : '';
+      const id = fmId || fmName || basename(dirPath);
 
       // Validate required fields
       if (!fmName) {
@@ -110,6 +116,7 @@ export class SkillParser {
         description,
         filePath: skillMdPath,
         dirPath,
+        source,
       };
     } catch (error) {
       console.error(`[SkillParser] Error parsing metadata ${skillMdPath}:`, error);
@@ -120,8 +127,11 @@ export class SkillParser {
   /**
    * Parse a complete skill from SKILL.md file
    * Used when skill is activated and full instructions are needed
+   * @param skillMdPath - Path to SKILL.md file
+   * @param dirPath - Directory containing the skill
+   * @param source - Source of the skill ('builtin' or 'user')
    */
-  async parseSkill(skillMdPath: string, dirPath: string): Promise<Skill | null> {
+  async parseSkill(skillMdPath: string, dirPath: string, source: SkillSource = 'user'): Promise<Skill | null> {
     try {
       const content = await readFile(skillMdPath, 'utf-8');
       const frontmatter = this.extractFrontmatter(content);
@@ -136,8 +146,9 @@ export class SkillParser {
         ? frontmatter['allowed-tools'].split(/\s+/)
         : undefined;
 
-      // Get skill ID from frontmatter name or directory name
-      const id = fmName || basename(dirPath);
+      // Get skill ID from frontmatter id field, name field, or directory name
+      const fmId = typeof frontmatter.id === 'string' ? frontmatter.id : '';
+      const id = fmId || fmName || basename(dirPath);
       const name = fmName || this.idToDisplayName(id);
       const description = fmDescription;
 
@@ -152,6 +163,7 @@ export class SkillParser {
         description,
         filePath: skillMdPath,
         dirPath,
+        source,
         license: fmLicense,
         compatibility: fmCompatibility,
         metadata: frontmatter.metadata as Record<string, string> | undefined,
@@ -197,7 +209,9 @@ export class SkillParser {
    * Extract YAML frontmatter from content
    */
   private extractFrontmatter(content: string): Record<string, unknown> {
-    const match = content.match(/^---\n([\s\S]*?)\n---/);
+    // Normalize line endings (CRLF -> LF) for consistent parsing
+    const normalized = content.replace(/\r\n/g, '\n');
+    const match = normalized.match(/^---\n([\s\S]*?)\n---/);
     if (!match) return {};
 
     const yaml = match[1];
@@ -255,7 +269,9 @@ export class SkillParser {
    * Extract body content (everything after frontmatter)
    */
   private extractBody(content: string): string {
-    const match = content.match(/^---\n[\s\S]*?\n---\n?([\s\S]*)/);
+    // Normalize line endings (CRLF -> LF) for consistent parsing
+    const normalized = content.replace(/\r\n/g, '\n');
+    const match = normalized.match(/^---\n[\s\S]*?\n---\n?([\s\S]*)/);
     return match ? match[1].trim() : content.trim();
   }
 }

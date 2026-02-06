@@ -23,6 +23,14 @@ import type {
 } from './openai-types.js';
 
 /**
+ * Sanitize tool name to match OpenAI's pattern: ^[a-zA-Z0-9_-]+$
+ * Replaces dots and other invalid characters with underscores.
+ */
+function sanitizeToolName(name: string): string {
+  return name.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 64);
+}
+
+/**
  * Configuration for making OpenAI-compatible API requests.
  */
 export interface OpenAIRequestConfig {
@@ -79,6 +87,9 @@ export abstract class OpenAIBaseProvider implements LLMProvider {
             await new Promise(resolve => setTimeout(resolve, backoffMs));
             continue;
           }
+
+          // Exhausted retries - throw error since we've already consumed the body
+          throw lastError;
         }
 
         return response;
@@ -260,14 +271,20 @@ export abstract class OpenAIBaseProvider implements LLMProvider {
     const config = this.getRequestConfig();
     const openaiMessages = this.convertMessagesWithTools(messages, options?.systemPrompt);
 
-    const tools = options?.tools?.map((t) => ({
-      type: 'function' as const,
-      function: {
-        name: t.name,
-        description: t.description,
-        parameters: t.input_schema,
-      },
-    }));
+    // Build reverse map: sanitized name -> original name
+    const toolNameMap = new Map<string, string>();
+    const tools = options?.tools?.map((t) => {
+      const sanitized = sanitizeToolName(t.name);
+      toolNameMap.set(sanitized, t.name);
+      return {
+        type: 'function' as const,
+        function: {
+          name: sanitized,
+          description: t.description,
+          parameters: t.input_schema,
+        },
+      };
+    });
 
     const toolChoice = this.formatToolChoice(options?.toolChoice);
 
@@ -311,7 +328,7 @@ export abstract class OpenAIBaseProvider implements LLMProvider {
     const message = choice?.message;
     const content = message?.content || '';
 
-    const toolUse = this.extractToolCalls(message?.tool_calls, config.logPrefix);
+    const toolUse = this.extractToolCalls(message?.tool_calls, config.logPrefix, toolNameMap);
     const stopReason = this.mapFinishReason(choice?.finish_reason);
 
     return {
@@ -342,14 +359,20 @@ export abstract class OpenAIBaseProvider implements LLMProvider {
     const config = this.getRequestConfig();
     const openaiMessages = this.convertMessagesWithTools(messages, options?.systemPrompt);
 
-    const tools = options?.tools?.map((t) => ({
-      type: 'function' as const,
-      function: {
-        name: t.name,
-        description: t.description,
-        parameters: t.input_schema,
-      },
-    }));
+    // Build reverse map: sanitized name -> original name
+    const toolNameMap = new Map<string, string>();
+    const tools = options?.tools?.map((t) => {
+      const sanitized = sanitizeToolName(t.name);
+      toolNameMap.set(sanitized, t.name);
+      return {
+        type: 'function' as const,
+        function: {
+          name: sanitized,
+          description: t.description,
+          parameters: t.input_schema,
+        },
+      };
+    });
 
     const toolChoice = this.formatToolChoice(options?.toolChoice);
 
@@ -477,9 +500,11 @@ export abstract class OpenAIBaseProvider implements LLMProvider {
       } catch {
         console.warn(`${config.logPrefix} Failed to parse tool arguments for ${tc.name}: ${tc.arguments}`);
       }
+      // Restore original tool name from sanitized name
+      const originalName = toolNameMap.get(tc.name) || tc.name;
       toolUse.push({
         id: tc.id,
-        name: tc.name,
+        name: originalName,
         input: parsedArgs,
       });
     }
@@ -542,7 +567,8 @@ export abstract class OpenAIBaseProvider implements LLMProvider {
 
   protected extractToolCalls(
     toolCalls: OpenAIToolCall[] | undefined,
-    logPrefix: string
+    logPrefix: string,
+    toolNameMap?: Map<string, string>
   ): LLMToolUse[] {
     const toolUse: LLMToolUse[] = [];
 
@@ -563,9 +589,11 @@ export abstract class OpenAIBaseProvider implements LLMProvider {
         } catch {
           console.warn(`${logPrefix} Failed to parse tool arguments for ${toolCall.function.name}: ${toolCall.function.arguments}`);
         }
+        // Restore original tool name from sanitized name
+        const originalName = toolNameMap?.get(toolCall.function.name) || toolCall.function.name;
         toolUse.push({
           id: toolCall.id,
-          name: toolCall.function.name,
+          name: originalName,
           input: parsedArgs,
         });
       }
@@ -682,7 +710,7 @@ export abstract class OpenAIBaseProvider implements LLMProvider {
             id: tu.id,
             type: 'function' as const,
             function: {
-              name: tu.name,
+              name: sanitizeToolName(tu.name),
               arguments: JSON.stringify(tu.input),
             },
           })),

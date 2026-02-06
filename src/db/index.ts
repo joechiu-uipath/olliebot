@@ -31,6 +31,7 @@ export interface Message {
   content: string;
   metadata: Record<string, unknown>;
   createdAt: string;
+  turnId?: string; // ID of the originating message (user message or task_run) for this turn
 }
 
 export interface Task {
@@ -53,6 +54,35 @@ export interface Embedding {
   embedding: number[];
   metadata: Record<string, unknown>;
   createdAt: string;
+}
+
+// ============================================================================
+// Pagination Types
+// ============================================================================
+
+export interface PaginationCursor {
+  createdAt: string;
+  id: string;
+}
+
+export interface PaginationMeta {
+  hasOlder: boolean;
+  hasNewer: boolean;
+  oldestCursor: string | null;
+  newestCursor: string | null;
+  totalCount?: number;
+}
+
+export interface PaginatedResult<T> {
+  items: T[];
+  pagination: PaginationMeta;
+}
+
+export interface MessageQueryOptions {
+  limit?: number;        // Default 20, max 100
+  before?: string;       // Cursor (encoded) - get older messages
+  after?: string;        // Cursor (encoded) - get newer messages
+  includeTotal?: boolean;
 }
 
 interface DatabaseData {
@@ -78,6 +108,8 @@ export interface ConversationRepository {
 export interface MessageRepository {
   findById(id: string): Message | undefined;
   findByConversationId(conversationId: string, options?: { limit?: number }): Message[];
+  findByConversationIdPaginated(conversationId: string, options?: MessageQueryOptions): PaginatedResult<Message>;
+  countByConversationId(conversationId: string): number;
   create(message: Message): void;
 }
 
@@ -143,7 +175,8 @@ class Database {
         role STRING,
         content STRING,
         metadata STRING,
-        createdAt STRING
+        createdAt STRING,
+        turnId STRING
       )
     `);
 
@@ -347,15 +380,32 @@ class Database {
   }
 
   private createMessageRepository(): MessageRepository {
+    // Helper to encode cursor
+    const encodeCursor = (cursor: PaginationCursor): string => {
+      return Buffer.from(JSON.stringify(cursor)).toString('base64url');
+    };
+
+    // Helper to decode cursor
+    const decodeCursor = (encoded: string): PaginationCursor | null => {
+      try {
+        return JSON.parse(Buffer.from(encoded, 'base64url').toString('utf-8')) as PaginationCursor;
+      } catch {
+        return null;
+      }
+    };
+
+    // Helper to deserialize a message row
+    const deserializeRow = (row: Record<string, unknown>): Message => ({
+      ...row,
+      metadata: typeof row.metadata === 'string' ? JSON.parse(row.metadata as string) : row.metadata,
+    }) as Message;
+
     return {
       findById: (id: string): Message | undefined => {
         const rows = alasql('SELECT * FROM messages WHERE id = ?', [id]) as Array<Record<string, unknown>>;
         if (rows.length === 0) return undefined;
         const row = rows[0];
-        return {
-          ...row,
-          metadata: typeof row.metadata === 'string' ? JSON.parse(row.metadata as string) : row.metadata,
-        } as Message;
+        return deserializeRow(row);
       },
 
       findByConversationId: (conversationId: string, options?: { limit?: number }): Message[] => {
@@ -364,10 +414,94 @@ class Database {
           `SELECT * FROM messages WHERE conversationId = ? ORDER BY createdAt ASC LIMIT ${limit}`,
           [conversationId]
         ) as Array<Record<string, unknown>>;
-        return rows.map(row => ({
-          ...row,
-          metadata: typeof row.metadata === 'string' ? JSON.parse(row.metadata as string) : row.metadata,
-        })) as Message[];
+        return rows.map(deserializeRow);
+      },
+
+      findByConversationIdPaginated: (conversationId: string, options?: MessageQueryOptions): PaginatedResult<Message> => {
+        const limit = Math.min(Math.max(options?.limit ?? 20, 1), 100);
+        const beforeCursor = options?.before ? decodeCursor(options.before) : null;
+        const afterCursor = options?.after ? decodeCursor(options.after) : null;
+
+        let rows: Array<Record<string, unknown>>;
+        const fetchLimit = limit + 1; // Fetch one extra to determine hasOlder/hasNewer
+
+        if (beforeCursor) {
+          // Get older messages (before the cursor) - ordered newest first, then reversed
+          rows = alasql(
+            `SELECT * FROM messages WHERE conversationId = ? AND (createdAt < ? OR (createdAt = ? AND id < ?)) ORDER BY createdAt DESC, id DESC LIMIT ${fetchLimit}`,
+            [conversationId, beforeCursor.createdAt, beforeCursor.createdAt, beforeCursor.id]
+          ) as Array<Record<string, unknown>>;
+        } else if (afterCursor) {
+          // Get newer messages (after the cursor) - ordered oldest first
+          rows = alasql(
+            `SELECT * FROM messages WHERE conversationId = ? AND (createdAt > ? OR (createdAt = ? AND id > ?)) ORDER BY createdAt ASC, id ASC LIMIT ${fetchLimit}`,
+            [conversationId, afterCursor.createdAt, afterCursor.createdAt, afterCursor.id]
+          ) as Array<Record<string, unknown>>;
+        } else {
+          // Get most recent messages (default: newest first for chat UI)
+          rows = alasql(
+            `SELECT * FROM messages WHERE conversationId = ? ORDER BY createdAt DESC, id DESC LIMIT ${fetchLimit}`,
+            [conversationId]
+          ) as Array<Record<string, unknown>>;
+        }
+
+        // Determine if there are more items in the direction we fetched
+        const hasMore = rows.length > limit;
+        if (hasMore) {
+          rows = rows.slice(0, limit);
+        }
+
+        // For "before" cursor or default (no cursor), reverse to get chronological order
+        if (beforeCursor || (!beforeCursor && !afterCursor)) {
+          rows.reverse();
+        }
+
+        const items = rows.map(deserializeRow);
+
+        // Calculate pagination metadata
+        let hasOlder: boolean;
+        let hasNewer: boolean;
+
+        if (beforeCursor) {
+          // We fetched older messages
+          hasOlder = hasMore;
+          hasNewer = true; // There's at least the cursor position ahead
+        } else if (afterCursor) {
+          // We fetched newer messages
+          hasOlder = true; // There's at least the cursor position behind
+          hasNewer = hasMore;
+        } else {
+          // Default fetch (most recent messages)
+          hasNewer = false; // We got the newest
+          hasOlder = hasMore;
+        }
+
+        // Generate cursors for the items we're returning
+        const oldestCursor = items.length > 0 ? encodeCursor({ createdAt: items[0].createdAt, id: items[0].id }) : null;
+        const newestCursor = items.length > 0 ? encodeCursor({ createdAt: items[items.length - 1].createdAt, id: items[items.length - 1].id }) : null;
+
+        // Optionally include total count
+        let totalCount: number | undefined;
+        if (options?.includeTotal) {
+          const countResult = alasql('SELECT COUNT(*) as cnt FROM messages WHERE conversationId = ?', [conversationId]) as Array<{ cnt: number }>;
+          totalCount = countResult[0]?.cnt ?? 0;
+        }
+
+        return {
+          items,
+          pagination: {
+            hasOlder,
+            hasNewer,
+            oldestCursor,
+            newestCursor,
+            totalCount,
+          },
+        };
+      },
+
+      countByConversationId: (conversationId: string): number => {
+        const result = alasql('SELECT COUNT(*) as cnt FROM messages WHERE conversationId = ?', [conversationId]) as Array<{ cnt: number }>;
+        return result[0]?.cnt ?? 0;
       },
 
       create: (message: Message): void => {

@@ -16,8 +16,7 @@ import type { ToolRunner, LLMTool } from '../tools/index.js';
 import type { MemoryService } from '../memory/service.js';
 import type { SkillManager } from '../skills/manager.js';
 import type { RagDataManager } from '../rag-projects/data-manager.js';
-import { initializeCitationServiceSync } from '../citations/service.js';
-import { getDefaultExtractors } from '../citations/extractors.js';
+import { generatePostHocCitations, toStoredCitationData } from '../citations/generator.js';
 import type { CitationSource, StoredCitationData } from '../citations/types.js';
 import type { WebChannel } from '../channels/web.js';
 
@@ -37,6 +36,8 @@ export abstract class AbstractAgent implements BaseAgent {
   protected ragDataManager: RagDataManager | null = null;
   private ragDataCache: string | null = null;
   private ragDataCacheTime = 0;
+  private excludedSkillSources: Array<'builtin' | 'user'> = [];
+  private allowedSkills: string[] | null = null; // Whitelist of skill IDs (takes precedence over excludedSkillSources)
 
   constructor(config: AgentConfig, llmService: LLMService) {
     this.config = config;
@@ -64,7 +65,6 @@ export abstract class AbstractAgent implements BaseAgent {
    */
   setToolRunner(runner: ToolRunner): void {
     this.toolRunner = runner;
-    console.log(`[${this.identity.name}] Tool runner configured with ${runner.getToolsForLLM().length} tools`);
   }
 
   /**
@@ -80,10 +80,6 @@ export abstract class AbstractAgent implements BaseAgent {
    */
   setSkillManager(manager: SkillManager): void {
     this.skillManager = manager;
-    const skillCount = manager.getAllMetadata().length;
-    if (skillCount > 0) {
-      console.log(`[${this.identity.name}] Skill manager configured with ${skillCount} skills`);
-    }
   }
 
   /**
@@ -92,6 +88,30 @@ export abstract class AbstractAgent implements BaseAgent {
    */
   setRagDataManager(manager: RagDataManager): void {
     this.ragDataManager = manager;
+  }
+
+  /**
+   * Set skill sources to exclude from this agent's system prompt
+   * Used to prevent supervisor from accessing specialist-only skills
+   */
+  setExcludedSkillSources(sources: Array<'builtin' | 'user'>): void {
+    this.excludedSkillSources = sources;
+  }
+
+  /**
+   * Set allowed skills for this agent (whitelist by skill ID)
+   * Takes precedence over excludedSkillSources
+   * Used to restrict coding agents to only frontend-modifier skill
+   */
+  setAllowedSkills(skillIds: string[]): void {
+    this.allowedSkills = skillIds;
+  }
+
+  /**
+   * Get allowed skills for this agent
+   */
+  getAllowedSkills(): string[] | null {
+    return this.allowedSkills;
   }
 
   /**
@@ -131,9 +151,10 @@ export abstract class AbstractAgent implements BaseAgent {
    *
    * Patterns:
    * - '*' = all tools
-   * - 'native__*' = all native tools
-   * - 'native__web-search' = specific tool
-   * - '!native__delegate' = exclude specific tool (blacklist)
+   * - 'web_search' = specific native tool (no prefix)
+   * - 'user.*' = all user tools
+   * - 'mcp.*' = all MCP tools
+   * - '!delegate' = exclude specific tool (blacklist)
    */
   protected getToolsForLLM(): LLMTool[] {
     if (!this.toolRunner) {
@@ -174,11 +195,10 @@ export abstract class AbstractAgent implements BaseAgent {
 
   registerChannel(channel: Channel): void {
     this.channels.set(channel.id, channel);
-    console.log(`[${this.identity.name}] Registered channel: ${channel.id}`);
   }
 
   async init(): Promise<void> {
-    console.log(`[${this.identity.name}] Initialized - ${this.identity.description}`);
+    // Initialization complete - no log needed, task start will log
   }
 
   async shutdown(): Promise<void> {
@@ -237,9 +257,6 @@ export abstract class AbstractAgent implements BaseAgent {
   }
 
   async receiveFromAgent(comm: AgentCommunication): Promise<void> {
-    console.log(
-      `[${this.identity.name}] Received ${comm.type} from agent ${comm.fromAgent}`
-    );
     await this.handleAgentCommunication(comm);
   }
 
@@ -308,23 +325,17 @@ export abstract class AbstractAgent implements BaseAgent {
       }
     }
 
-    // Add available tools info if we have a tool runner
-    if (this.toolRunner) {
-      const tools = this.getToolsForLLM();
-      if (tools.length > 0) {
-        const toolSummary = this.summarizeTools(tools);
-        prompt += `\n\n## Available Tools\n\nYou have access to ${tools.length} tools. USE THEM to complete tasks:\n\n${toolSummary}`;
-
-        // Add citation guidelines when tools are available
-        const citationService = initializeCitationServiceSync(getDefaultExtractors());
-        prompt += citationService.getCitationGuidelines();
-      }
-    }
+    // Note: Citations are generated post-hoc after response completes
+    // No citation guidelines needed in system prompt
 
     // Add skill information per Agent Skills spec (progressive disclosure)
     if (this.skillManager) {
-      const skillInstructions = this.skillManager.getSkillUsageInstructions();
-      const skillsXml = this.skillManager.getSkillsForSystemPrompt();
+      // Determine filtering: allowedSkills (whitelist) takes precedence over excludedSkillSources
+      const excludeSources = this.excludedSkillSources.length > 0 ? this.excludedSkillSources : undefined;
+      const allowedIds = this.allowedSkills;
+
+      const skillInstructions = this.skillManager.getSkillUsageInstructions(excludeSources, allowedIds || undefined);
+      const skillsXml = this.skillManager.getSkillsForSystemPrompt(excludeSources, allowedIds || undefined);
 
       if (skillInstructions && skillsXml) {
         prompt += `\n\n${skillInstructions}\n\n${skillsXml}`;
@@ -340,97 +351,43 @@ export abstract class AbstractAgent implements BaseAgent {
   }
 
   /**
-   * Create a summary of available tools for the system prompt
-   */
-  private summarizeTools(tools: LLMTool[]): string {
-    // Group tools by category
-    const categories: Record<string, LLMTool[]> = {
-      mcp: [],
-      native: [],
-    };
-
-    for (const tool of tools) {
-      if (tool.name.startsWith('native__')) {
-        categories.native.push(tool);
-      } else {
-        // MCP tools (format: serverId__toolName)
-        categories.mcp.push(tool);
-      }
-    }
-
-    const parts: string[] = [];
-
-    if (categories.mcp.length > 0) {
-      const mcpSummary = categories.mcp.slice(0, 10).map(t => `- ${t.name}: ${t.description?.substring(0, 100) || 'No description'}`).join('\n');
-      parts.push(`**MCP Tools (${categories.mcp.length} available):**\n${mcpSummary}${categories.mcp.length > 10 ? `\n... and ${categories.mcp.length - 10} more` : ''}`);
-    }
-
-    if (categories.native.length > 0) {
-      const nativeSummary = categories.native.map(t => `- ${t.name}: ${t.description?.substring(0, 100) || 'No description'}`).join('\n');
-      parts.push(`**Native Tools (${categories.native.length} available):**\n${nativeSummary}`);
-    }
-
-    return parts.join('\n\n');
-  }
-
-  /**
-   * Finalize a streaming response with citations
-   * This is the centralized method for ending streams with citation support
+   * Generate citations using post-hoc analysis
+   * Analyzes the completed response against available sources using fast LLM
    *
-   * @param channel - The channel to send the response on
-   * @param streamId - The stream identifier
    * @param fullResponse - The complete response text
    * @param collectedSources - Citation sources collected during tool execution
-   * @param conversationId - Optional conversation ID
    * @returns The stored citation data (only includes cited sources)
    */
-  protected buildCitationData(
-    streamId: string,
+  protected async buildCitationData(
     fullResponse: string,
     collectedSources: CitationSource[]
-  ): StoredCitationData | undefined {
+  ): Promise<StoredCitationData | undefined> {
     if (collectedSources.length === 0) {
       return undefined;
     }
 
-    const citationService = initializeCitationServiceSync(getDefaultExtractors());
-    const citationContext = citationService.buildContext(
-      streamId,
-      fullResponse,
-      collectedSources
-    );
+    try {
+      const result = await generatePostHocCitations(
+        this.llmService,
+        fullResponse,
+        collectedSources
+      );
 
-    // Only include sources that are actually referenced in the response
-    const usedSources = citationService.getUsedSources(citationContext);
+      if (result.references.length === 0) {
+        console.log(`[${this.identity.name}] No citations generated for ${collectedSources.length} source(s)`);
+        return undefined;
+      }
 
-    if (usedSources.length === 0) {
-      console.log(`[${this.identity.name}] No citations referenced in response, discarding ${collectedSources.length} source(s)`);
+      const storedData = toStoredCitationData(result);
+      console.log(
+        `[${this.identity.name}] Citations: ${storedData.sources.length} sources cited, ${storedData.references.length} refs (${result.processingTimeMs}ms)`
+      );
+
+      return storedData;
+    } catch (error) {
+      console.error(`[${this.identity.name}] Citation generation failed:`, error);
       return undefined;
     }
-
-    // Build stored format with only used sources
-    const storedData: StoredCitationData = {
-      sources: usedSources.map((s) => ({
-        id: s.id,
-        type: s.type,
-        toolName: s.toolName,
-        uri: s.uri,
-        title: s.title,
-        domain: s.domain,
-        snippet: s.snippet,
-        pageNumber: s.pageNumber,
-      })),
-      references: citationContext.references.map((r) => ({
-        index: r.index,
-        startIndex: r.startIndex,
-        endIndex: r.endIndex,
-        sourceIds: r.sourceIds,
-      })),
-    };
-
-    console.log(`[${this.identity.name}] Citations: ${storedData.sources.length} sources used (${collectedSources.length - usedSources.length} discarded), ${storedData.references.length} refs`);
-
-    return storedData;
   }
 
   /**
@@ -465,6 +422,8 @@ export interface SpecialistTemplate {
   type: string;
   identity: Omit<AgentIdentity, 'id'>;
   canAccessTools: string[];
+  delegation?: import('./types.js').AgentDelegationConfig;
+  collapseResponseByDefault?: boolean;
 }
 
 // Forward declaration - will be implemented in registry.ts
@@ -480,4 +439,8 @@ export interface AgentRegistry {
   findSpecialistTypeByName(name: string): string | undefined;
   loadAgentPrompt(type: string): string;
   getToolAccessForSpecialist(type: string): string[];
+  getAllowedSkillsForSpecialist(type: string): string[] | null;
+  // Delegation methods
+  getDelegationConfigForSpecialist(type: string): import('./types.js').AgentDelegationConfig;
+  canDelegate(sourceAgentType: string, targetAgentType: string, currentWorkflowId: string | null): boolean;
 }

@@ -92,8 +92,10 @@ export class LLMService {
       const response = await provider.completeWithTools(messages, options);
       const duration = Date.now() - startTime;
 
+      // Log LLM API call details
       const toolNames = response.toolUse?.map(t => t.name).join(', ') || 'none';
-      console.log(`[LLMService] ${this.main.model} (${duration}ms) tools=${toolCount} → ${response.stopReason || 'end'}, called: ${toolNames}`);
+      const stopDesc = response.stopReason === 'tool_use' ? 'tool_use (LLM wants to call tools)' : response.stopReason || 'end_turn (response complete)';
+      console.log(`[LLMService] API call: model=${this.main.model}, duration=${duration}ms, tools_available=${toolCount}, stop_reason=${stopDesc}, tools_requested=${toolNames}`);
 
       return response;
     }

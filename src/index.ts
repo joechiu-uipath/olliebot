@@ -16,7 +16,6 @@ import { OllieBotServer } from './server/index.js';
 import { MCPClient } from './mcp/index.js';
 import type { MCPServerConfig } from './mcp/types.js';
 import { SkillManager } from './skills/index.js';
-import { A2UIManager } from './a2ui/index.js';
 import {
   RAGProjectService,
   GoogleEmbeddingProvider,
@@ -39,6 +38,10 @@ import {
   HttpClientTool,
   DelegateTool,
   QueryRAGProjectTool,
+  SpeakTool,
+  ReadFrontendCodeTool,
+  ModifyFrontendCodeTool,
+  CheckFrontendCodeTool,
 } from './tools/index.js';
 import { TaskManager } from './tasks/index.js';
 import { MemoryService } from './memory/index.js';
@@ -153,6 +156,15 @@ const CONFIG = {
   webSearchProvider: (process.env.WEB_SEARCH_PROVIDER || 'tavily') as WebSearchProvider,
   webSearchApiKey: process.env.WEB_SEARCH_API_KEY || '',
   googleCustomSearchEngineId: process.env.GOOGLE_CUSTOM_SEARCH_ENGINE_ID || '',
+
+  // Deep Research configuration
+  // Falls back to main provider/model if not specified
+  deepResearchProvider: process.env.DEEP_RESEARCH_PROVIDER || process.env.MAIN_PROVIDER || 'anthropic',
+  deepResearchModel: process.env.DEEP_RESEARCH_MODEL || process.env.MAIN_MODEL || 'claude-sonnet-4-20250514',
+
+  voiceProvider: (process.env.VOICE_PROVIDER || 'azure_openai') as 'openai' | 'azure_openai',
+  voiceModel: process.env.VOICE_MODEL || 'gpt-4o-realtime-preview',
+  voiceVoice: 'alloy'
 };
 
 function createLLMProvider(provider: string, model: string): LLMProvider {
@@ -275,10 +287,6 @@ async function main(): Promise<void> {
   const skillManager = new SkillManager(CONFIG.skillsDir);
   await skillManager.init();
 
-  // Initialize A2UI Manager
-  console.log('[Init] Initializing A2UI manager...');
-  const a2uiManager = new A2UIManager();
-
   // Initialize RAG Project Service (folder-based RAG with vector storage)
   let ragProjectService: RAGProjectService | null = null;
   const embeddingProvider = createEmbeddingProvider();
@@ -314,14 +322,20 @@ async function main(): Promise<void> {
 
   // Web search (requires API key)
   if (CONFIG.webSearchApiKey) {
-    toolRunner.registerNativeTool(
-      new WebSearchTool({
-        provider: CONFIG.webSearchProvider,
-        apiKey: CONFIG.webSearchApiKey,
-        searchEngineId: CONFIG.googleCustomSearchEngineId || undefined,
-      })
-    );
-    console.log(`[Init] Web search enabled (${CONFIG.webSearchProvider})`);
+    // Google Custom Search requires searchEngineId
+    if (CONFIG.webSearchProvider === 'google_custom_search' && !CONFIG.googleCustomSearchEngineId) {
+      console.error('[Init] Web search disabled: google_custom_search provider requires GOOGLE_CUSTOM_SEARCH_ENGINE_ID');
+      console.error('[Init] GOOGLE_CUSTOM_SEARCH_ENGINE_ID env value:', process.env.GOOGLE_CUSTOM_SEARCH_ENGINE_ID ? '(set)' : '(not set)');
+    } else {
+      toolRunner.registerNativeTool(
+        new WebSearchTool({
+          provider: CONFIG.webSearchProvider,
+          apiKey: CONFIG.webSearchApiKey,
+          searchEngineId: CONFIG.googleCustomSearchEngineId || undefined,
+        })
+      );
+      console.log(`[Init] Web search enabled (${CONFIG.webSearchProvider})`);
+    }
   }
 
   // Web scraping (uses LLM for summarization)
@@ -352,9 +366,35 @@ async function main(): Promise<void> {
   // Memory tool (always available)
   toolRunner.registerNativeTool(new RememberTool(memoryService));
 
+  // Speak tool (TTS - requires API key based on provider)
+  const voiceApiKey = CONFIG.voiceProvider === 'azure_openai'
+    ? CONFIG.azureOpenaiApiKey
+    : CONFIG.openaiApiKey;
+  if (voiceApiKey) {
+    toolRunner.registerNativeTool(
+      new SpeakTool({
+        apiKey: voiceApiKey,
+        provider: CONFIG.voiceProvider,
+        model: CONFIG.voiceModel,
+        voice: CONFIG.voiceVoice,
+        azureEndpoint: CONFIG.azureOpenaiEndpoint,
+        azureApiVersion: CONFIG.azureOpenaiApiVersion,
+      })
+    );
+    console.log(`[Init] Speak tool enabled (provider: ${CONFIG.voiceProvider}, model: ${CONFIG.voiceModel}, voice: ${CONFIG.voiceVoice})`);
+  } else {
+    console.log('[Init] SpeakTool not registered: no API key configured for voice provider');
+  }
+
   // Skill tools (for Agent Skills spec)
-  toolRunner.registerNativeTool(new ReadSkillTool(CONFIG.skillsDir));
-  toolRunner.registerNativeTool(new RunSkillScriptTool(CONFIG.skillsDir));
+  toolRunner.registerNativeTool(new ReadSkillTool(skillManager));
+  toolRunner.registerNativeTool(new RunSkillScriptTool(skillManager));
+
+  // Self-modifying code tools (for frontend code modification)
+  toolRunner.registerNativeTool(new ReadFrontendCodeTool());
+  toolRunner.registerNativeTool(new ModifyFrontendCodeTool());
+  toolRunner.registerNativeTool(new CheckFrontendCodeTool());
+  console.log('[Init] Frontend code tools enabled (read + modify + check)');
 
   // Initialize Browser Session Manager
   console.log('[Init] Initializing browser session manager...');
@@ -426,6 +466,8 @@ async function main(): Promise<void> {
   supervisor.setToolRunner(toolRunner);
   supervisor.setMemoryService(memoryService);
   supervisor.setSkillManager(skillManager);
+  // Exclude builtin skills from supervisor - these are for specialists only
+  supervisor.setExcludedSkillSources(['builtin']);
 
   // Set RAG data manager on supervisor (if RAG service is available)
   if (ragProjectService) {
@@ -502,18 +544,14 @@ async function main(): Promise<void> {
 
         for (const tool of tools) {
           const toolName = tool.name;
-          if (toolName.startsWith('user__')) {
+          if (toolName.startsWith('user.')) {
             user.push({
-              name: toolName.replace('user__', ''),
+              name: toolName.replace('user.', ''),
               description: tool.description,
             });
-          } else if (toolName.startsWith('native__')) {
-            builtin.push({
-              name: toolName.replace('native__', ''),
-              description: tool.description,
-            });
-          } else if (toolName.includes('__')) {
-            const [serverId, ...rest] = toolName.split('__');
+          } else if (toolName.startsWith('mcp.')) {
+            const nameWithoutPrefix = toolName.replace(/^mcp\./, '');
+            const [serverId, ...rest] = nameWithoutPrefix.split('__');
             const mcpToolName = rest.join('__');
             const serverName = serverNames[serverId] || serverId;
             if (!mcp[serverName]) {
@@ -521,6 +559,12 @@ async function main(): Promise<void> {
             }
             mcp[serverName].push({
               name: mcpToolName,
+              description: tool.description,
+            });
+          } else {
+            // No prefix = native/builtin tool
+            builtin.push({
+              name: toolName,
               description: tool.description,
             });
           }
@@ -591,6 +635,12 @@ async function main(): Promise<void> {
       ragProjectService: ragProjectService || undefined,
       mainProvider: CONFIG.mainProvider,
       mainModel: CONFIG.mainModel,
+      voiceProvider: CONFIG.voiceProvider,
+      voiceModel: CONFIG.voiceModel,
+      azureOpenaiApiKey: CONFIG.azureOpenaiApiKey,
+      azureOpenaiEndpoint: CONFIG.azureOpenaiEndpoint,
+      azureOpenaiApiVersion: CONFIG.azureOpenaiApiVersion,
+      openaiApiKey: CONFIG.openaiApiKey,
     });
     await server.start();
 

@@ -1,108 +1,40 @@
 import { useState, useEffect, useRef, memo, useCallback } from 'react';
 import { EvalResults } from './EvalResults';
 import { EvalJsonEditor } from './EvalJsonEditor';
+import { EvalInputBar } from './EvalInputBar';
 
-export const EvalRunner = memo(function EvalRunner({ evaluation, suite, viewingResults, onBack }) {
-  const [loading, setLoading] = useState(false);
+export const EvalRunner = memo(function EvalRunner({ evaluation, suite, viewingResults, onBack, evalState }) {
   const [evalDetails, setEvalDetails] = useState(null);
-  const [runConfig, setRunConfig] = useState({
-    runs: 5,
-    alternativePrompt: '',
-  });
-  const [jobId, setJobId] = useState(null);
-  const [progress, setProgress] = useState(null);
-  const [results, setResults] = useState(null);
-  const [error, setError] = useState(null);
-  const wsRef = useRef(null);
-  const jobIdRef = useRef(null);
+  // Local results state for viewing past results (viewingResults prop)
+  // Fresh run results come from evalState.results
 
-  // Keep jobIdRef in sync
+  // Clear shared eval state when selection changes
   useEffect(() => {
-    jobIdRef.current = jobId;
-  }, [jobId]);
-
-  // Clear results when selection changes (allows navigation after viewing results)
-  useEffect(() => {
-    setResults(null);
-    setError(null);
-    setProgress(null);
-    setLoading(false);
-    setJobId(null);
-    jobIdRef.current = null;
+    if (evalState) {
+      evalState.setResults(null);
+      evalState.setError(null);
+      evalState.setProgress(null);
+      evalState.setLoading(false);
+      evalState.setJobId(null);
+    }
   }, [evaluation, suite, viewingResults]);
-
-  // Set up WebSocket listener for eval events
-  useEffect(() => {
-    // Use the same backend URL as the main WebSocket connection
-    const wsUrl = import.meta.env.VITE_WS_URL || 'ws://localhost:3000';
-
-    console.log('[EvalRunner] Connecting WebSocket to:', wsUrl);
-    const ws = new WebSocket(wsUrl);
-    wsRef.current = ws;
-
-    ws.onopen = () => {
-      console.log('[EvalRunner] WebSocket connected');
-    };
-
-    ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-
-        // Debug: log all eval-related events
-        if (data.type?.startsWith('eval_')) {
-          console.log('[EvalRunner] WebSocket event:', data.type, 'jobId:', data.jobId, 'current jobId:', jobIdRef.current);
-        }
-
-        // Process events for our current job OR if we're waiting for any job to start
-        if (data.type?.startsWith('eval_') && data.jobId) {
-          // If we don't have a jobId yet but we're loading, accept the first matching event
-          const isOurJob = jobIdRef.current && data.jobId === jobIdRef.current;
-
-          if (isOurJob) {
-            if (data.type === 'eval_progress') {
-              console.log('[EvalRunner] Updating progress:', data.current, '/', data.total);
-              setProgress({ current: data.current, total: data.total });
-            } else if (data.type === 'eval_complete') {
-              console.log('[EvalRunner] Evaluation complete');
-              setResults(data.results);
-              setProgress(null);
-              setLoading(false);
-            } else if (data.type === 'eval_error') {
-              console.log('[EvalRunner] Evaluation error:', data.error);
-              setError(data.error || 'Evaluation failed');
-              setProgress(null);
-              setLoading(false);
-            }
-          }
-        }
-      } catch (err) {
-        // Ignore non-JSON messages
-      }
-    };
-
-    ws.onerror = (err) => {
-      console.error('[EvalRunner] WebSocket error:', err);
-    };
-
-    return () => {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.close();
-      }
-    };
-  }, []);
 
   // Check for active jobs on mount (UI recovery)
   useEffect(() => {
     const checkActiveJobs = async () => {
+      if (!evalState) return;
       try {
         const res = await fetch('/api/eval/jobs');
         if (res.ok) {
           const data = await res.json();
-          const runningJob = data.jobs?.find(job => job.status === 'running');
-          if (runningJob) {
-            setJobId(runningJob.jobId);
-            setLoading(true);
-            setProgress({ current: 0, total: 1 }); // Will be updated by WebSocket
+          const jobs = data.jobs;
+          if (jobs) {
+            const runningJob = jobs.find(job => job.status === 'running');
+            if (runningJob) {
+              evalState.setJobId(runningJob.jobId);
+              evalState.setLoading(true);
+              evalState.setProgress({ current: 0, total: 1 }); // Will be updated by WebSocket
+            }
           }
         }
       } catch (err) {
@@ -112,16 +44,7 @@ export const EvalRunner = memo(function EvalRunner({ evaluation, suite, viewingR
     checkActiveJobs();
   }, []);
 
-  // Load evaluation details when selected
-  useEffect(() => {
-    if (evaluation) {
-      loadEvaluationDetails(evaluation.path);
-    } else {
-      setEvalDetails(null);
-    }
-  }, [evaluation]);
-
-  const loadEvaluationDetails = async (path) => {
+  const loadEvaluationDetails = useCallback(async (path) => {
     try {
       const res = await fetch(`/api/eval/${encodeURIComponent(path)}`);
       if (res.ok) {
@@ -131,48 +54,67 @@ export const EvalRunner = memo(function EvalRunner({ evaluation, suite, viewingR
     } catch (err) {
       console.error('Failed to load evaluation details:', err);
     }
-  };
+  }, []);
 
-  const runEvaluation = async () => {
-    if (!evaluation) return;
+  // Load evaluation details when selected
+  useEffect(() => {
+    if (evaluation) {
+      loadEvaluationDetails(evaluation.path);
+    } else {
+      setEvalDetails(null);
+    }
+  }, [evaluation, loadEvaluationDetails]);
 
-    setLoading(true);
-    setError(null);
-    setResults(null);
-    setProgress({ current: 0, total: runConfig.runs });
+  // Use ref for evaluation path to keep callback stable
+  const evaluationRef = useRef(evaluation);
+  useEffect(() => { evaluationRef.current = evaluation; }, [evaluation]);
+
+  // Use ref for evalState to keep callback stable
+  const evalStateRef = useRef(evalState);
+  useEffect(() => { evalStateRef.current = evalState; }, [evalState]);
+
+  const runEvaluation = useCallback(async (config) => {
+    const currentEvaluation = evaluationRef.current;
+    const state = evalStateRef.current;
+    if (!currentEvaluation || !state) return;
+
+    state.setLoading(true);
+    state.setError(null);
+    state.setResults(null);
+    state.setProgress({ current: 0, total: config.runs });
 
     try {
       const res = await fetch('/api/eval/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          evaluationPath: evaluation.path,
-          runs: runConfig.runs,
-          alternativePrompt: runConfig.alternativePrompt || undefined,
+          evaluationPath: currentEvaluation.path,
+          runs: config.runs,
+          alternativePrompt: config.alternativePrompt,
         }),
       });
 
       if (res.ok) {
         const data = await res.json();
         console.log('[EvalRunner] Started evaluation with jobId:', data.jobId);
-        // Set ref immediately so WebSocket handler can use it right away
-        jobIdRef.current = data.jobId;
-        setJobId(data.jobId);
+        state.setJobId(data.jobId);
       } else {
-        throw new Error('Failed to start evaluation');
+        state.setError('Failed to start evaluation');
+        state.setLoading(false);
       }
     } catch (err) {
-      setError(err.message);
-      setLoading(false);
+      state.setError(err.message);
+      state.setLoading(false);
     }
-  };
+  }, []);
 
-  const runSuite = async () => {
-    if (!suite) return;
+  const runSuite = useCallback(async () => {
+    const state = evalStateRef.current;
+    if (!suite || !state) return;
 
-    setLoading(true);
-    setError(null);
-    setResults(null);
+    state.setLoading(true);
+    state.setError(null);
+    state.setResults(null);
 
     try {
       const res = await fetch('/api/eval/suite/run', {
@@ -186,32 +128,43 @@ export const EvalRunner = memo(function EvalRunner({ evaluation, suite, viewingR
       if (res.ok) {
         const data = await res.json();
         console.log('[EvalRunner] Started suite with jobId:', data.jobId);
-        // Set ref immediately so WebSocket handler can use it right away
-        jobIdRef.current = data.jobId;
-        setJobId(data.jobId);
+        state.setJobId(data.jobId);
       } else {
-        throw new Error('Failed to start suite');
+        state.setError('Failed to start suite');
+        state.setLoading(false);
       }
     } catch (err) {
-      setError(err.message);
-      setLoading(false);
+      state.setError(err.message);
+      state.setLoading(false);
     }
-  };
+  }, [suite]);
 
-  // Handle save from JSON editor
+  // Handle save from JSON editor - memoized for EvalJsonEditor
   const handleSave = useCallback((updatedEval) => {
     setEvalDetails(updatedEval);
   }, []);
+
+  // Handle close results - memoized for EvalResults
+  const handleCloseResults = useCallback(() => {
+    const state = evalStateRef.current;
+    if (state) {
+      state.setResults(null);
+      state.setJobId(null);
+    }
+  }, []);
+
+  // Get values from evalState (with defaults for safety)
+  const loading = evalState?.loading ?? false;
+  const progress = evalState?.progress ?? null;
+  const results = evalState?.results ?? null;
+  const error = evalState?.error ?? null;
 
   // Show results if available (from a fresh run)
   if (results) {
     return (
       <EvalResults
         results={results}
-        onClose={() => {
-          setResults(null);
-          setJobId(null);
-        }}
+        onClose={handleCloseResults}
       />
     );
   }
@@ -297,50 +250,11 @@ export const EvalRunner = memo(function EvalRunner({ evaluation, suite, viewingR
         </div>
 
         {/* Bottom bar - anchored like chat input */}
-        <div className="eval-input-bar">
-          {loading ? (
-            <div className="eval-progress-inline">
-              <div className="progress-bar">
-                <div
-                  className="progress-fill"
-                  style={{ width: progress ? `${(progress.current / progress.total) * 100}%` : '0%' }}
-                />
-              </div>
-              <span className="progress-text">
-                {progress ? `${progress.current} / ${progress.total} runs` : 'Starting evaluation...'}
-              </span>
-            </div>
-          ) : (
-            <>
-              <div className="eval-config-inline">
-                <label>
-                  Runs:
-                  <input
-                    type="number"
-                    min="1"
-                    max="20"
-                    value={runConfig.runs}
-                    onChange={(e) => setRunConfig(prev => ({ ...prev, runs: parseInt(e.target.value) || 5 }))}
-                  />
-                </label>
-                <input
-                  type="text"
-                  className="alt-prompt-input"
-                  placeholder="Alternative prompt path (optional)"
-                  value={runConfig.alternativePrompt}
-                  onChange={(e) => setRunConfig(prev => ({ ...prev, alternativePrompt: e.target.value }))}
-                />
-              </div>
-              <button
-                className="run-btn primary"
-                onClick={runEvaluation}
-                disabled={loading}
-              >
-                {loading ? 'Running...' : 'Run Evaluation'}
-              </button>
-            </>
-          )}
-        </div>
+        <EvalInputBar
+          onRun={runEvaluation}
+          loading={loading}
+          progress={progress}
+        />
       </div>
     );
   }
@@ -357,5 +271,14 @@ export const EvalRunner = memo(function EvalRunner({ evaluation, suite, viewingR
         </p>
       </div>
     </div>
+  );
+}, (prevProps, nextProps) => {
+  // Custom comparison - only re-render when value props change
+  // Callbacks are not compared since they may have new references but same behavior
+  return (
+    prevProps.evaluation === nextProps.evaluation &&
+    prevProps.suite === nextProps.suite &&
+    prevProps.viewingResults === nextProps.viewingResults &&
+    prevProps.evalState === nextProps.evalState
   );
 });

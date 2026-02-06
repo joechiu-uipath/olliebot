@@ -2,7 +2,9 @@ import express, { type Express, type Request, type Response } from 'express';
 import cors from 'cors';
 import { createServer, type Server } from 'http';
 import { WebSocketServer } from 'ws';
+import { setupVoiceProxy } from './voice-proxy.js';
 import type { SupervisorAgent } from '../agents/types.js';
+import { getAgentRegistry } from '../agents/index.js';
 import { WebChannel } from '../channels/index.js';
 import { getDb } from '../db/index.js';
 import { isWellKnownConversation, getWellKnownConversationMeta } from '../db/well-known-conversations.js';
@@ -15,6 +17,7 @@ import { setupEvalRoutes } from './eval-routes.js';
 import type { BrowserSessionManager } from '../browser/index.js';
 import type { TaskManager } from '../tasks/index.js';
 import { type RAGProjectService, createRAGProjectRoutes, type IndexingProgress } from '../rag-projects/index.js';
+import { getMessageEventService, setMessageEventServiceChannel } from '../services/message-event-service.js';
 
 export interface ServerConfig {
   port: number;
@@ -29,6 +32,19 @@ export interface ServerConfig {
   // LLM configuration for model capabilities endpoint
   mainProvider?: string;
   mainModel?: string;
+  // Voice-to-Text configuration
+  voiceProvider?: 'openai' | 'azure_openai';
+  voiceModel?: string;
+  // Azure OpenAI config (needed for voice proxy)
+  azureOpenaiApiKey?: string;
+  azureOpenaiEndpoint?: string;
+  azureOpenaiApiVersion?: string;
+  // OpenAI config (needed for voice proxy)
+  openaiApiKey?: string;
+  // Security: Network binding (default: localhost only)
+  bindAddress?: string;
+  // Security: Allowed CORS origins (default: localhost dev servers)
+  allowedOrigins?: string[];
 }
 
 export class OllieBotServer {
@@ -47,6 +63,15 @@ export class OllieBotServer {
   private ragProjectService?: RAGProjectService;
   private mainProvider?: string;
   private mainModel?: string;
+  private voiceProvider?: 'openai' | 'azure_openai';
+  private voiceModel?: string;
+  private azureOpenaiApiKey?: string;
+  private azureOpenaiEndpoint?: string;
+  private azureOpenaiApiVersion?: string;
+  private openaiApiKey?: string;
+  private bindAddress: string;
+  private allowedOrigins: string[];
+  private voiceWss: WebSocketServer;
 
   constructor(config: ServerConfig) {
     this.port = config.port;
@@ -60,29 +85,86 @@ export class OllieBotServer {
     this.ragProjectService = config.ragProjectService;
     this.mainProvider = config.mainProvider;
     this.mainModel = config.mainModel;
+    this.voiceProvider = config.voiceProvider;
+    this.voiceModel = config.voiceModel;
+    this.azureOpenaiApiKey = config.azureOpenaiApiKey;
+    this.azureOpenaiEndpoint = config.azureOpenaiEndpoint;
+    this.azureOpenaiApiVersion = config.azureOpenaiApiVersion;
+    this.openaiApiKey = config.openaiApiKey;
+
+    // Security: Default to localhost-only binding (Layer 1: Network Binding)
+    this.bindAddress = config.bindAddress ?? '127.0.0.1';
+
+    // Security: Default allowed origins for local development (Layer 2: CORS)
+    this.allowedOrigins = config.allowedOrigins ?? [
+      'http://localhost:5173',   // Vite dev server
+      'http://127.0.0.1:5173',   // Vite dev server (alternate)
+      'http://localhost:3000',   // Same-origin (production build)
+      'http://127.0.0.1:3000',   // Same-origin (alternate)
+    ];
 
     // Create Express app
     this.app = express();
 
-    // Enable CORS for all origins
+    // CORS configuration - restrict to allowed origins only
     this.app.use(cors({
-      origin: '*',
-      methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+      origin: (origin, callback) => {
+        // Allow requests with no origin (same-origin, curl, etc.)
+        if (!origin) {
+          callback(null, true);
+          return;
+        }
+        if (this.allowedOrigins.includes(origin)) {
+          callback(null, true);
+        } else {
+          console.warn(`[CORS] Blocked request from origin: ${origin}`);
+          callback(new Error('Not allowed by CORS'));
+        }
+      },
+      methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
       allowedHeaders: ['Content-Type', 'Authorization'],
+      credentials: true,
     }));
     this.app.use(express.json());
 
     // Create HTTP server
     this.server = createServer(this.app);
 
-    // Create WebSocket server - attach to HTTP server
-    this.wss = new WebSocketServer({
-      server: this.server,
-      path: '/', // Explicit root path
+    // Create WebSocket servers with noServer mode for proper multi-path support
+    this.wss = new WebSocketServer({ noServer: true });
+    this.voiceWss = new WebSocketServer({ noServer: true });
+
+    // Handle HTTP upgrade requests and route to appropriate WebSocket server
+    this.server.on('upgrade', (request, socket, head) => {
+      const origin = request.headers.origin;
+      const pathname = new URL(request.url || '/', `http://${request.headers.host}`).pathname;
+
+      // Verify origin for security
+      if (origin && !this.allowedOrigins.includes(origin)) {
+        console.warn(`[WebSocket] Blocked connection from origin: ${origin} on path: ${pathname}`);
+        socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
+        socket.destroy();
+        return;
+      }
+
+      if (pathname === '/voice') {
+        this.voiceWss.handleUpgrade(request, socket, head, (ws) => {
+          this.voiceWss.emit('connection', ws, request);
+        });
+      } else if (pathname === '/') {
+        this.wss.handleUpgrade(request, socket, head, (ws) => {
+          this.wss.emit('connection', ws, request);
+        });
+      } else {
+        socket.destroy();
+      }
     });
 
     // Create and configure web channel
     this.webChannel = new WebChannel('web-main');
+
+    // Set the web channel on the global MessageEventService so all agents can use it
+    setMessageEventServiceChannel(this.webChannel);
 
     // Setup routes
     this.setupRoutes();
@@ -134,36 +216,40 @@ export class OllieBotServer {
           return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
         });
 
-        // 3. Messages for default :feed: conversation
-        const rawMessages = db.messages.findByConversationId(':feed:');
-        const messages = rawMessages.map(m => ({
-          id: m.id,
-          role: m.role,
-          content: m.content,
-          createdAt: m.createdAt,
-          agentName: m.metadata?.agentName,
-          agentEmoji: m.metadata?.agentEmoji,
-          attachments: m.metadata?.attachments,
-          messageType: m.metadata?.type,
-          taskId: m.metadata?.taskId,
-          taskName: m.metadata?.taskName,
-          taskDescription: m.metadata?.taskDescription,
-          toolName: m.metadata?.toolName,
-          toolSource: m.metadata?.source,
-          toolSuccess: m.metadata?.success,
-          toolDurationMs: m.metadata?.durationMs,
-          toolError: m.metadata?.error,
-          toolParameters: m.metadata?.parameters,
-          toolResult: m.metadata?.result,
-          delegationAgentId: m.metadata?.agentId,
-          delegationAgentType: m.metadata?.agentType,
-          delegationMission: m.metadata?.mission,
-          delegationRationale: m.metadata?.rationale,
-          // Reasoning mode (vendor-neutral)
-          reasoningMode: m.metadata?.reasoningMode,
-          // Citations
-          citations: m.metadata?.citations,
-        }));
+        // 3. Messages for default :feed: conversation (paginated - last 20)
+        const paginatedResult = db.messages.findByConversationIdPaginated(':feed:', { limit: 20, includeTotal: true });
+        const feedMessages = {
+          items: paginatedResult.items.map(m => ({
+            id: m.id,
+            role: m.role,
+            content: m.content,
+            createdAt: m.createdAt,
+            agentName: m.metadata?.agentName,
+            agentEmoji: m.metadata?.agentEmoji,
+            agentType: m.metadata?.agentType,
+            attachments: m.metadata?.attachments,
+            messageType: m.metadata?.type,
+            taskId: m.metadata?.taskId,
+            taskName: m.metadata?.taskName,
+            taskDescription: m.metadata?.taskDescription,
+            toolName: m.metadata?.toolName,
+            toolSource: m.metadata?.source,
+            toolSuccess: m.metadata?.success,
+            toolDurationMs: m.metadata?.durationMs,
+            toolError: m.metadata?.error,
+            toolParameters: m.metadata?.parameters,
+            toolResult: m.metadata?.result,
+            delegationAgentId: m.metadata?.agentId,
+            delegationAgentType: m.metadata?.agentType,
+            delegationMission: m.metadata?.mission,
+            delegationRationale: m.metadata?.rationale,
+            // Reasoning mode (vendor-neutral)
+            reasoningMode: m.metadata?.reasoningMode,
+            // Citations
+            citations: m.metadata?.citations,
+          })),
+          pagination: paginatedResult.pagination,
+        };
 
         // 4. Tasks
         const rawTasks = db.tasks.findAll({ limit: 20 });
@@ -238,16 +324,19 @@ export class OllieBotServer {
             const toolName = tool.name;
             const inputs = extractInputs(tool.input_schema);
 
-            if (toolName.startsWith('user__')) {
-              user.push({ name: toolName.replace('user__', ''), description: tool.description, inputs });
-            } else if (toolName.startsWith('native__')) {
-              builtin.push({ name: toolName.replace('native__', ''), description: tool.description, inputs });
-            } else if (toolName.includes('__')) {
-              const [serverId, ...rest] = toolName.split('__');
+            if (toolName.startsWith('user.')) {
+              user.push({ name: toolName.replace('user.', ''), description: tool.description, inputs });
+            } else if (toolName.startsWith('mcp.')) {
+              // mcp.serverId__toolName format
+              const nameWithoutPrefix = toolName.replace(/^mcp\./, '');
+              const [serverId, ...rest] = nameWithoutPrefix.split('__');
               const mcpToolName = rest.join('__');
               const serverName = serverNames[serverId] || serverId;
               if (!mcp[serverName]) mcp[serverName] = [];
               mcp[serverName].push({ name: mcpToolName, description: tool.description, inputs });
+            } else {
+              // No prefix = native/builtin tool
+              builtin.push({ name: toolName, description: tool.description, inputs });
             }
           }
         }
@@ -279,15 +368,26 @@ export class OllieBotServer {
           }
         }
 
+        // 9. Agent metadata (for UI display, collapse settings, etc.)
+        const registry = getAgentRegistry();
+        const agentTemplates = registry.getSpecialistTemplates().map(t => ({
+          type: t.type,
+          name: t.identity.name,
+          emoji: t.identity.emoji,
+          description: t.identity.description,
+          collapseResponseByDefault: t.collapseResponseByDefault || false,
+        }));
+
         res.json({
           modelCapabilities,
           conversations,
-          messages,
+          feedMessages,
           tasks,
           skills,
           mcps,
           tools: { builtin, user, mcp },
           ragProjects,
+          agentTemplates,
         });
       } catch (error) {
         console.error('[API] Startup data fetch failed:', error);
@@ -388,23 +488,17 @@ export class OllieBotServer {
         const toolName = tool.name;
         const inputs = extractInputs(tool.input_schema);
 
-        if (toolName.startsWith('user__')) {
+        if (toolName.startsWith('user.')) {
           // User-defined tool
           user.push({
-            name: toolName.replace('user__', ''),
+            name: toolName.replace('user.', ''),
             description: tool.description,
             inputs,
           });
-        } else if (toolName.startsWith('native__')) {
-          // Built-in native tool
-          builtin.push({
-            name: toolName.replace('native__', ''),
-            description: tool.description,
-            inputs,
-          });
-        } else if (toolName.includes('__')) {
-          // MCP tool: serverId__toolName
-          const [serverId, ...rest] = toolName.split('__');
+        } else if (toolName.startsWith('mcp.')) {
+          // MCP tool: mcp.serverId__toolName
+          const nameWithoutPrefix = toolName.replace(/^mcp\./, '');
+          const [serverId, ...rest] = nameWithoutPrefix.split('__');
           const mcpToolName = rest.join('__');
           const serverName = serverNames[serverId] || serverId;
 
@@ -413,6 +507,13 @@ export class OllieBotServer {
           }
           mcp[serverName].push({
             name: mcpToolName,
+            description: tool.description,
+            inputs,
+          });
+        } else {
+          // No prefix = built-in native tool
+          builtin.push({
+            name: toolName,
             description: tool.description,
             inputs,
           });
@@ -454,44 +555,69 @@ export class OllieBotServer {
       }
     });
 
-    // Get messages for a specific conversation
+    // Get messages for a specific conversation (with pagination support)
     this.app.get('/api/conversations/:id/messages', (req: Request, res: Response) => {
       try {
         const db = getDb();
-        const messages = db.messages.findByConversationId(req.params.id as string);
-        res.json(messages.map(m => ({
-          id: m.id,
-          role: m.role,
-          content: m.content,
-          createdAt: m.createdAt,
-          agentName: m.metadata?.agentName,
-          agentEmoji: m.metadata?.agentEmoji,
-          // Attachments
-          attachments: m.metadata?.attachments,
-          // Message type (task_run, tool_event, delegation, etc.)
-          messageType: m.metadata?.type,
-          // Task run metadata
-          taskId: m.metadata?.taskId,
-          taskName: m.metadata?.taskName,
-          taskDescription: m.metadata?.taskDescription,
-          // Tool event metadata
-          toolName: m.metadata?.toolName,
-          toolSource: m.metadata?.source,
-          toolSuccess: m.metadata?.success,
-          toolDurationMs: m.metadata?.durationMs,
-          toolError: m.metadata?.error,
-          toolParameters: m.metadata?.parameters,
-          toolResult: m.metadata?.result,
-          // Delegation metadata
-          delegationAgentId: m.metadata?.agentId,
-          delegationAgentType: m.metadata?.agentType,
-          delegationMission: m.metadata?.mission,
-          delegationRationale: m.metadata?.rationale,
-          // Reasoning mode (vendor-neutral)
-          reasoningMode: m.metadata?.reasoningMode,
-          // Citations
-          citations: m.metadata?.citations,
-        })));
+        const conversationId = req.params.id as string;
+
+        // Parse pagination query params
+        const limit = Math.min(Math.max(parseInt(req.query.limit as string) || 20, 1), 100);
+        const before = req.query.before as string | undefined;
+        const after = req.query.after as string | undefined;
+        const includeTotal = req.query.includeTotal === 'true';
+
+        // Helper to transform message for API response
+        const transformMessage = (m: ReturnType<typeof db.messages.findById>) => {
+          if (!m) return null;
+          return {
+            id: m.id,
+            role: m.role,
+            content: m.content,
+            createdAt: m.createdAt,
+            agentName: m.metadata?.agentName,
+            agentEmoji: m.metadata?.agentEmoji,
+            agentType: m.metadata?.agentType,
+            // Attachments
+            attachments: m.metadata?.attachments,
+            // Message type (task_run, tool_event, delegation, etc.)
+            messageType: m.metadata?.type,
+            // Task run metadata
+            taskId: m.metadata?.taskId,
+            taskName: m.metadata?.taskName,
+            taskDescription: m.metadata?.taskDescription,
+            // Tool event metadata
+            toolName: m.metadata?.toolName,
+            toolSource: m.metadata?.source,
+            toolSuccess: m.metadata?.success,
+            toolDurationMs: m.metadata?.durationMs,
+            toolError: m.metadata?.error,
+            toolParameters: m.metadata?.parameters,
+            toolResult: m.metadata?.result,
+            // Delegation metadata (legacy - agentType above is preferred)
+            delegationAgentId: m.metadata?.agentId,
+            delegationAgentType: m.metadata?.agentType,
+            delegationMission: m.metadata?.mission,
+            delegationRationale: m.metadata?.rationale,
+            // Reasoning mode (vendor-neutral)
+            reasoningMode: m.metadata?.reasoningMode,
+            // Citations
+            citations: m.metadata?.citations,
+          };
+        };
+
+        // Use paginated query
+        const result = db.messages.findByConversationIdPaginated(conversationId, {
+          limit,
+          before,
+          after,
+          includeTotal,
+        });
+
+        res.json({
+          items: result.items.map(transformMessage).filter(Boolean),
+          pagination: result.pagination,
+        });
       } catch (error) {
         console.error('[API] Failed to fetch messages:', error);
         res.status(500).json({ error: 'Failed to fetch messages' });
@@ -611,6 +737,7 @@ export class OllieBotServer {
           createdAt: m.createdAt,
           agentName: m.metadata?.agentName,
           agentEmoji: m.metadata?.agentEmoji,
+          agentType: m.metadata?.agentType,
           // Attachments
           attachments: m.metadata?.attachments,
           // Message type (task_run, tool_event, delegation, etc.)
@@ -718,14 +845,18 @@ export class OllieBotServer {
         // Get description from jsonConfig
         const taskDescription = (task.jsonConfig as { description?: string }).description || '';
 
-        // Broadcast task_run event for compact UI display
-        this.webChannel.broadcast({
-          type: 'task_run',
-          taskId: task.id,
-          taskName: task.name,
-          taskDescription,
-          timestamp: now,
-        });
+        // Emit task_run event via MessageEventService (broadcasts AND persists)
+        // Returns the turnId which should be used for all subsequent messages in this turn
+        const messageEventService = getMessageEventService();
+        const turnId = messageEventService.emitTaskRunEvent(
+          {
+            taskId: task.id,
+            taskName: task.name,
+            taskDescription,
+          },
+          conversationId || null,
+          'web-main'
+        );
 
         // Create a message to trigger the task execution via the supervisor
         // The message content is for the LLM, metadata is for UI display
@@ -740,6 +871,7 @@ export class OllieBotServer {
             taskId: task.id,
             taskName: task.name,
             taskDescription,
+            turnId, // Pass the turnId from the task_run event
           },
         };
 
@@ -781,6 +913,16 @@ export class OllieBotServer {
   async start(): Promise<void> {
     this.wss.on('error', (error) => {
       console.error('[WebSocket] Server error:', error);
+    });
+
+    // Setup voice WebSocket proxy for real-time transcription
+    setupVoiceProxy(this.voiceWss, {
+      voiceProvider: this.voiceProvider,
+      voiceModel: this.voiceModel,
+      azureOpenaiApiKey: this.azureOpenaiApiKey,
+      azureOpenaiEndpoint: this.azureOpenaiEndpoint,
+      azureOpenaiApiVersion: this.azureOpenaiApiVersion,
+      openaiApiKey: this.openaiApiKey,
     });
 
     // Initialize web channel and attach to WebSocket server
@@ -844,11 +986,16 @@ export class OllieBotServer {
       });
     }
 
-    // Start listening
+    // Start listening on configured bind address (default: localhost only)
     return new Promise((resolve) => {
-      this.server.listen(this.port, '0.0.0.0', () => {
-        console.log(`[Server] HTTP server listening on http://0.0.0.0:${this.port}`);
-        console.log(`[Server] WebSocket server ready on ws://0.0.0.0:${this.port}`);
+      this.server.listen(this.port, this.bindAddress, () => {
+        console.log(`[Server] HTTP server listening on http://${this.bindAddress}:${this.port}`);
+        console.log(`[Server] WebSocket server ready on ws://${this.bindAddress}:${this.port}`);
+        if (this.bindAddress === '127.0.0.1' || this.bindAddress === 'localhost') {
+          console.log('[Server] Security: Accepting connections from localhost only');
+        } else if (this.bindAddress === '0.0.0.0') {
+          console.warn('[Server] Security: Accepting connections from all interfaces - ensure proper authentication is configured');
+        }
         resolve();
       });
     });
@@ -856,10 +1003,12 @@ export class OllieBotServer {
 
   async stop(): Promise<void> {
     return new Promise((resolve, reject) => {
-      this.wss.close(() => {
-        this.server.close((err) => {
-          if (err) reject(err);
-          else resolve();
+      this.voiceWss.close(() => {
+        this.wss.close(() => {
+          this.server.close((err) => {
+            if (err) reject(err);
+            else resolve();
+          });
         });
       });
     });

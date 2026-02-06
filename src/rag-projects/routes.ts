@@ -5,9 +5,9 @@
 
 import { Router, type Request, type Response } from 'express';
 import multer from 'multer';
-import { existsSync, mkdirSync } from 'fs';
+import { existsSync, mkdirSync, statSync } from 'fs';
 import { copyFile, unlink } from 'fs/promises';
-import { join, extname } from 'path';
+import { join, extname, basename } from 'path';
 import type { RAGProjectService } from './service.js';
 
 // Supported file extensions for upload
@@ -230,6 +230,71 @@ export function createRAGProjectRoutes(ragService: RAGProjectService): Router {
         error: error instanceof Error ? error.message : 'Upload failed',
         uploadedFiles,
       });
+    }
+  });
+
+  /**
+   * GET /api/rag/projects/:id/documents/:filename
+   * Serve a document file from a project's documents folder.
+   * Primarily used for PDF viewing in the frontend.
+   */
+  router.get('/projects/:id/documents/:filename', async (req: Request, res: Response) => {
+    try {
+      const projectId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+      const filename = Array.isArray(req.params.filename) ? req.params.filename[0] : req.params.filename;
+
+      // Validate filename to prevent path traversal
+      const sanitizedFilename = basename(filename);
+      if (sanitizedFilename !== filename || filename.includes('..')) {
+        res.status(400).json({ error: 'Invalid filename' });
+        return;
+      }
+
+      // Get project details
+      const project = await ragService.getProjectDetails(projectId);
+      if (!project) {
+        res.status(404).json({ error: 'Project not found' });
+        return;
+      }
+
+      // Build full path to document
+      const docPath = join(project.path, 'documents', sanitizedFilename);
+
+      // Check file exists
+      if (!existsSync(docPath)) {
+        res.status(404).json({ error: 'Document not found' });
+        return;
+      }
+
+      // Get file stats for content-length
+      const stats = statSync(docPath);
+
+      // Determine content type based on extension
+      const ext = extname(sanitizedFilename).toLowerCase();
+      const contentTypes: Record<string, string> = {
+        '.pdf': 'application/pdf',
+        '.txt': 'text/plain',
+        '.md': 'text/markdown',
+        '.json': 'application/json',
+        '.csv': 'text/csv',
+        '.html': 'text/html',
+      };
+
+      const contentType = contentTypes[ext] || 'application/octet-stream';
+
+      // Set headers for inline viewing (especially for PDFs)
+      res.setHeader('Content-Type', contentType);
+      res.setHeader('Content-Length', stats.size);
+      res.setHeader('Content-Disposition', `inline; filename="${sanitizedFilename}"`);
+
+      // Allow CORS for PDF viewer
+      res.setHeader('Access-Control-Allow-Origin', '*');
+
+      // Send file
+      res.sendFile(docPath);
+    } catch (error) {
+      console.error(`[RAGProjects] Error serving document:`, error);
+      res.status(500).json({ error: 'Failed to serve document' });
     }
   });
 

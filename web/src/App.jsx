@@ -1,169 +1,29 @@
-import React, { useState, useEffect, useRef, useCallback, memo, useMemo } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import ReactMarkdown from 'react-markdown';
-import rehypeRaw from 'rehype-raw';
-import rehypeSanitize from 'rehype-sanitize';
-import remarkGfm from 'remark-gfm';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import { Virtuoso } from 'react-virtuoso';
 import { useWebSocket } from './hooks/useWebSocket';
-import HtmlPreview from './components/HtmlPreview';
-import { EvalSidebar, EvalRunner } from './components/eval';
+
+import { BrowserSessions } from './components/BrowserSessions';
+import { BrowserPreview } from './components/BrowserPreview';
+import RAGProjects from './components/RAGProjects';
+import { CitationPanel } from './components/CitationPanel';
+import { PDFViewerModal } from './components/PDFViewerModal';
+import { ChatInput } from './components/ChatInput';
+import { AudioPlayer } from './components/AudioPlayer';
+import { MessageContent } from './components/MessageContent';
+
+// Extracted eval mode (fully self-contained)
+import { useEvalMode, EvalSidebarContent, EvalMainContent } from './App.Eval';
+
+// Extracted utilities
+import { transformMessages, shouldCollapseByDefault } from './utils/messageHelpers';
+import { createMessageHandler } from './App.websocket';
 
 // Mode constants
 const MODES = {
   CHAT: 'chat',
   EVAL: 'eval',
 };
-import { BrowserSessions } from './components/BrowserSessions';
-import { BrowserPreview } from './components/BrowserPreview';
-import RAGProjects from './components/RAGProjects';
-import { SourcePanel } from './components/SourcePanel';
-
-// Code block component with copy button and language header
-// Memoized to prevent unnecessary re-renders
-// Uses deferred rendering for faster initial display
-const CodeBlock = memo(function CodeBlock({ language, children }) {
-  const [copied, setCopied] = useState(false);
-  const [isReady, setIsReady] = useState(false);
-  const hasLanguage = language && language !== 'text';
-
-  // Defer syntax highlighting until browser is idle
-  useEffect(() => {
-    const scheduleRender = window.requestIdleCallback || ((cb) => setTimeout(cb, 1));
-    const id = scheduleRender(() => setIsReady(true), { timeout: 100 });
-    return () => {
-      if (window.cancelIdleCallback) {
-        window.cancelIdleCallback(id);
-      } else {
-        clearTimeout(id);
-      }
-    };
-  }, []);
-
-  const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(children);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch (err) {
-      console.error('Failed to copy:', err);
-    }
-  };
-
-  return (
-    <div className={`code-block-container ${hasLanguage ? 'has-header' : ''}`}>
-      {hasLanguage && (
-        <div className="code-block-header">
-          <span className="code-block-language">{language}</span>
-        </div>
-      )}
-      <button
-        className={`code-copy-button ${copied ? 'copied' : ''}`}
-        onClick={handleCopy}
-        title={copied ? 'Copied!' : 'Copy code'}
-      >
-        {copied ? '✓' : '⧉'}
-      </button>
-      {isReady ? (
-        <SyntaxHighlighter
-          style={oneDark}
-          language={language || 'text'}
-          PreTag="div"
-          className="code-block-highlighted"
-          customStyle={{
-            margin: 0,
-            borderRadius: hasLanguage ? '0 0 6px 6px' : '6px',
-            fontSize: '13px',
-          }}
-        >
-          {children}
-        </SyntaxHighlighter>
-      ) : (
-        <div
-          className="code-block-placeholder"
-          style={{
-            margin: 0,
-            padding: '1em',
-            borderRadius: hasLanguage ? '0 0 6px 6px' : '6px',
-            fontSize: '13px',
-            background: '#282c34',
-            color: '#abb2bf',
-            fontFamily: 'monospace',
-            whiteSpace: 'pre-wrap',
-            overflow: 'hidden',
-            maxHeight: '200px',
-          }}
-        >
-          {children}
-        </div>
-      )}
-    </div>
-  );
-});
-
-/**
- * Memoized message content component to prevent re-renders when parent state changes.
- * Only re-renders when content, html, or isStreaming props change.
- */
-const MessageContent = memo(function MessageContent({ content, html = false, isStreaming = false }) {
-  // Memoize the components object to prevent ReactMarkdown re-renders
-  const components = useMemo(() => ({
-    // Custom rendering for pre (code blocks)
-    pre({ children }) {
-      return <div className="code-block-wrapper">{children}</div>;
-    },
-    // Custom rendering for code with syntax highlighting
-    code({ node, className, children, ...props }) {
-      const match = /language-(\w+)/.exec(className || '');
-      const language = match ? match[1] : null;
-      // If inside a pre tag (code block), render as block
-      const isBlock = match || (node?.tagName === 'code' && node?.parent?.tagName === 'pre');
-
-      if (isBlock) {
-        const codeContent = String(children).replace(/\n$/, '');
-
-        // Check if this is HTML content - render with HtmlPreview
-        if (language === 'html' || language === 'htm') {
-          return <HtmlPreview html={codeContent} isStreaming={isStreaming} />;
-        }
-
-        // Use CodeBlock component with copy button
-        return <CodeBlock language={language}>{codeContent}</CodeBlock>;
-      }
-      // Inline code
-      return (
-        <code className="inline-code" {...props}>
-          {children}
-        </code>
-      );
-    },
-    // Custom table rendering
-    table({ children }) {
-      return (
-        <div className="table-wrapper">
-          <table>{children}</table>
-        </div>
-      );
-    },
-  }), [isStreaming]);
-
-  // Memoize rehype plugins array
-  const rehypePlugins = useMemo(
-    () => html ? [rehypeRaw, rehypeSanitize] : [rehypeSanitize],
-    [html]
-  );
-
-  return (
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
-      rehypePlugins={rehypePlugins}
-      components={components}
-    >
-      {content}
-    </ReactMarkdown>
-  );
-});
 
 // Module-level flag to prevent double-fetching in React Strict Mode
 // (Strict Mode unmounts/remounts component, so refs don't persist)
@@ -178,11 +38,9 @@ function App() {
   const mode = location.pathname.startsWith('/eval') ? MODES.EVAL : MODES.CHAT;
 
   const [messages, setMessages] = useState([]);
-  const [input, setInput] = useState('');
   const [attachments, setAttachments] = useState([]);
   const [isDragOver, setIsDragOver] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
-  const [pendingInteraction, setPendingInteraction] = useState(null);
 
   // Sidebar state
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -216,6 +74,17 @@ function App() {
   const [ragProjects, setRagProjects] = useState([]);
   const [ragIndexingProgress, setRagIndexingProgress] = useState({}); // { projectId: { status, ... } }
 
+  // Eval state (shared via WebSocket, not a separate connection)
+  const [evalJobId, setEvalJobId] = useState(null);
+  const [evalProgress, setEvalProgress] = useState(null);
+  const [evalResults, setEvalResults] = useState(null);
+  const [evalError, setEvalError] = useState(null);
+  const [evalLoading, setEvalLoading] = useState(false);
+  const evalJobIdRef = useRef(null);
+
+  // Agent templates metadata (fetched from backend for collapse settings, display names, etc.)
+  const [agentTemplates, setAgentTemplates] = useState([]);
+
   // Actions menu state
   const [openMenuId, setOpenMenuId] = useState(null);
 
@@ -228,498 +97,229 @@ function App() {
   const [isUserScrolled, setIsUserScrolled] = useState(false);
   const [showScrollButton, setShowScrollButton] = useState(false);
 
+  // Pagination state for virtualization
+  const [hasMoreOlder, setHasMoreOlder] = useState(true);
+  const [isLoadingOlder, setIsLoadingOlder] = useState(false);
+  const [oldestCursor, setOldestCursor] = useState(null);
+  const [totalMessageCount, setTotalMessageCount] = useState(0); // Total messages for reference
+  const [firstItemIndex, setFirstItemIndex] = useState(100000); // Start high for prepending
+
   // Expanded tool events
   const [expandedTools, setExpandedTools] = useState(new Set());
 
-  // Eval mode state
-  const [selectedEvaluation, setSelectedEvaluation] = useState(null);
-  const [selectedSuite, setSelectedSuite] = useState(null);
-  const [selectedResult, setSelectedResult] = useState(null);
-  const [viewingResults, setViewingResults] = useState(null);
+  // Expanded agent messages (for agents that collapse by default, like research-worker)
+  const [expandedAgentMessages, setExpandedAgentMessages] = useState(new Set());
+
+  // Eval mode - managed by useEvalMode hook (state lives in App.Eval.jsx)
+  const evalMode = useEvalMode();
+
   // Response pending state (disable input while waiting)
   const [isResponsePending, setIsResponsePending] = useState(false);
 
+  // PDF viewer modal state
+  const [pdfViewerState, setPdfViewerState] = useState({
+    isOpen: false,
+    fileUrl: null,
+    filename: null,
+    initialPage: 1,
+  });
+
   // Reasoning mode state
   const [reasoningMode, setReasoningMode] = useState(null); // null | 'high' | 'xhigh'
-  const [hashtagMenuOpen, setHashtagMenuOpen] = useState(false);
-  const [hashtagMenuPosition, setHashtagMenuPosition] = useState({ top: 0, left: 0 });
+  const [messageType, setMessageType] = useState(null); // null | 'deep_research'
   const [modelCapabilities, setModelCapabilities] = useState({ reasoningEfforts: [] });
-  const [hashtagMenuIndex, setHashtagMenuIndex] = useState(0);
 
-  const messagesEndRef = useRef(null);
-  const messagesContainerRef = useRef(null);
-  const textareaRef = useRef(null);
+  const virtuosoRef = useRef(null);
+  const chatInputRef = useRef(null);
 
   // Ref to track current conversation ID for use in callbacks
   const currentConversationIdRef = useRef(currentConversationId);
-  currentConversationIdRef.current = currentConversationId;
 
   // Ref to track navigate function for use in callbacks
   const navigateRef = useRef(navigate);
-  navigateRef.current = navigate;
 
-  const handleMessage = useCallback((data) => {
-    // Helper to check if message belongs to current conversation
-    const isForCurrentConversation = (msgConversationId) => {
-      // If no conversationId specified, assume it's for current conversation
-      if (!msgConversationId) return true;
-      // If no current conversation, accept all messages
-      if (!currentConversationIdRef.current) return true;
-      // Otherwise, check if it matches
-      return msgConversationId === currentConversationIdRef.current;
+  // Update refs via effect (not during render - React Compiler requirement)
+  useEffect(() => {
+    currentConversationIdRef.current = currentConversationId;
+  }, [currentConversationId]);
+
+  useEffect(() => {
+    navigateRef.current = navigate;
+  }, [navigate]);
+
+  // Listen for PDF view events from citation components
+  useEffect(() => {
+    const handlePdfView = (event) => {
+      const { fileUrl, filename, initialPage } = event.detail;
+      setPdfViewerState({
+        isOpen: true,
+        fileUrl,
+        filename,
+        initialPage: initialPage || 1,
+      });
     };
-    if (data.type === 'message') {
-      // Only show messages for current conversation
-      if (!isForCurrentConversation(data.conversationId)) return;
 
-      const messageId = data.id || `msg-${Date.now()}`;
-      setMessages((prev) => {
-        // Deduplicate by ID
-        if (prev.some((m) => m.id === messageId)) {
-          return prev;
-        }
-        return [
-          ...prev,
-          {
-            id: messageId,
-            role: 'assistant',
-            content: data.content,
-            timestamp: data.timestamp,
-            buttons: data.buttons,
-            html: data.html,
-            agentName: data.agentName,
-            agentEmoji: data.agentEmoji,
-          },
-        ];
-      });
-    } else if (data.type === 'stream_start') {
-      // Only show streams for current conversation
-      if (!isForCurrentConversation(data.conversationId)) return;
+    window.addEventListener('pdf-view', handlePdfView);
+    return () => window.removeEventListener('pdf-view', handlePdfView);
+  }, []);
 
-      // Start a new streaming message
-      setMessages((prev) => {
-        // Find the most recent user message to get reasoning mode
-        const lastUserMsg = [...prev].reverse().find(m => m.role === 'user');
-        return [
-          ...prev,
-          {
-            id: data.id,
-            role: 'assistant',
-            content: '',
-            timestamp: data.timestamp,
-            isStreaming: true,
-            agentName: data.agentName,
-            agentEmoji: data.agentEmoji,
-            reasoningMode: lastUserMsg?.reasoningMode || null,
-          },
-        ];
-      });
-    } else if (data.type === 'stream_chunk') {
-      // Only process chunks for current conversation
-      if (!isForCurrentConversation(data.conversationId)) return;
+  // Close PDF viewer
+  const closePdfViewer = useCallback(() => {
+    setPdfViewerState((prev) => ({ ...prev, isOpen: false }));
+  }, []);
 
-      // Append chunk to streaming message
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === data.streamId
-            ? { ...m, content: m.content + data.chunk }
-            : m
-        )
-      );
-    } else if (data.type === 'stream_end') {
-      // Only process stream end for current conversation
-      if (!isForCurrentConversation(data.conversationId)) return;
+  // WebSocket message handler - created once using useState lazy initializer
+  // (useState initializer only runs once and avoids ref-access-during-render)
+  const [handleMessage] = useState(() => createMessageHandler({
+    // Getter/setter functions for ref values (called at message time, not render time)
+    getCurrentConversationId: () => currentConversationIdRef.current,
+    setCurrentConversationIdRef: (id) => { currentConversationIdRef.current = id; },
+    getNavigate: () => navigateRef.current,
+    // State setters (stable by React guarantee)
+    setMessages,
+    setTotalMessageCount,
+    setIsResponsePending,
+    setIsConnected,
+    setConversations,
+    setCurrentConversationId,
+    setAgentTasks,
+    setBrowserSessions,
+    setBrowserScreenshots,
+    setSelectedBrowserSessionId,
+    setClickMarkers,
+    setExpandedAccordions,
+    setRagProjects,
+    setRagIndexingProgress,
+    // Eval state (shared WebSocket, no separate connection needed)
+    getEvalJobId: () => evalJobIdRef.current,
+    setEvalProgress,
+    setEvalResults,
+    setEvalError,
+    setEvalLoading,
+  }));
 
-      // Debug: log citation data
-      if (data.citations) {
-        console.log('[Citations] Received in stream_end:', data.citations);
-      } else {
-        console.log('[Citations] No citations in stream_end');
-      }
+  // Callback to set evalJobId - updates both ref (for WebSocket handler) and state
+  const setEvalJobIdWithRef = useCallback((jobId) => {
+    evalJobIdRef.current = jobId;
+    setEvalJobId(jobId);
+  }, []);
 
-      // Mark streaming as complete and attach citations if present
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === data.streamId
-            ? { ...m, isStreaming: false, citations: data.citations }
-            : m
-        )
-      );
-      setIsResponsePending(false);
-    } else if (data.type === 'error') {
-      // Only show errors for current conversation
-      if (!isForCurrentConversation(data.conversationId)) return;
+  // Eval state object to pass to EvalMainContent
+  const evalState = useMemo(() => ({
+    jobId: evalJobId,
+    progress: evalProgress,
+    results: evalResults,
+    error: evalError,
+    loading: evalLoading,
+    setJobId: setEvalJobIdWithRef,
+    setProgress: setEvalProgress,
+    setResults: setEvalResults,
+    setError: setEvalError,
+    setLoading: setEvalLoading,
+  }), [evalJobId, evalProgress, evalResults, evalError, evalLoading, setEvalJobIdWithRef]);
 
-      const errorId = data.id || `err-${Date.now()}`;
-      setMessages((prev) => {
-        // Deduplicate by ID
-        if (prev.some((m) => m.id === errorId)) {
-          return prev;
-        }
-        return [
-          ...prev,
-          {
-            id: errorId,
-            role: 'assistant',
-            content: `**Error:** ${data.error}${data.details ? `\n\n\`\`\`\n${data.details}\n\`\`\`` : ''}`,
-            timestamp: data.timestamp,
-            isError: true,
-          },
-        ];
-      });
-      setIsResponsePending(false);
-    } else if (data.type === 'connected') {
-      setIsConnected(true);
-    } else if (data.type === 'interaction') {
-      // A2UI interaction request
-      setPendingInteraction(data.request);
-    } else if (data.type === 'tool_requested') {
-      // Only show tool requests for current conversation
-      if (!isForCurrentConversation(data.conversationId)) return;
+  // Ref to hold the loadStartupData function (updated via effect)
+  const loadStartupDataRef = useRef(null);
 
-      // Tool invocation - show compact system message
-      const toolId = `tool-${data.requestId}`;
-      setMessages((prev) => {
-        if (prev.some((m) => m.id === toolId)) return prev;
-        return [
-          ...prev,
-          {
-            id: toolId,
-            role: 'tool',
-            toolName: data.toolName,
-            source: data.source,
-            parameters: data.parameters,
-            status: 'running',
-            timestamp: data.timestamp,
-          },
-        ];
-      });
-    } else if (data.type === 'tool_execution_finished') {
-      // Only process tool results for current conversation
-      if (!isForCurrentConversation(data.conversationId)) return;
+  // Helper to process startup data (outside try/catch for React Compiler compatibility)
+  const processStartupData = useCallback((data) => {
+    // Model capabilities
+    setModelCapabilities(data.modelCapabilities);
 
-      // Update tool message with result
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === `tool-${data.requestId}`
-            ? {
-                ...m,
-                status: data.success ? 'completed' : 'failed',
-                durationMs: data.durationMs,
-                error: data.error,
-                parameters: data.parameters,
-                result: data.result,
-              }
-            : m
-        )
-      );
-    } else if (data.type === 'delegation') {
-      // Only show delegations for current conversation
-      if (!isForCurrentConversation(data.conversationId)) return;
+    // Conversations
+    const mappedConversations = data.conversations.map(c => ({
+      id: c.id,
+      title: c.title,
+      updatedAt: c.updatedAt || c.updated_at,
+      isWellKnown: c.isWellKnown || false,
+      icon: c.icon,
+    }));
+    setConversations(mappedConversations);
 
-      // Agent delegation event - show compact system message
-      const delegationId = `delegation-${data.agentId}`;
-      setMessages((prev) => {
-        if (prev.some((m) => m.id === delegationId)) return prev;
-        return [
-          ...prev,
-          {
-            id: delegationId,
-            role: 'delegation',
-            agentName: data.agentName,
-            agentEmoji: data.agentEmoji,
-            agentType: data.agentType,
-            mission: data.mission,
-            timestamp: data.timestamp,
-          },
-        ];
-      });
-    } else if (data.type === 'task_run') {
-      // Task run event - show compact task card
-      const taskRunId = `task-run-${data.taskId}-${Date.now()}`;
-      setMessages((prev) => {
-        if (prev.some((m) => m.taskId === data.taskId && m.role === 'task_run')) return prev;
-        return [
-          ...prev,
-          {
-            id: taskRunId,
-            role: 'task_run',
-            taskId: data.taskId,
-            taskName: data.taskName,
-            taskDescription: data.taskDescription,
-            timestamp: data.timestamp,
-          },
-        ];
-      });
-    } else if (data.type === 'conversation_created') {
-      // New conversation was auto-created by backend
-      const conv = data.conversation;
-      setConversations((prev) => {
-        // Don't add if already exists
-        if (prev.some((c) => c.id === conv.id)) return prev;
-        const newConv = {
-          id: conv.id,
-          title: conv.title,
-          updatedAt: conv.updatedAt,
-          isWellKnown: false,
-        };
-        // Insert after well-known conversations
-        const wellKnownCount = prev.filter((c) => c.isWellKnown).length;
-        return [...prev.slice(0, wellKnownCount), newConv, ...prev.slice(wellKnownCount)];
-      });
-      setCurrentConversationId(conv.id);
-      // Navigate to the new conversation URL
-      navigateRef.current(`/chat/${encodeURIComponent(conv.id)}`, { replace: true });
-    } else if (data.type === 'conversation_updated') {
-      // Conversation title or metadata was updated
-      const { id, title, updatedAt, manuallyNamed } = data.conversation;
-      setConversations((prev) =>
-        prev.map((c) => {
-          if (c.id !== id) return c;
-          // Don't override manually named conversations with auto-generated titles
-          if (c.manuallyNamed && !manuallyNamed) return c;
-          return {
-            ...c,
-            title: title || c.title,
-            updatedAt: updatedAt || c.updatedAt,
-            manuallyNamed: manuallyNamed || c.manuallyNamed,
-          };
-        })
-      );
-    } else if (data.type === 'task_updated') {
-      // Task was updated (e.g., after execution)
-      setAgentTasks((prev) =>
-        prev.map((t) =>
-          t.id === data.task.id ? { ...t, ...data.task } : t
-        )
-      );
-    } else if (data.type === 'browser_session_created') {
-      // New browser session was created
-      setBrowserSessions((prev) => {
-        if (prev.some((s) => s.id === data.session.id)) return prev;
-        return [...prev, data.session];
-      });
-      // Auto-expand accordion when first session is created
-      setExpandedAccordions((prev) => ({ ...prev, browserSessions: true }));
-    } else if (data.type === 'browser_session_updated') {
-      // Browser session was updated
-      setBrowserSessions((prev) =>
-        prev.map((s) =>
-          s.id === data.sessionId ? { ...s, ...data.updates } : s
-        )
-      );
-    } else if (data.type === 'browser_session_closed') {
-      // Browser session was closed
-      setBrowserSessions((prev) => prev.filter((s) => s.id !== data.sessionId));
-      // Clear screenshot for this session
-      setBrowserScreenshots((prev) => {
-        const next = { ...prev };
-        delete next[data.sessionId];
-        return next;
-      });
-      // Clear selection if this was selected
-      setSelectedBrowserSessionId((prev) => prev === data.sessionId ? null : prev);
-      // Remove click markers for this session
-      setClickMarkers((prev) => prev.filter((m) => m.sessionId !== data.sessionId));
-    } else if (data.type === 'browser_screenshot') {
-      // New screenshot from browser session
-      setBrowserScreenshots((prev) => ({
-        ...prev,
-        [data.sessionId]: {
-          screenshot: data.screenshot,
-          url: data.url,
-          timestamp: data.timestamp,
-        },
-      }));
-    } else if (data.type === 'browser_click_marker') {
-      // Click marker for visualization
-      const marker = {
-        ...data.marker,
-        id: `marker-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        sessionId: data.sessionId,
-      };
-      setClickMarkers((prev) => [...prev, marker]);
-      // Auto-remove marker after animation completes (1.5s)
-      setTimeout(() => {
-        setClickMarkers((prev) => prev.filter((m) => m.id !== marker.id));
-      }, 1500);
-    } else if (data.type === 'rag_indexing_started') {
-      // RAG indexing started
-      setRagIndexingProgress((prev) => ({
-        ...prev,
-        [data.projectId]: {
-          status: 'started',
-          totalDocuments: data.totalDocuments,
-          processedDocuments: 0,
-        },
-      }));
-      // Mark project as indexing
-      setRagProjects((prev) =>
-        prev.map((p) =>
-          p.id === data.projectId ? { ...p, isIndexing: true } : p
-        )
-      );
-    } else if (data.type === 'rag_indexing_progress') {
-      // RAG indexing progress update
-      setRagIndexingProgress((prev) => ({
-        ...prev,
-        [data.projectId]: {
-          status: 'processing',
-          totalDocuments: data.totalDocuments,
-          processedDocuments: data.processedDocuments,
-          currentDocument: data.currentDocument,
-        },
-      }));
-    } else if (data.type === 'rag_indexing_completed') {
-      // RAG indexing completed - remove from progress map
-      setRagIndexingProgress((prev) => {
-        const next = { ...prev };
-        delete next[data.projectId];
-        return next;
-      });
-      // Refresh project data
-      fetch('/api/rag/projects')
-        .then((res) => res.ok ? res.json() : [])
-        .then((projects) => setRagProjects(projects))
-        .catch(() => {});
-    } else if (data.type === 'rag_indexing_error') {
-      // RAG indexing error
-      setRagIndexingProgress((prev) => ({
-        ...prev,
-        [data.projectId]: {
-          status: 'error',
-          error: data.error,
-        },
-      }));
-      // Clear progress after a delay
-      setTimeout(() => {
-        setRagIndexingProgress((prev) => {
-          const next = { ...prev };
-          delete next[data.projectId];
-          return next;
-        });
-      }, 5000);
-      // Mark project as not indexing
-      setRagProjects((prev) =>
-        prev.map((p) =>
-          p.id === data.projectId ? { ...p, isIndexing: false } : p
-        )
-      );
-    } else if (data.type === 'rag_projects_changed') {
-      // RAG projects folder changed, refresh list
-      fetch('/api/rag/projects')
-        .then((res) => res.ok ? res.json() : [])
-        .then((projects) => setRagProjects(projects))
-        .catch(() => {});
+    // Set default conversation
+    const feedConversation = mappedConversations.find(c => c.id === ':feed:');
+    if (feedConversation) {
+      setCurrentConversationId(feedConversation.id);
+    } else if (mappedConversations.length > 0) {
+      setCurrentConversationId(mappedConversations[0].id);
+    }
+
+    // Messages - handle new feedMessages paginated structure
+    const feedData = data.feedMessages;
+    if (feedData && feedData.items) {
+      const pagination = feedData.pagination || {};
+      const items = transformMessages(feedData.items);
+      const total = pagination.totalCount || items.length;
+      setMessages(items);
+      // Initialize pagination state
+      setHasMoreOlder(pagination.hasOlder || false);
+      setOldestCursor(pagination.oldestCursor || null);
+      setTotalMessageCount(total);
+      // Reset to starting high index for prepending
+      setFirstItemIndex(100000);
+    } else {
+      // Fallback for backwards compatibility
+      setMessages([]);
+      setHasMoreOlder(false);
+      setOldestCursor(null);
+      setTotalMessageCount(0);
+      setFirstItemIndex(0);
+    }
+
+    // Sidebar data
+    setAgentTasks(data.tasks);
+    setSkills(data.skills);
+    setMcps(data.mcps);
+    setTools(data.tools);
+    const ragProjectsData = data.ragProjects;
+    if (ragProjectsData) {
+      setRagProjects(ragProjectsData);
+    } else {
+      setRagProjects([]);
+    }
+
+    // Agent templates (for collapse settings, display names, etc.)
+    if (data.agentTemplates) {
+      setAgentTemplates(data.agentTemplates);
     }
   }, []);
 
-  // Helper to transform message data from API format
-  const transformMessages = useCallback((data) => {
-    return data.map((msg) => {
-      // Determine the role based on message type
-      let role = msg.role;
-      if (msg.messageType === 'task_run') {
-        role = 'task_run';
-      } else if (msg.messageType === 'tool_event' || msg.role === 'tool') {
-        role = 'tool';
-      } else if (msg.messageType === 'delegation') {
-        role = 'delegation';
+  // Update loadStartupData ref via effect (not during render)
+  useEffect(() => {
+    loadStartupDataRef.current = async () => {
+      let res = null;
+      try {
+        res = await fetch('/api/startup');
+      } catch (error) {
+        console.error('Failed to load startup data:', error);
       }
 
-      return {
-        id: msg.id,
-        role,
-        content: msg.content,
-        timestamp: msg.createdAt,
-        agentName: msg.agentName || msg.delegationAgentId,
-        agentEmoji: msg.agentEmoji,
-        attachments: msg.attachments,
-        // Task metadata
-        taskId: msg.taskId,
-        taskName: msg.taskName,
-        taskDescription: msg.taskDescription,
-        // Tool event metadata
-        toolName: msg.toolName,
-        source: msg.toolSource,
-        status: msg.toolSuccess === true ? 'completed' : msg.toolSuccess === false ? 'failed' : undefined,
-        durationMs: msg.toolDurationMs,
-        error: msg.toolError,
-        parameters: msg.toolParameters,
-        result: msg.toolResult,
-        // Delegation metadata
-        agentType: msg.delegationAgentType,
-        mission: msg.delegationMission,
-        // Reasoning mode (from DB, vendor-neutral)
-        reasoningMode: msg.reasoningMode,
-        // Citations
-        citations: msg.citations,
-      };
-    });
-  }, []);
-
-  // Load all startup data in a single request
-  const loadStartupData = useCallback(async () => {
-    try {
-      const res = await fetch('/api/startup');
-      if (!res.ok) throw new Error('Startup API not available');
-      const data = await res.json();
-
-      // Model capabilities
-      setModelCapabilities(data.modelCapabilities);
-
-      // Conversations
-      const mappedConversations = data.conversations.map(c => ({
-        id: c.id,
-        title: c.title,
-        updatedAt: c.updatedAt || c.updated_at,
-        isWellKnown: c.isWellKnown || false,
-        icon: c.icon,
-      }));
-      setConversations(mappedConversations);
-
-      // Set default conversation
-      const feedConversation = mappedConversations.find(c => c.id === ':feed:');
-      if (feedConversation) {
-        setCurrentConversationId(feedConversation.id);
-      } else if (mappedConversations.length > 0) {
-        setCurrentConversationId(mappedConversations[0].id);
+      if (res && res.ok) {
+        const data = await res.json();
+        processStartupData(data);
+      } else {
+        setConversations([]);
+        setCurrentConversationId(null);
+        setMessages([]);
       }
-
-      // Messages
-      setMessages(transformMessages(data.messages));
-
-      // Sidebar data
-      setAgentTasks(data.tasks);
-      setSkills(data.skills);
-      setMcps(data.mcps);
-      setTools(data.tools);
-      setRagProjects(data.ragProjects || []);
-    } catch (error) {
-      console.error('Failed to load startup data:', error);
-      // Set empty states on failure
-      setConversations([]);
-      setCurrentConversationId(null);
-      setMessages([]);
-    } finally {
       setConversationsLoading(false);
       setShowSkeleton(false);
-    }
-  }, [transformMessages]);
+    };
+  }, [processStartupData]);
 
   // Track if this is the first connection (to avoid refreshing on initial connect)
   const hasConnectedOnce = useRef(false);
 
-  const handleOpen = useCallback(() => {
+  const handleOpen = () => {
     setIsConnected(true);
     // Only refresh data on REconnection, not initial connection
     // (initial data load is handled by the mount useEffect)
     if (hasConnectedOnce.current) {
-      loadStartupData();
+      loadStartupDataRef.current?.();
     }
     hasConnectedOnce.current = true;
-  }, [loadStartupData]);
-  const handleClose = useCallback(() => setIsConnected(false), []);
+  };
+  const handleClose = () => setIsConnected(false);
 
   const { sendMessage, connectionState } = useWebSocket({
     onMessage: handleMessage,
@@ -738,19 +338,10 @@ function App() {
       setShowSkeleton(true);
     }, 500);
 
-    loadStartupData().finally(() => clearTimeout(skeletonTimer));
+    loadStartupDataRef.current?.().finally(() => clearTimeout(skeletonTimer));
 
     return () => clearTimeout(skeletonTimer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-
-  // Smart auto-scroll - only scroll if user hasn't manually scrolled up
-  // Uses instant scroll (not smooth) so it doesn't create ongoing animations that fight with user input
-  useEffect(() => {
-    if (!isUserScrolled && messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView({ behavior: 'instant' });
-    }
-  }, [messages, isUserScrolled]);
 
   // Sync URL to state for chat mode deep linking
   // Ref to prevent re-triggering when we programmatically set state
@@ -769,63 +360,45 @@ function App() {
       // Default to feed view
       if (currentConversationId !== ':feed:' && conversations.some(c => c.id === ':feed:')) {
         setCurrentConversationId(':feed:');
-        // Load feed messages
-        fetch('/api/conversations/:feed:/messages')
-          .then(res => res.ok ? res.json() : [])
-          .then(data => setMessages(transformMessages(data)))
-          .catch(() => setMessages([]));
+        // Load feed messages with pagination
+        fetch('/api/conversations/:feed:/messages?limit=20&includeTotal=true')
+          .then(res => res.ok ? res.json() : { items: [], pagination: {} })
+          .then(data => {
+            const pagination = data.pagination || {};
+            setMessages(transformMessages(data.items || []));
+            setHasMoreOlder(pagination.hasOlder || false);
+            setOldestCursor(pagination.oldestCursor || null);
+            setFirstItemIndex(100000);
+          })
+          .catch(() => {
+            setMessages([]);
+            setHasMoreOlder(false);
+            setOldestCursor(null);
+          });
       }
     } else if (path.startsWith('/chat/')) {
       const convId = decodeURIComponent(path.slice(6)); // Remove '/chat/'
       if (convId && convId !== currentConversationId) {
         setCurrentConversationId(convId);
-        // Load conversation messages
-        fetch(`/api/conversations/${encodeURIComponent(convId)}/messages`)
-          .then(res => res.ok ? res.json() : [])
-          .then(data => setMessages(transformMessages(data)))
-          .catch(() => setMessages([]));
-      }
-    }
-
-    // Handle eval routes
-    if (path === '/eval') {
-      setSelectedEvaluation(null);
-      setSelectedSuite(null);
-      setSelectedResult(null);
-      setViewingResults(null);
-    } else if (path.startsWith('/eval/result/')) {
-      const resultPath = decodeURIComponent(path.slice(13)); // Remove '/eval/result/'
-      if (resultPath && (!selectedResult || selectedResult.filePath !== resultPath)) {
-        const resultInfo = { filePath: resultPath };
-        setSelectedResult(resultInfo);
-        setSelectedEvaluation(null);
-        setSelectedSuite(null);
-        // Fetch full result data
-        fetch(`/api/eval/result/${encodeURIComponent(resultPath)}`)
-          .then(res => res.ok ? res.json() : null)
+        // Load conversation messages with pagination
+        fetch(`/api/conversations/${encodeURIComponent(convId)}/messages?limit=20&includeTotal=true`)
+          .then(res => res.ok ? res.json() : { items: [], pagination: {} })
           .then(data => {
-            if (data?.result) setViewingResults(data.result);
+            const pagination = data.pagination || {};
+            setMessages(transformMessages(data.items || []));
+            setHasMoreOlder(pagination.hasOlder || false);
+            setOldestCursor(pagination.oldestCursor || null);
+            setFirstItemIndex(100000);
           })
-          .catch(err => console.error('Failed to load result:', err));
-      }
-    } else if (path.startsWith('/eval/suite/')) {
-      const suitePath = decodeURIComponent(path.slice(12)); // Remove '/eval/suite/'
-      if (suitePath && (!selectedSuite || selectedSuite.suitePath !== suitePath)) {
-        setSelectedSuite({ suitePath });
-        setSelectedEvaluation(null);
-        setSelectedResult(null);
-        setViewingResults(null);
-      }
-    } else if (path.startsWith('/eval/')) {
-      const evalPath = decodeURIComponent(path.slice(6)); // Remove '/eval/'
-      if (evalPath && (!selectedEvaluation || selectedEvaluation.path !== evalPath)) {
-        setSelectedEvaluation({ path: evalPath });
-        setSelectedSuite(null);
-        setSelectedResult(null);
-        setViewingResults(null);
+          .catch(() => {
+            setMessages([]);
+            setHasMoreOlder(false);
+            setOldestCursor(null);
+          });
       }
     }
-  }, [location.pathname, conversations, currentConversationId, selectedEvaluation, selectedResult, selectedSuite, transformMessages]);
+    // Note: Eval routes are handled by useEvalMode hook in App.Eval.jsx
+  }, [location.pathname, conversations, currentConversationId, transformMessages]);
 
   // Redirect root to /chat
   useEffect(() => {
@@ -834,89 +407,100 @@ function App() {
     }
   }, [location.pathname, navigate]);
 
-  // Track if we're programmatically scrolling (to avoid scroll event interference)
-  const isScrollingToBottom = useRef(false);
-
-  // Handle wheel events - immediately disengage auto-scroll when user scrolls up
-  const handleWheel = useCallback((e) => {
-    if (e.deltaY < 0) {
-      // User is scrolling UP - immediately disengage auto-scroll
-      setIsUserScrolled(true);
-      setShowScrollButton(true);
-    }
-  }, []);
-
-  // Handle scroll events to detect scroll position (only controls button visibility)
-  const handleScroll = useCallback(() => {
-    // Ignore scroll events during programmatic scroll
-    if (isScrollingToBottom.current) return;
-
-    const container = messagesContainerRef.current;
-    if (!container) return;
-
-    const { scrollTop, scrollHeight, clientHeight } = container;
-    const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
-
-    // Only control button visibility - don't change auto-scroll state here
-    // Auto-scroll is only re-enabled by clicking the "scroll to bottom" button
-    if (distanceFromBottom < 50) {
-      setShowScrollButton(false);
-    } else {
-      setShowScrollButton(true);
-    }
-  }, []);
-
-  // Scroll to bottom handler
+  // Scroll to bottom handler for Virtuoso
   const scrollToBottom = useCallback(() => {
-    isScrollingToBottom.current = true;
     setIsUserScrolled(false);
     setShowScrollButton(false);
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    // Reset flag after animation completes
-    setTimeout(() => {
-      isScrollingToBottom.current = false;
-    }, 500);
+    virtuosoRef.current?.scrollToIndex({
+      index: messages.length - 1,
+      behavior: 'smooth',
+      align: 'end',
+    });
+  }, [messages.length]);
+
+  // Load older messages when scrolling near unloaded area
+  const loadOlderMessages = useCallback(async () => {
+    if (isLoadingOlder || !hasMoreOlder || !oldestCursor) return;
+
+    const convId = currentConversationIdRef.current;
+    if (!convId) return;
+
+    setIsLoadingOlder(true);
+    let res = null;
+    try {
+      res = await fetch(
+        `/api/conversations/${encodeURIComponent(convId)}/messages?limit=20&before=${encodeURIComponent(oldestCursor)}`
+      );
+    } catch (error) {
+      console.error('Failed to load older messages:', error);
+    }
+
+    let data = null;
+    if (res && res.ok) {
+      data = await res.json();
+    }
+
+    if (data) {
+      const olderMessages = transformMessages(data.items || []);
+      const pagination = data.pagination || {};
+
+      if (olderMessages.length > 0) {
+        // Prepend messages and adjust firstItemIndex for scroll position stability
+        setFirstItemIndex((prev) => prev - olderMessages.length);
+        setMessages((prev) => [...olderMessages, ...prev]);
+        setHasMoreOlder(pagination.hasOlder || false);
+        setOldestCursor(pagination.oldestCursor || null);
+      } else {
+        setHasMoreOlder(false);
+      }
+    }
+    setIsLoadingOlder(false);
+  }, [isLoadingOlder, hasMoreOlder, oldestCursor]);
+
+  // Handle Virtuoso atBottomStateChange
+  const handleAtBottomStateChange = useCallback((atBottom) => {
+    setShowScrollButton(!atBottom);
+    if (atBottom) {
+      setIsUserScrolled(false);
+    }
   }, []);
 
   // Helper to insert a new conversation after well-known ones
-  const insertConversation = useCallback((prev, newConv) => {
+  const insertConversation = (prev, newConv) => {
     const wellKnownCount = prev.filter((c) => c.isWellKnown).length;
     return [...prev.slice(0, wellKnownCount), newConv, ...prev.slice(wellKnownCount)];
-  }, []);
+  };
 
   // Start a new conversation
-  const handleNewConversation = useCallback(async () => {
+  const handleNewConversation = async () => {
+    let res = null;
     try {
       // Create conversation on server
-      const res = await fetch('/api/conversations', {
+      res = await fetch('/api/conversations', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: 'New Conversation' }),
       });
-
-      if (res.ok) {
-        const newConv = await res.json();
-        setConversations((prev) => insertConversation(prev, {
-          id: newConv.id,
-          title: newConv.title,
-          updatedAt: newConv.updatedAt || new Date().toISOString(),
-          isWellKnown: false,
-        }));
-        setCurrentConversationId(newConv.id);
-        // Navigate to the new conversation URL
-        navigate(`/chat/${encodeURIComponent(newConv.id)}`, { replace: true });
-      }
-
-      // Tell server to start new conversation context
-      sendMessage({ type: 'new-conversation' });
-
-      // Clear local messages
-      setMessages([]);
-      setIsUserScrolled(false);
-      setShowScrollButton(false);
-      setIsResponsePending(false);
     } catch (error) {
       console.error('Failed to create new conversation:', error);
+    }
+
+    let newConv = null;
+    if (res && res.ok) {
+      newConv = await res.json();
+    }
+
+    if (newConv) {
+      setConversations((prev) => insertConversation(prev, {
+        id: newConv.id,
+        title: newConv.title,
+        updatedAt: newConv.updatedAt || new Date().toISOString(),
+        isWellKnown: false,
+      }));
+      setCurrentConversationId(newConv.id);
+      // Navigate to the new conversation URL
+      navigate(`/chat/${encodeURIComponent(newConv.id)}`, { replace: true });
+    } else {
       // Fallback to local-only
       const newId = `conv-${Date.now()}`;
       setConversations((prev) => insertConversation(prev, {
@@ -926,58 +510,80 @@ function App() {
         isWellKnown: false,
       }));
       setCurrentConversationId(newId);
-      setMessages([]);
       // Navigate to the new conversation URL
       navigate(`/chat/${encodeURIComponent(newId)}`, { replace: true });
     }
-  }, [sendMessage, insertConversation, navigate]);
+
+    // Tell server to start new conversation context
+    sendMessage({ type: 'new-conversation' });
+
+    // Clear local messages and reset pagination
+    setMessages([]);
+    setIsUserScrolled(false);
+    setShowScrollButton(false);
+    setIsResponsePending(false);
+    setHasMoreOlder(false);
+    setOldestCursor(null);
+    setFirstItemIndex(100000);
+  };
 
   // Delete conversation (soft delete)
-  const handleDeleteConversation = useCallback(async (convId, e) => {
+  const handleDeleteConversation = async (convId, e) => {
     e.stopPropagation(); // Prevent selecting the conversation
     setOpenMenuId(null);
 
+    let deleteSuccess = false;
     try {
       const res = await fetch(`/api/conversations/${convId}`, {
         method: 'DELETE',
       });
-
-      if (res.ok) {
-        // Remove from local state
-        setConversations((prev) => prev.filter((c) => c.id !== convId));
-
-        // If deleted conversation was current, switch to another or clear
-        if (convId === currentConversationId) {
-          const remaining = conversations.filter((c) => c.id !== convId);
-          if (remaining.length > 0) {
-            const nextConv = remaining[0];
-            setCurrentConversationId(nextConv.id);
-            // Navigate to the next conversation
-            if (nextConv.id === ':feed:') {
-              navigate('/chat');
-            } else {
-              navigate(`/chat/${encodeURIComponent(nextConv.id)}`);
-            }
-            // Load messages for new current conversation
-            const msgRes = await fetch(`/api/conversations/${encodeURIComponent(nextConv.id)}/messages`);
-            if (msgRes.ok) {
-              const data = await msgRes.json();
-              setMessages(transformMessages(data));
-            }
-          } else {
-            setCurrentConversationId(null);
-            setMessages([]);
-            navigate('/chat');
-          }
-        }
-      }
+      deleteSuccess = res.ok;
     } catch (error) {
       console.error('Failed to delete conversation:', error);
     }
-  }, [conversations, currentConversationId, navigate, transformMessages]);
+
+    if (!deleteSuccess) return;
+
+    // Remove from local state
+    setConversations((prev) => prev.filter((c) => c.id !== convId));
+
+    // If deleted conversation was current, switch to another or clear
+    if (convId === currentConversationId) {
+      const remaining = conversations.filter((c) => c.id !== convId);
+      if (remaining.length > 0) {
+        const nextConv = remaining[0];
+        setCurrentConversationId(nextConv.id);
+        // Navigate to the next conversation
+        if (nextConv.id === ':feed:') {
+          navigate('/chat');
+        } else {
+          navigate(`/chat/${encodeURIComponent(nextConv.id)}`);
+        }
+        // Load messages for new current conversation with pagination
+        fetch(`/api/conversations/${encodeURIComponent(nextConv.id)}/messages?limit=20&includeTotal=true`)
+          .then(res => res.ok ? res.json() : null)
+          .then(data => {
+            if (data) {
+              const pagination = data.pagination || {};
+              setMessages(transformMessages(data.items || []));
+              setHasMoreOlder(pagination.hasOlder || false);
+              setOldestCursor(pagination.oldestCursor || null);
+              setFirstItemIndex(100000);
+            }
+          });
+      } else {
+        setCurrentConversationId(null);
+        setMessages([]);
+        setHasMoreOlder(false);
+        setOldestCursor(null);
+        setFirstItemIndex(100000);
+        navigate('/chat');
+      }
+    }
+  };
 
   // Start inline rename
-  const handleRenameConversation = useCallback((convId, e) => {
+  const handleRenameConversation = (convId, e) => {
     e.stopPropagation();
     setOpenMenuId(null);
 
@@ -986,12 +592,15 @@ function App() {
 
     setEditingConversationId(convId);
     setEditingTitle(conversation.title);
-    // Focus the input after render
-    setTimeout(() => renameInputRef.current?.focus(), 0);
-  }, [conversations]);
+    // Focus and select the input text after render
+    setTimeout(() => {
+      renameInputRef.current?.focus();
+      renameInputRef.current?.select();
+    }, 0);
+  };
 
   // Save the rename
-  const handleSaveRename = useCallback(async () => {
+  const handleSaveRename = async () => {
     if (!editingConversationId) return;
 
     const originalConv = conversations.find((c) => c.id === editingConversationId);
@@ -1004,39 +613,43 @@ function App() {
       return;
     }
 
+    let res = null;
     try {
-      const res = await fetch(`/api/conversations/${editingConversationId}`, {
+      res = await fetch(`/api/conversations/${editingConversationId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: newTitle }),
       });
-
-      if (res.ok) {
-        const data = await res.json();
-        setConversations((prev) =>
-          prev.map((c) =>
-            c.id === editingConversationId
-              ? { ...c, title: data.conversation.title, manuallyNamed: true }
-              : c
-          )
-        );
-      }
     } catch (error) {
       console.error('Failed to rename conversation:', error);
     }
 
+    let data = null;
+    if (res && res.ok) {
+      data = await res.json();
+    }
+    if (data) {
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id === editingConversationId
+            ? { ...c, title: data.conversation.title, manuallyNamed: true }
+            : c
+        )
+      );
+    }
+
     setEditingConversationId(null);
     setEditingTitle('');
-  }, [editingConversationId, editingTitle, conversations]);
+  };
 
   // Cancel the rename
-  const handleCancelRename = useCallback(() => {
+  const handleCancelRename = () => {
     setEditingConversationId(null);
     setEditingTitle('');
-  }, []);
+  };
 
   // Handle keydown in rename input
-  const handleRenameKeyDown = useCallback((e) => {
+  const handleRenameKeyDown = (e) => {
     if (e.key === 'Enter') {
       e.preventDefault();
       handleSaveRename();
@@ -1044,13 +657,13 @@ function App() {
       e.preventDefault();
       handleCancelRename();
     }
-  }, [handleSaveRename, handleCancelRename]);
+  };
 
   // Toggle actions menu
-  const toggleActionsMenu = useCallback((convId, e) => {
+  const toggleActionsMenu = (convId, e) => {
     e.stopPropagation(); // Prevent selecting the conversation
     setOpenMenuId((prev) => (prev === convId ? null : convId));
-  }, []);
+  };
 
   // Close menu when clicking outside
   useEffect(() => {
@@ -1061,17 +674,9 @@ function App() {
     }
   }, [openMenuId]);
 
-  // Close hashtag menu when clicking outside
-  useEffect(() => {
-    const handleClickOutside = () => setHashtagMenuOpen(false);
-    if (hashtagMenuOpen) {
-      document.addEventListener('click', handleClickOutside);
-      return () => document.removeEventListener('click', handleClickOutside);
-    }
-  }, [hashtagMenuOpen]);
 
   // Switch conversation - navigates to the conversation URL
-  const handleSelectConversation = useCallback((convId) => {
+  const handleSelectConversation = (convId) => {
     if (convId === currentConversationId) return;
 
     // Mark that we're navigating to prevent URL sync effect from re-triggering
@@ -1087,67 +692,36 @@ function App() {
       navigate(`/chat/${encodeURIComponent(convId)}`);
     }
 
-    // Update state and load messages
+    // Update state and load messages with pagination
     setCurrentConversationId(convId);
-    fetch(`/api/conversations/${encodeURIComponent(convId)}/messages`)
-      .then(res => res.ok ? res.json() : [])
-      .then(data => setMessages(transformMessages(data)))
-      .catch(() => setMessages([]));
-  }, [currentConversationId, navigate, transformMessages]);
-
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    if (!input.trim() && attachments.length === 0) return;
-
-    // If user is near the bottom when sending, re-enable auto-scroll
-    const container = messagesContainerRef.current;
-    if (container) {
-      const { scrollTop, scrollHeight, clientHeight } = container;
-      const distanceFromBottom = scrollHeight - scrollTop - clientHeight;
-      if (distanceFromBottom < 150) {
-        setIsUserScrolled(false);
-      }
-    }
-
-    // Process attachments to base64
-    const processedAttachments = await Promise.all(
-      attachments.map(async (file) => {
-        const base64 = await fileToBase64(file);
-        return {
-          name: file.name,
-          type: file.type,
-          size: file.size,
-          data: base64,
-        };
+    fetch(`/api/conversations/${encodeURIComponent(convId)}/messages?limit=20&includeTotal=true`)
+      .then(res => res.ok ? res.json() : { items: [], pagination: {} })
+      .then(data => {
+        const pagination = data.pagination || {};
+        setMessages(transformMessages(data.items || []));
+        setHasMoreOlder(pagination.hasOlder || false);
+        setOldestCursor(pagination.oldestCursor || null);
+        setFirstItemIndex(100000);
       })
-    );
-
-    // Add user message to UI immediately
-    const userMessage = {
-      id: Date.now(),
-      role: 'user',
-      content: input,
-      attachments: attachments.map(f => ({ name: f.name, type: f.type, size: f.size })),
-      timestamp: new Date().toISOString(),
-      reasoningMode: reasoningMode, // Track reasoning mode used for this message
-    };
-    setMessages((prev) => [...prev, userMessage]);
-
-    // Send via WebSocket with conversation ID, attachments, and reasoning effort
-    sendMessage({
-      type: 'message',
-      content: input,
-      attachments: processedAttachments,
-      conversationId: currentConversationId,
-      reasoningEffort: reasoningMode,
-    });
-    setInput('');
-    setAttachments([]);
-    setReasoningMode(null);
-    setIsResponsePending(true);
+      .catch(() => {
+        setMessages([]);
+        setHasMoreOlder(false);
+        setOldestCursor(null);
+      });
   };
 
-  // Convert file to base64
+  // Handle chat submission - receives input text from ChatInput component
+  // Uses refs to avoid dependencies that would cause callback recreation
+  const attachmentsRef = useRef(attachments);
+  const reasoningModeRef = useRef(reasoningMode);
+  const messageTypeRef = useRef(messageType);
+
+  // Keep refs in sync (currentConversationIdRef is already synced above)
+  useEffect(() => { attachmentsRef.current = attachments; }, [attachments]);
+  useEffect(() => { reasoningModeRef.current = reasoningMode; }, [reasoningMode]);
+  useEffect(() => { messageTypeRef.current = messageType; }, [messageType]);
+
+  // Convert file to base64 (defined before handleSubmit which uses it)
   const fileToBase64 = (file) => {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -1160,23 +734,82 @@ function App() {
     });
   };
 
+  const handleSubmit = useCallback(async (inputText) => {
+    const currentAttachments = attachmentsRef.current;
+    const currentReasoningMode = reasoningModeRef.current;
+    const currentMessageType = messageTypeRef.current;
+    const convId = currentConversationIdRef.current;
+
+    if (!inputText.trim() && currentAttachments.length === 0) return;
+
+    // Re-enable auto-scroll when sending a message (Virtuoso's followOutput will handle it)
+    setIsUserScrolled(false);
+
+    // Process attachments to base64
+    const processedAttachments = await Promise.all(
+      currentAttachments.map(async (file) => {
+        const base64 = await fileToBase64(file);
+        return {
+          name: file.name,
+          type: file.type,
+          size: file.size,
+          data: base64,
+        };
+      })
+    );
+
+    // Generate a unique message ID for deduplication (prevents React Strict Mode double-sends)
+    const messageId =
+      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
+
+    // Add user message to UI immediately
+    const userMessage = {
+      id: messageId,
+      role: 'user',
+      content: inputText,
+      attachments: currentAttachments.map(f => ({ name: f.name, type: f.type, size: f.size })),
+      timestamp: new Date().toISOString(),
+      reasoningMode: currentReasoningMode,
+      messageType: currentMessageType,
+    };
+    setTotalMessageCount((c) => c + 1);
+    setMessages((prev) => [...prev, userMessage]);
+
+    // Send via WebSocket with conversation ID, attachments, reasoning effort, and message type
+    sendMessage({
+      type: 'message',
+      messageId: messageId,
+      content: inputText,
+      attachments: processedAttachments,
+      conversationId: convId,
+      reasoningEffort: currentReasoningMode,
+      messageType: currentMessageType,
+    });
+    setAttachments([]);
+    setReasoningMode(null);
+    setMessageType(null);
+    setIsResponsePending(true);
+  }, [sendMessage]);
+
   // Handle file drop
-  const handleDrop = useCallback((e) => {
+  const handleDrop = (e) => {
     e.preventDefault();
     setIsDragOver(false);
     const files = Array.from(e.dataTransfer.files);
     setAttachments((prev) => [...prev, ...files]);
-  }, []);
+  };
 
-  const handleDragOver = useCallback((e) => {
+  const handleDragOver = (e) => {
     e.preventDefault();
     setIsDragOver(true);
-  }, []);
+  };
 
-  const handleDragLeave = useCallback((e) => {
+  const handleDragLeave = (e) => {
     e.preventDefault();
     setIsDragOver(false);
-  }, []);
+  };
 
   // Handle paste - extract images from clipboard
   const handlePaste = useCallback((e) => {
@@ -1205,131 +838,49 @@ function App() {
     setAttachments((prev) => prev.filter((_, i) => i !== index));
   }, []);
 
-  // Handle input change - detect # trigger for reasoning mode menu
-  const handleInputChange = useCallback((e) => {
-    const newValue = e.target.value;
-    const cursorPos = e.target.selectionStart;
-
-    // Check if user just typed # at start or after a space
-    if (newValue.length > input.length && modelCapabilities.reasoningEfforts?.length > 0) {
-      const charJustTyped = newValue[cursorPos - 1];
-      const charBefore = cursorPos > 1 ? newValue[cursorPos - 2] : '';
-
-      if (charJustTyped === '#' && (cursorPos === 1 || charBefore === ' ' || charBefore === '\n')) {
-        // Calculate position for menu
-        const textarea = textareaRef.current;
-        if (textarea) {
-          const rect = textarea.getBoundingClientRect();
-          setHashtagMenuPosition({
-            top: rect.top - 8, // Position above the textarea
-            left: rect.left + 12,
-          });
-          setHashtagMenuOpen(true);
-          setHashtagMenuIndex(0);
-        }
-      }
-    }
-
-    setInput(newValue);
-  }, [input, modelCapabilities.reasoningEfforts]);
-
-  // Handle reasoning mode selection
-  const handleSelectReasoningMode = useCallback((mode) => {
-    setReasoningMode(mode);
-    setHashtagMenuOpen(false);
-    // Remove the # from input
-    const cursorPos = textareaRef.current?.selectionStart || 0;
-    setInput(prev => {
-      // Find the # before cursor and remove it
-      const before = prev.slice(0, cursorPos);
-      const after = prev.slice(cursorPos);
-      const hashIndex = before.lastIndexOf('#');
-      if (hashIndex >= 0) {
-        return before.slice(0, hashIndex) + after;
-      }
-      return prev;
-    });
-    textareaRef.current?.focus();
-  }, []);
-
-  // Handle textarea key down (submit on Enter, newline on Shift+Enter)
-  const handleKeyDown = useCallback((e) => {
-    // Handle hashtag menu navigation
-    if (hashtagMenuOpen) {
-      const availableModes = modelCapabilities.reasoningEfforts || [];
-      if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        setHashtagMenuIndex(prev => Math.min(prev + 1, availableModes.length - 1));
-        return;
-      } else if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        setHashtagMenuIndex(prev => Math.max(prev - 1, 0));
-        return;
-      } else if (e.key === 'Enter') {
-        e.preventDefault();
-        if (availableModes[hashtagMenuIndex]) {
-          handleSelectReasoningMode(availableModes[hashtagMenuIndex]);
-        }
-        return;
-      } else if (e.key === 'Escape') {
-        e.preventDefault();
-        setHashtagMenuOpen(false);
-        return;
-      }
-    }
-
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      if (input.trim() || attachments.length > 0) {
-        handleSubmit(e);
-      }
-    }
-  }, [input, attachments, hashtagMenuOpen, hashtagMenuIndex, modelCapabilities.reasoningEfforts, handleSelectReasoningMode]);
-
   const handleAction = (action, data) => {
     sendMessage({ type: 'action', action, data, conversationId: currentConversationId });
   };
 
-  const handleInteractionResponse = (response) => {
-    sendMessage({
-      type: 'interaction-response',
-      requestId: pendingInteraction.id,
-      conversationId: currentConversationId,
-      ...response,
-    });
-    setPendingInteraction(null);
-  };
-
   // Run a task immediately
-  const handleRunTask = useCallback(async (taskId) => {
+  const handleRunTask = async (taskId) => {
+    let success = false;
     try {
       const res = await fetch(`/api/tasks/${taskId}/run`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ conversationId: currentConversationId }),
       });
-
-      if (res.ok) {
-        // Update the task in local state to show it's running
-        setAgentTasks((prev) =>
-          prev.map((t) =>
-            t.id === taskId ? { ...t, status: 'running' } : t
-          )
-        );
-      } else {
-        console.error('Failed to run task');
-      }
+      success = res.ok;
     } catch (error) {
       console.error('Error running task:', error);
     }
-  }, [currentConversationId]);
+
+    if (success) {
+      // Update the task in local state to show it's running
+      setAgentTasks((prev) =>
+        prev.map((t) =>
+          t.id === taskId ? { ...t, status: 'running' } : t
+        )
+      );
+    } else {
+      console.error('Failed to run task');
+    }
+  };
 
   // Helper to check if a value is a data URL image
   const isDataUrlImage = (value) => {
     return typeof value === 'string' && value.startsWith('data:image/');
   };
 
-  // Render tool result with special handling for images
+  // Helper to check if result contains audio data (tool-agnostic)
+  const isAudioResult = (obj) => {
+    if (!obj || typeof obj !== 'object') return false;
+    // Check for audio field with base64 data (long string)
+    return obj.audio && typeof obj.audio === 'string' && obj.audio.length > 100;
+  };
+
+  // Render tool result with special handling for images and audio
   const renderToolResult = (result) => {
     if (!result) return null;
 
@@ -1349,31 +900,65 @@ function App() {
       let trimmed = result.trim();
       // Handle double-stringified JSON (starts with " and contains escaped quotes)
       if (trimmed.startsWith('"') && trimmed.includes('\\"')) {
+        let unwrapped = null;
         try {
-          // First parse to unwrap the outer string
-          const unwrapped = JSON.parse(trimmed);
-          if (typeof unwrapped === 'string') {
-            trimmed = unwrapped.trim();
-          }
+          unwrapped = JSON.parse(trimmed);
         } catch {
           // Continue with original
+        }
+        if (unwrapped && typeof unwrapped === 'string') {
+          trimmed = unwrapped.trim();
         }
       }
 
       if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+        let parsed = null;
         try {
-          parsedResult = JSON.parse(trimmed);
+          parsed = JSON.parse(trimmed);
         } catch {
-          // Not valid JSON, keep as string
+          // Not valid JSON
+        }
+        if (parsed === null) {
           return <pre className="tool-details-content">{result}</pre>;
         }
+        parsedResult = parsed;
       } else {
         return <pre className="tool-details-content">{result}</pre>;
       }
     }
 
-    // If parsedResult is an object, look for any properties containing data URL images
+    // If parsedResult is an object, check for special content types
     if (typeof parsedResult === 'object' && parsedResult !== null) {
+      // Check for audio result (any tool returning audio data)
+      if (isAudioResult(parsedResult)) {
+        // Get non-audio properties to display alongside player
+        const nonAudioEntries = Object.entries(parsedResult).filter(
+          ([key]) => key !== 'audio'
+        );
+
+        return (
+          <div className="tool-result-with-audio">
+            <AudioPlayer
+              audioBase64={parsedResult.audio}
+              mimeType={parsedResult.mimeType || 'audio/pcm;rate=24000'}
+            />
+            {nonAudioEntries.length > 0 && (
+              <div className="tool-result-properties">
+                {nonAudioEntries.map(([key, value]) => (
+                  <div key={key} className="tool-result-property">
+                    <span className="tool-result-key">{key}:</span>{' '}
+                    <span className="tool-result-value">
+                      {typeof value === 'string' ? value : JSON.stringify(value)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      }
+
+      // Check for image data URLs
       const imageEntries = Object.entries(parsedResult).filter(
         ([, value]) => isDataUrlImage(value)
       );
@@ -1420,7 +1005,7 @@ function App() {
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
 
-  // Toggle accordion
+  // Toggle accordion - memoized since it only uses state setter
   const toggleAccordion = useCallback((key) => {
     setExpandedAccordions((prev) => ({
       ...prev,
@@ -1429,7 +1014,7 @@ function App() {
   }, []);
 
   // Format tool tooltip with description and inputs
-  const formatToolTooltip = useCallback((tool) => {
+  const formatToolTooltip = (tool) => {
     let tooltip = tool.description || tool.name;
     if (tool.inputs && tool.inputs.length > 0) {
       tooltip += '\n\nInputs:';
@@ -1442,10 +1027,10 @@ function App() {
       }
     }
     return tooltip;
-  }, []);
+  };
 
   // Toggle tool event expansion
-  const toggleToolExpand = useCallback((toolId) => {
+  const toggleToolExpand = (toolId) => {
     setExpandedTools((prev) => {
       const newSet = new Set(prev);
       if (newSet.has(toolId)) {
@@ -1455,7 +1040,20 @@ function App() {
       }
       return newSet;
     });
-  }, []);
+  };
+
+  // Toggle agent message expansion (for messages that collapse by default)
+  const toggleAgentMessageExpand = (msgId) => {
+    setExpandedAgentMessages((prev) => {
+      const newSet = new Set(prev);
+      if (newSet.has(msgId)) {
+        newSet.delete(msgId);
+      } else {
+        newSet.add(msgId);
+      }
+      return newSet;
+    });
+  };
 
   // Format date for conversation list
   const formatDate = (dateStr) => {
@@ -1469,36 +1067,9 @@ function App() {
     return date.toLocaleDateString();
   };
 
-  // Eval mode handlers - memoized to prevent EvalSidebar re-renders
-  const handleSelectEvaluation = useCallback((evaluation) => {
-    if (evaluation) {
-      navigate(`/eval/${encodeURIComponent(evaluation.path)}`);
-    } else {
-      navigate('/eval');
-    }
-  }, [navigate]);
+  // Note: Eval mode handlers are now in useEvalMode hook (App.Eval.jsx)
 
-  const handleSelectSuite = useCallback((suite) => {
-    if (suite) {
-      navigate(`/eval/suite/${encodeURIComponent(suite.suitePath)}`);
-    } else {
-      navigate('/eval');
-    }
-  }, [navigate]);
-
-  const handleSelectResult = useCallback((resultInfo) => {
-    if (resultInfo) {
-      navigate(`/eval/result/${encodeURIComponent(resultInfo.filePath)}`);
-    } else {
-      navigate('/eval');
-    }
-  }, [navigate]);
-
-  const handleEvalBack = useCallback(() => {
-    navigate('/eval');
-  }, [navigate]);
-
-  // Handle browser session selection
+  // Handle browser session selection - memoized
   const handleSelectBrowserSession = useCallback((sessionId) => {
     setSelectedBrowserSessionId(sessionId);
   }, []);
@@ -1508,7 +1079,7 @@ function App() {
     setSelectedBrowserSessionId(null);
   }, []);
 
-  // Close browser session (terminate the browser process)
+  // Close browser session (terminate the browser process) - memoized
   const handleCloseBrowserSession = useCallback((sessionId) => {
     // Optimistically remove from UI immediately
     setBrowserSessions((prev) => prev.filter((s) => s.id !== sessionId));
@@ -1517,61 +1088,60 @@ function App() {
       delete next[sessionId];
       return next;
     });
-    if (selectedBrowserSessionId === sessionId) {
-      setSelectedBrowserSessionId(null);
-    }
+    // Use functional update to check selected session without dependency
+    setSelectedBrowserSessionId((prev) => prev === sessionId ? null : prev);
     // Send close request to server
     sendMessage({ type: 'browser-action', action: 'close', sessionId });
-  }, [sendMessage, selectedBrowserSessionId]);
+  }, [sendMessage]);
 
-  // Toggle browser sessions accordion - memoized to prevent BrowserSessions re-render
+  // Toggle browser sessions accordion - memoized
   const handleToggleBrowserSessions = useCallback(() => {
     toggleAccordion('browserSessions');
   }, [toggleAccordion]);
 
-  // Toggle RAG projects accordion
+  // Toggle RAG projects accordion - memoized
   const handleToggleRagProjects = useCallback(() => {
     toggleAccordion('ragProjects');
   }, [toggleAccordion]);
 
-  // Handle RAG project indexing (force=true for full re-index)
+  // Handle RAG project indexing (force=true for full re-index) - memoized
   const handleIndexProject = useCallback(async (projectId, force = false) => {
+    let url = '/api/rag/projects/' + projectId + '/index';
+    if (force) {
+      url = url + '?force=true';
+    }
+    let res = null;
     try {
-      const url = force
-        ? `/api/rag/projects/${projectId}/index?force=true`
-        : `/api/rag/projects/${projectId}/index`;
-      const res = await fetch(url, {
-        method: 'POST',
-      });
-      if (!res.ok) {
-        const data = await res.json();
-        console.error('Failed to start indexing:', data.error);
-      }
+      res = await fetch(url, { method: 'POST' });
     } catch (error) {
       console.error('Failed to start indexing:', error);
+      return;
+    }
+    if (!res.ok) {
+      res.json().then(data => console.error('Failed to start indexing:', data.error));
     }
   }, []);
 
-  // Handle file upload to RAG project via drag-and-drop
+  // Handle file upload to RAG project via drag-and-drop - memoized
   const handleUploadToProject = useCallback(async (projectId, files) => {
+    const formData = new FormData();
+    for (let i = 0; i < files.length; i++) {
+      formData.append('files', files[i]);
+    }
+    let res = null;
     try {
-      const formData = new FormData();
-      for (const file of files) {
-        formData.append('files', file);
-      }
-      const res = await fetch(`/api/rag/projects/${projectId}/upload?index=true`, {
+      res = await fetch(`/api/rag/projects/${projectId}/upload?index=true`, {
         method: 'POST',
         body: formData,
       });
-      if (!res.ok) {
-        const data = await res.json();
-        console.error('Failed to upload files:', data.error);
-      } else {
-        const data = await res.json();
-        console.log('Upload successful:', data);
-      }
     } catch (error) {
       console.error('Failed to upload files:', error);
+      return;
+    }
+    if (!res.ok) {
+      res.json().then(data => console.error('Failed to upload files:', data.error));
+    } else {
+      res.json().then(data => console.log('Upload successful:', data));
     }
   }, []);
 
@@ -1579,6 +1149,221 @@ function App() {
   const selectedBrowserSession = browserSessions.find(
     (s) => s.id === selectedBrowserSessionId
   );
+
+  // Render a single message item for Virtuoso (index-based for totalCount mode)
+  // Render a single message item for Virtuoso
+  const renderMessageItem = useCallback((index, msg) => {
+    if (msg.role === 'tool') {
+      // Expandable tool invocation display
+      return (
+        <div className={`tool-event-wrapper ${expandedTools.has(msg.id) ? 'expanded' : ''}`}>
+          <div
+            className={`tool-event ${msg.status}`}
+            onClick={() => toggleToolExpand(msg.id)}
+            style={{ cursor: 'pointer' }}
+          >
+            <span className="tool-icon">
+              {msg.source === 'mcp' ? '🔌' : msg.source === 'skill' ? '⚡' : '🔧'}
+            </span>
+            <span className="tool-status-indicator">
+              {msg.status === 'running' ? '◐' : msg.status === 'completed' ? '✓' : '✗'}
+            </span>
+            <span className="tool-name">{msg.toolName}</span>
+            {msg.parameters?.task && (
+              <span className="tool-mission">{msg.parameters.task}</span>
+            )}
+            {msg.durationMs !== undefined && (
+              <span className="tool-duration">{msg.durationMs}ms</span>
+            )}
+            <span className="tool-expand-icon">
+              {expandedTools.has(msg.id) ? '▼' : '▶'}
+            </span>
+          </div>
+          {expandedTools.has(msg.id) && (
+            <div className="tool-details">
+              {(msg.agentName || msg.agentEmoji) && (
+                <div className="tool-details-section">
+                  <div className="tool-details-label">Called By</div>
+                  <div className="tool-details-agent">
+                    {msg.agentEmoji && <span className="tool-agent-emoji">{msg.agentEmoji}</span>}
+                    {msg.agentName && <span className="tool-agent-name">{msg.agentName}</span>}
+                  </div>
+                </div>
+              )}
+              {msg.parameters && Object.keys(msg.parameters).length > 0 && (
+                <div className="tool-details-section">
+                  <div className="tool-details-label">Parameters</div>
+                  <pre className="tool-details-content">
+                    {JSON.stringify(msg.parameters, null, 2)}
+                  </pre>
+                </div>
+              )}
+              {msg.result && (
+                <div className="tool-details-section">
+                  <div className="tool-details-label">Response</div>
+                  {renderToolResult(msg.result)}
+                </div>
+              )}
+              {msg.error && (
+                <div className="tool-details-section error">
+                  <div className="tool-details-label">Error</div>
+                  <pre className="tool-details-content">{msg.error}</pre>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    if (msg.role === 'delegation') {
+      // Compact delegation display
+      return (
+        <div className="delegation-event">
+          <span className="delegation-icon">🎯</span>
+          <span className="delegation-agent">
+            {msg.agentEmoji} {msg.agentName}
+          </span>
+          <span className="delegation-mission">{msg.mission}</span>
+        </div>
+      );
+    }
+
+    if (msg.role === 'task_run') {
+      // Compact task run display
+      return (
+        <div className="task-run-event">
+          <span className="task-run-icon">📋</span>
+          <span className="task-run-label">Running Task</span>
+          <span className="task-run-name">{msg.taskName}</span>
+          {msg.taskDescription && (
+            <span className="task-run-description">{msg.taskDescription}</span>
+          )}
+        </div>
+      );
+    }
+
+    if (shouldCollapseByDefault(msg.agentType, msg.agentName, agentTemplates)) {
+      // Collapsible agent message (uses collapseResponseByDefault from backend)
+      return (
+        <div className={`collapsible-agent-message ${expandedAgentMessages.has(msg.id) ? 'expanded' : 'collapsed'}`}>
+          <div
+            className="collapsible-agent-header"
+            onClick={() => toggleAgentMessageExpand(msg.id)}
+          >
+            <span className="collapsible-agent-icon">{msg.agentEmoji || '📚'}</span>
+            <span className="collapsible-agent-name">{msg.agentName || 'Agent'}</span>
+            <span className="collapsible-agent-preview">
+              {msg.content ? (msg.content.substring(0, 80) + (msg.content.length > 80 ? '...' : '')) : 'Processing...'}
+            </span>
+            <span className="collapsible-agent-expand-icon">
+              {expandedAgentMessages.has(msg.id) ? '▼' : '▶'}
+            </span>
+          </div>
+          {expandedAgentMessages.has(msg.id) && (
+            <div className={`message ${msg.role}${msg.isError ? ' error' : ''}${msg.isStreaming ? ' streaming' : ''}`}>
+              <div className="message-avatar">
+                {msg.isError ? '⚠️' : (msg.agentEmoji || '🐙')}
+              </div>
+              <div className="message-content">
+                <MessageContent content={msg.content} html={msg.html} isStreaming={msg.isStreaming} citations={msg.citations} messageId={msg.id} />
+                {msg.role === 'assistant' && msg.citations && !msg.isStreaming && (
+                  <CitationPanel citations={msg.citations} messageId={msg.id} />
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // Default message display
+    return (
+      <div className={`message ${msg.role}${msg.isError ? ' error' : ''}${msg.isStreaming ? ' streaming' : ''}`}>
+        <div className="message-avatar">
+          {msg.isError ? '⚠️' : msg.role === 'user' ? '👤' : (msg.agentEmoji || '🐙')}
+        </div>
+        <div className="message-content">
+          {msg.agentName && msg.role === 'assistant' && (
+            <div className="agent-name">{msg.agentName}</div>
+          )}
+          <MessageContent content={msg.content} html={msg.html} isStreaming={msg.isStreaming} citations={msg.citations} messageId={msg.id} />
+          {msg.role === 'assistant' && msg.citations && !msg.isStreaming && (
+            <CitationPanel citations={msg.citations} messageId={msg.id} />
+          )}
+          {msg.attachments && msg.attachments.length > 0 && (
+            <div className="message-attachments">
+              {msg.attachments.map((att, attIndex) => (
+                <div key={attIndex} className="message-attachment-chip">
+                  <span className="attachment-icon">
+                    {att.type?.startsWith('image/') ? '🖼️' : '📎'}
+                  </span>
+                  <span className="attachment-name" title={att.name}>
+                    {att.name?.length > 25 ? att.name.slice(0, 22) + '...' : att.name}
+                  </span>
+                  <span className="attachment-size">
+                    {formatFileSize(att.size)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+          {msg.messageType && (
+            <div className="message-reasoning-chip message-type-chip">
+              <span className="reasoning-chip-icon">🔬</span>
+              <span className="reasoning-chip-label">
+                {msg.messageType === 'deep_research' ? 'Deep Research' : msg.messageType}
+              </span>
+            </div>
+          )}
+          {msg.reasoningMode && (
+            <div className="message-reasoning-chip">
+              <span className="reasoning-chip-icon">🧠</span>
+              <span className="reasoning-chip-label">
+                {msg.reasoningMode === 'xhigh' ? 'Think+' : 'Think'}
+              </span>
+            </div>
+          )}
+          {msg.isStreaming && !msg.content && (
+            <span className="typing-indicator">
+              <span className="dot"></span>
+              <span className="dot"></span>
+              <span className="dot"></span>
+            </span>
+          )}
+          {msg.isStreaming && msg.content && (
+            <span className="streaming-cursor"></span>
+          )}
+          {msg.buttons && (
+            <div className="message-buttons">
+              {msg.buttons.map((btn) => (
+                <button
+                  key={btn.id}
+                  onClick={() => handleAction(btn.action, btn.data)}
+                  className="action-button"
+                >
+                  {btn.label}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }, [expandedTools, expandedAgentMessages, handleAction, formatFileSize, renderToolResult, toggleToolExpand, toggleAgentMessageExpand, agentTemplates]);
+
+  // Virtuoso header component for loading indicator
+  const VirtuosoHeader = useCallback(() => {
+    if (isLoadingOlder) {
+      return (
+        <div className="virtuoso-loading-header">
+          <span className="loading-spinner"></span>
+          Loading older messages...
+        </div>
+      );
+    }
+    return null;
+  }, [isLoadingOlder]);
 
   return (
     <div className="app-layout">
@@ -1603,14 +1388,7 @@ function App() {
         </div>
 
         {sidebarOpen && mode === MODES.EVAL && (
-          <EvalSidebar
-            onSelectEvaluation={handleSelectEvaluation}
-            onSelectSuite={handleSelectSuite}
-            onSelectResult={handleSelectResult}
-            selectedEvaluation={selectedEvaluation}
-            selectedSuite={selectedSuite}
-            selectedResult={selectedResult}
-          />
+          <EvalSidebarContent evalMode={evalMode} />
         )}
 
         {sidebarOpen && mode === MODES.CHAT && (
@@ -1880,28 +1658,36 @@ function App() {
                       )}
 
                       {/* MCP Tools by Server */}
-                      {Object.entries(tools.mcp).map(([serverName, serverTools]) => (
-                        <div key={serverName} className="tool-group">
-                          <button
-                            className={`tool-group-header ${expandedToolGroups[`mcp_${serverName}`] ? 'expanded' : ''}`}
-                            onClick={() => setExpandedToolGroups(prev => ({ ...prev, [`mcp_${serverName}`]: !prev[`mcp_${serverName}`] }))}
-                          >
-                            <span className="tool-group-arrow">{expandedToolGroups[`mcp_${serverName}`] ? '▼' : '▶'}</span>
-                            <span className="tool-group-icon">🔌</span>
-                            <span className="tool-group-name">MCP: {serverName}</span>
-                            <span className="tool-group-count">{serverTools.length}</span>
-                          </button>
-                          {expandedToolGroups[`mcp_${serverName}`] && (
-                            <div className="tool-group-items">
-                              {serverTools.map((tool) => (
-                                <div key={tool.name} className="tool-item" title={formatToolTooltip(tool)}>
-                                  <span className="tool-name">{tool.name}</span>
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      ))}
+                      {Object.entries(tools.mcp).map(([serverName, serverTools]) => {
+                        const groupKey = 'mcp_' + serverName;
+                        const isExpanded = expandedToolGroups[groupKey];
+                        return (
+                          <div key={serverName} className="tool-group">
+                            <button
+                              className={`tool-group-header ${isExpanded ? 'expanded' : ''}`}
+                              onClick={() => setExpandedToolGroups(prev => {
+                                const updated = { ...prev };
+                                updated[groupKey] = !prev[groupKey];
+                                return updated;
+                              })}
+                            >
+                              <span className="tool-group-arrow">{isExpanded ? '▼' : '▶'}</span>
+                              <span className="tool-group-icon">🔌</span>
+                              <span className="tool-group-name">MCP: {serverName}</span>
+                              <span className="tool-group-count">{serverTools.length}</span>
+                            </button>
+                            {isExpanded && (
+                              <div className="tool-group-items">
+                                {serverTools.map((tool) => (
+                                  <div key={tool.name} className="tool-item" title={formatToolTooltip(tool)}>
+                                    <span className="tool-name">{tool.name}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
                     </>
                   )}
                 </div>
@@ -1995,164 +1781,35 @@ function App() {
         </header>
 
         {/* Eval Mode Content */}
-        {mode === MODES.EVAL && (
-          <main className="eval-container">
-            <EvalRunner
-              evaluation={selectedEvaluation}
-              suite={selectedSuite}
-              viewingResults={viewingResults}
-              onBack={handleEvalBack}
-            />
-          </main>
-        )}
+        {mode === MODES.EVAL && <EvalMainContent evalMode={evalMode} evalState={evalState} />}
 
         {/* Chat Mode Content */}
         {mode === MODES.CHAT && (
         <>
         <main className="chat-container">
-          <div className="messages" ref={messagesContainerRef} onScroll={handleScroll} onWheel={handleWheel}>
-          {messages.length === 0 && (
+          <div className="messages">
+          {messages.length === 0 ? (
             <div className="welcome">
               <h2>Welcome to OllieBot</h2>
               <p>Your personal support agent is ready to help.</p>
             </div>
+          ) : (
+            <Virtuoso
+              ref={virtuosoRef}
+              data={messages}
+              firstItemIndex={firstItemIndex}
+              initialTopMostItemIndex={messages.length - 1}
+              followOutput={(isAtBottom) => isAtBottom ? 'smooth' : false}
+              atBottomStateChange={handleAtBottomStateChange}
+              startReached={loadOlderMessages}
+              increaseViewportBy={{ top: 200, bottom: 200 }}
+              components={{
+                Header: VirtuosoHeader,
+              }}
+              itemContent={renderMessageItem}
+              className="virtuoso-scroller"
+            />
           )}
-          {messages.map((msg) => (
-            msg.role === 'tool' ? (
-              // Expandable tool invocation display
-              <div key={msg.id} className={`tool-event-wrapper ${expandedTools.has(msg.id) ? 'expanded' : ''}`}>
-                <div
-                  className={`tool-event ${msg.status}`}
-                  onClick={() => toggleToolExpand(msg.id)}
-                  style={{ cursor: 'pointer' }}
-                >
-                  <span className="tool-icon">
-                    {msg.source === 'mcp' ? '🔌' : msg.source === 'skill' ? '⚡' : '🔧'}
-                  </span>
-                  <span className="tool-status-indicator">
-                    {msg.status === 'running' ? '◐' : msg.status === 'completed' ? '✓' : '✗'}
-                  </span>
-                  <span className="tool-name">{msg.toolName}</span>
-                  {msg.parameters?.task && (
-                    <span className="tool-mission">{msg.parameters.task}</span>
-                  )}
-                  {msg.durationMs !== undefined && (
-                    <span className="tool-duration">{msg.durationMs}ms</span>
-                  )}
-                  <span className="tool-expand-icon">
-                    {expandedTools.has(msg.id) ? '▼' : '▶'}
-                  </span>
-                </div>
-                {expandedTools.has(msg.id) && (
-                  <div className="tool-details">
-                    {msg.parameters && Object.keys(msg.parameters).length > 0 && (
-                      <div className="tool-details-section">
-                        <div className="tool-details-label">Parameters</div>
-                        <pre className="tool-details-content">
-                          {JSON.stringify(msg.parameters, null, 2)}
-                        </pre>
-                      </div>
-                    )}
-                    {msg.result && (
-                      <div className="tool-details-section">
-                        <div className="tool-details-label">Response</div>
-                        {renderToolResult(msg.result)}
-                      </div>
-                    )}
-                    {msg.error && (
-                      <div className="tool-details-section error">
-                        <div className="tool-details-label">Error</div>
-                        <pre className="tool-details-content">{msg.error}</pre>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-            ) : msg.role === 'delegation' ? (
-              // Compact delegation display
-              <div key={msg.id} className="delegation-event">
-                <span className="delegation-icon">🎯</span>
-                <span className="delegation-agent">
-                  {msg.agentEmoji} {msg.agentName}
-                </span>
-                <span className="delegation-mission">{msg.mission}</span>
-              </div>
-            ) : msg.role === 'task_run' ? (
-              // Compact task run display
-              <div key={msg.id} className="task-run-event">
-                <span className="task-run-icon">📋</span>
-                <span className="task-run-label">Running Task</span>
-                <span className="task-run-name">{msg.taskName}</span>
-                {msg.taskDescription && (
-                  <span className="task-run-description">{msg.taskDescription}</span>
-                )}
-              </div>
-            ) : (
-            <div key={msg.id} className={`message ${msg.role}${msg.isError ? ' error' : ''}${msg.isStreaming ? ' streaming' : ''}`}>
-              <div className="message-avatar">
-                {msg.isError ? '⚠️' : msg.role === 'user' ? '👤' : (msg.agentEmoji || '🐙')}
-              </div>
-              <div className="message-content">
-                {msg.agentName && msg.role === 'assistant' && (
-                  <div className="agent-name">{msg.agentName}</div>
-                )}
-                <MessageContent content={msg.content} html={msg.html} isStreaming={msg.isStreaming} />
-                {msg.role === 'assistant' && msg.citations && !msg.isStreaming && (
-                  <SourcePanel citations={msg.citations} />
-                )}
-                {msg.attachments && msg.attachments.length > 0 && (
-                  <div className="message-attachments">
-                    {msg.attachments.map((att, index) => (
-                      <div key={index} className="message-attachment-chip">
-                        <span className="attachment-icon">
-                          {att.type?.startsWith('image/') ? '🖼️' : '📎'}
-                        </span>
-                        <span className="attachment-name" title={att.name}>
-                          {att.name?.length > 25 ? att.name.slice(0, 22) + '...' : att.name}
-                        </span>
-                        <span className="attachment-size">
-                          {formatFileSize(att.size)}
-                        </span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-                {msg.reasoningMode && (
-                  <div className="message-reasoning-chip">
-                    <span className="reasoning-chip-icon">🧠</span>
-                    <span className="reasoning-chip-label">
-                      {msg.reasoningMode === 'xhigh' ? 'Think+' : 'Think'}
-                    </span>
-                  </div>
-                )}
-                {msg.isStreaming && !msg.content && (
-                  <span className="typing-indicator">
-                    <span className="dot"></span>
-                    <span className="dot"></span>
-                    <span className="dot"></span>
-                  </span>
-                )}
-                {msg.isStreaming && msg.content && (
-                  <span className="streaming-cursor"></span>
-                )}
-                {msg.buttons && (
-                  <div className="message-buttons">
-                    {msg.buttons.map((btn) => (
-                      <button
-                        key={btn.id}
-                        onClick={() => handleAction(btn.action, btn.data)}
-                        className="action-button"
-                      >
-                        {btn.label}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-            )
-          ))}
-            <div ref={messagesEndRef} />
           </div>
 
           {/* Scroll to bottom button */}
@@ -2161,88 +1818,6 @@ function App() {
               ↓ Scroll to bottom
             </button>
           )}
-
-          {/* A2UI Interaction Modal */}
-        {pendingInteraction && (
-          <div className="interaction-overlay">
-            <div className="interaction-modal">
-              <h3>{pendingInteraction.title}</h3>
-              <p>{pendingInteraction.message}</p>
-
-              {pendingInteraction.options && (
-                <div className="interaction-options">
-                  {pendingInteraction.options.map((opt) => (
-                    <button
-                      key={opt.id}
-                      className={`interaction-btn ${opt.style || 'secondary'}`}
-                      onClick={() =>
-                        handleInteractionResponse({ selectedOption: opt.id })
-                      }
-                    >
-                      {opt.label}
-                    </button>
-                  ))}
-                </div>
-              )}
-
-              {pendingInteraction.fields && (
-                <form
-                  className="interaction-form"
-                  onSubmit={(e) => {
-                    e.preventDefault();
-                    const formData = {};
-                    pendingInteraction.fields.forEach((field) => {
-                      formData[field.id] = e.target[field.id]?.value;
-                    });
-                    handleInteractionResponse({ formData });
-                  }}
-                >
-                  {pendingInteraction.fields.map((field) => (
-                    <div key={field.id} className="form-field">
-                      <label htmlFor={field.id}>{field.label}</label>
-                      {field.type === 'textarea' ? (
-                        <textarea
-                          id={field.id}
-                          name={field.id}
-                          placeholder={field.placeholder}
-                          required={field.required}
-                        />
-                      ) : field.type === 'select' ? (
-                        <select id={field.id} name={field.id} required={field.required}>
-                          {field.options?.map((opt) => (
-                            <option key={opt.value} value={opt.value}>
-                              {opt.label}
-                            </option>
-                          ))}
-                        </select>
-                      ) : (
-                        <input
-                          id={field.id}
-                          name={field.id}
-                          type={field.type}
-                          placeholder={field.placeholder}
-                          required={field.required}
-                        />
-                      )}
-                    </div>
-                  ))}
-                  <button type="submit" className="interaction-btn primary">
-                    Submit
-                  </button>
-                </form>
-              )}
-
-              <button
-                className="interaction-cancel"
-                onClick={() =>
-                  handleInteractionResponse({ status: 'cancelled' })
-                }
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        )}
 
         {/* Browser Preview Modal */}
         {selectedBrowserSession && (
@@ -2256,107 +1831,39 @@ function App() {
         )}
         </main>
 
-        <footer className="input-container">
-          <form onSubmit={handleSubmit}>
-            <div
-              className={`input-wrapper ${isDragOver ? 'drag-over' : ''}`}
-              onDrop={handleDrop}
-              onDragOver={handleDragOver}
-              onDragLeave={handleDragLeave}
-            >
-              {/* Chips bar - show if attachments OR reasoning mode */}
-              {(attachments.length > 0 || reasoningMode) && (
-                <div className="attachments-bar">
-                  {/* Attachment chips first */}
-                  {attachments.map((file, index) => (
-                    <div key={index} className="attachment-chip">
-                      <span className="attachment-icon">
-                        {file.type.startsWith('image/') ? '🖼️' : '📎'}
-                      </span>
-                      <span className="attachment-name" title={file.name}>
-                        {file.name.length > 20 ? file.name.slice(0, 17) + '...' : file.name}
-                      </span>
-                      <button
-                        type="button"
-                        className="attachment-remove"
-                        onClick={() => removeAttachment(index)}
-                        title="Remove attachment"
-                      >
-                        ×
-                      </button>
-                    </div>
-                  ))}
-
-                  {/* Reasoning mode chip last, accent color */}
-                  {reasoningMode && (
-                    <div className="hashtag-chip">
-                      <span className="hashtag-chip-icon">🧠</span>
-                      <span className="hashtag-chip-label">
-                        {reasoningMode === 'xhigh' ? 'Think+' : 'Think'}
-                      </span>
-                      <button
-                        type="button"
-                        className="hashtag-chip-remove"
-                        onClick={() => setReasoningMode(null)}
-                        title="Remove reasoning mode"
-                      >
-                        ×
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Hashtag context menu */}
-              {hashtagMenuOpen && (
-                <div
-                  className="hashtag-menu"
-                  style={{ top: hashtagMenuPosition.top, left: hashtagMenuPosition.left }}
-                >
-                  {modelCapabilities.reasoningEfforts?.includes('high') && (
-                    <button
-                      type="button"
-                      className={`hashtag-menu-item ${hashtagMenuIndex === 0 ? 'selected' : ''}`}
-                      onClick={() => handleSelectReasoningMode('high')}
-                      onMouseEnter={() => setHashtagMenuIndex(0)}
-                    >
-                      <span>🧠 Think</span>
-                      <span className="hashtag-menu-item-desc">High effort reasoning</span>
-                    </button>
-                  )}
-                  {modelCapabilities.reasoningEfforts?.includes('xhigh') && (
-                    <button
-                      type="button"
-                      className={`hashtag-menu-item ${hashtagMenuIndex === (modelCapabilities.reasoningEfforts?.includes('high') ? 1 : 0) ? 'selected' : ''}`}
-                      onClick={() => handleSelectReasoningMode('xhigh')}
-                      onMouseEnter={() => setHashtagMenuIndex(modelCapabilities.reasoningEfforts?.includes('high') ? 1 : 0)}
-                    >
-                      <span>🧠 Think+</span>
-                      <span className="hashtag-menu-item-desc">Maximum effort reasoning</span>
-                    </button>
-                  )}
-                </div>
-              )}
-
-              <textarea
-                ref={textareaRef}
-                value={input}
-                onChange={handleInputChange}
-                onKeyDown={handleKeyDown}
-                onPaste={handlePaste}
-                placeholder={isResponsePending ? "Waiting for response..." : "Type a message... (Shift + Enter for new line)"}
-                disabled={!isConnected || isResponsePending}
-                rows={3}
-              />
-            </div>
-            <button type="submit" disabled={!isConnected || isResponsePending || (!input.trim() && attachments.length === 0)}>
-              {isResponsePending ? 'Waiting...' : 'Send'}
-            </button>
-          </form>
+        <footer
+          className={`input-container ${isDragOver ? 'drag-over' : ''}`}
+          onDrop={handleDrop}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+        >
+          <ChatInput
+            ref={chatInputRef}
+            onSubmit={handleSubmit}
+            onPaste={handlePaste}
+            attachments={attachments}
+            onRemoveAttachment={removeAttachment}
+            isConnected={isConnected}
+            isResponsePending={isResponsePending}
+            reasoningMode={reasoningMode}
+            messageType={messageType}
+            onReasoningModeChange={setReasoningMode}
+            onMessageTypeChange={setMessageType}
+            modelCapabilities={modelCapabilities}
+          />
         </footer>
         </>
         )}
       </div>
+
+      {/* PDF Viewer Modal */}
+      <PDFViewerModal
+        isOpen={pdfViewerState.isOpen}
+        onClose={closePdfViewer}
+        fileUrl={pdfViewerState.fileUrl}
+        filename={pdfViewerState.filename}
+        initialPage={pdfViewerState.initialPage}
+      />
     </div>
   );
 }
