@@ -26,6 +26,8 @@ export interface ToolRequest {
   parameters: Record<string, unknown>;
   // Tools with same groupId run concurrently
   groupId?: string;
+  // ID of the agent that initiated this request (for event filtering)
+  callerId?: string;
 }
 
 // Tool execution result
@@ -48,6 +50,8 @@ export interface ToolRequestedEvent {
   source: ToolSource;
   parameters: Record<string, unknown>;
   timestamp: Date;
+  // ID of the agent that initiated this request (for event filtering)
+  callerId?: string;
 }
 
 // Event: Tool execution finished (emitted when tool completes)
@@ -64,6 +68,8 @@ export interface ToolExecutionFinishedEvent {
   endTime: Date;
   durationMs: number;
   timestamp: Date;
+  // ID of the agent that initiated this request (for event filtering)
+  callerId?: string;
 }
 
 // Union of all tool events

@@ -205,6 +205,11 @@ export class WorkerAgent extends AbstractAgent {
     let unsubscribeTool: (() => void) | undefined;
     if (this.toolRunner) {
       unsubscribeTool = this.toolRunner.onToolEvent((event) => {
+        // Only emit events for tools THIS agent called (filter by callerId)
+        if (event.callerId && event.callerId !== this.identity.id) {
+          return; // This event is for a different agent
+        }
+
         const webChannel = channel as WebChannel;
         const messageEventService = getMessageEventService();
         messageEventService.setWebChannel(webChannel);
@@ -287,8 +292,9 @@ export class WorkerAgent extends AbstractAgent {
         // Check if LLM requested tool use
         if (response.toolUse && response.toolUse.length > 0) {
           // Execute requested tools with citation extraction
+          // Pass this.identity.id as callerId so tool events are attributed to this agent only
           const toolRequests = response.toolUse.map((tu) =>
-            this.toolRunner!.createRequest(tu.id, tu.name, tu.input)
+            this.toolRunner!.createRequest(tu.id, tu.name, tu.input, undefined, this.identity.id)
           );
 
           const { results, citations } = await this.toolRunner!.executeToolsWithCitations(toolRequests);
@@ -389,6 +395,10 @@ export class WorkerAgent extends AbstractAgent {
               // (this worker may execute more tools in subsequent iterations)
               if (this.toolRunner) {
                 unsubscribeTool = this.toolRunner.onToolEvent((event) => {
+                  // Only emit events for tools THIS agent called (filter by callerId)
+                  if (event.callerId && event.callerId !== this.identity.id) {
+                    return; // This event is for a different agent
+                  }
                   const webChannel = channel as WebChannel;
                   const messageEventService = getMessageEventService();
                   messageEventService.setWebChannel(webChannel);

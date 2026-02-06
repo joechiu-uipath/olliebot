@@ -326,14 +326,11 @@ export abstract class AbstractAgent implements BaseAgent {
       }
     }
 
-    // Add available tools info if we have a tool runner
+    // Add citation guidelines when tools are available
+    // (Tool definitions are passed via the API's structured 'tools' parameter, not in system prompt)
     if (this.toolRunner) {
       const tools = this.getToolsForLLM();
       if (tools.length > 0) {
-        const toolSummary = this.summarizeTools(tools);
-        prompt += `\n\n## Available Tools\n\nYou have access to ${tools.length} tools. USE THEM to complete tasks:\n\n${toolSummary}`;
-
-        // Add citation guidelines when tools are available
         const citationService = initializeCitationServiceSync(getDefaultExtractors());
         prompt += citationService.getCitationGuidelines();
       }
@@ -359,29 +356,6 @@ export abstract class AbstractAgent implements BaseAgent {
     }
 
     return prompt;
-  }
-
-  /**
-   * Create a summary of available tools for the system prompt
-   * Lists ALL tools in a flat format: - tool_name: description
-   */
-  private summarizeTools(tools: LLMTool[]): string {
-    const MAX_DESC_LENGTH = 200;
-
-    // Format a single tool description
-    const formatTool = (tool: LLMTool): string => {
-      let desc = tool.description || 'No description';
-      // Remove newlines from description
-      desc = desc.replace(/[\r\n]+/g, ' ').trim();
-      // Truncate if too long
-      if (desc.length > MAX_DESC_LENGTH) {
-        desc = desc.substring(0, MAX_DESC_LENGTH) + '...(truncated)';
-      }
-      return `- ${tool.name}: ${desc}`;
-    };
-
-    // List all tools in a flat format (no grouping, no truncation of list)
-    return tools.map(formatTool).join('\n');
   }
 
   /**
