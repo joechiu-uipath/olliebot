@@ -17,7 +17,6 @@ function ensureLogDir(): void {
  * Log a system prompt to a file
  * @param agentName - Name of the agent making the LLM call
  * @param systemPrompt - The system prompt being sent to the LLM
- * @param context - Optional additional context (e.g., tool count, mission)
  */
 export function logSystemPrompt(
   agentName: string,
