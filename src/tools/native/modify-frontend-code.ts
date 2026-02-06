@@ -267,14 +267,14 @@ TIPS:
         // Detect the file's line ending style and normalize the target to match
         const fileUsesCRLF = currentContent.includes('\r\n');
         const normalizedTarget = fileUsesCRLF
-          ? target.replace(/(?<!\r)\n/g, '\r\n')  // Convert LF to CRLF if file uses CRLF
-          : target.replace(/\r\n/g, '\n');        // Convert CRLF to LF if file uses LF
+          ? target.replace(/\r?\n/g, '\r\n')  // Convert LF or mixed line endings to CRLF if file uses CRLF
+          : target.replace(/\r\n/g, '\n');    // Convert CRLF to LF if file uses LF
 
         // Check for exact match first (with normalized line endings)
         if (currentContent.includes(normalizedTarget)) {
           // Also normalize content to match file's line ending style
           const normalizedContent = fileUsesCRLF
-            ? content.replace(/(?<!\r)\n/g, '\r\n')
+            ? content.replace(/\r?\n/g, '\r\n')
             : content.replace(/\r\n/g, '\n');
 
           if (editType === 'replace') {
