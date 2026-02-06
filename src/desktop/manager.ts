@@ -97,6 +97,8 @@ export class DesktopSessionManager {
   private sessions: Map<string, DesktopSessionInstance> = new Map();
   private sandboxProcesses: Map<string, ChildProcess> = new Map();
   private sessionTempDirs: Map<string, string> = new Map(); // session ID -> temp dir path
+  private sessionAbortControllers: Map<string, AbortController> = new Map(); // for cancelling in-progress provisioning
+  private creationLock: Promise<void> = Promise.resolve(); // serializes createSession calls
   private webChannel?: IBroadcaster;
   private config: DesktopSessionManagerConfig;
   private sandboxConfigPath: string;
@@ -116,6 +118,17 @@ export class DesktopSessionManager {
    * Creates a new desktop session.
    */
   async createSession(config: DesktopSessionConfig): Promise<DesktopSession> {
+    // Serialize creation to prevent double-launch (e.g. React StrictMode, duplicate tool calls)
+    const result = new Promise<DesktopSession>((resolve, reject) => {
+      this.creationLock = this.creationLock.then(
+        () => this._doCreateSession(config).then(resolve, reject),
+        () => this._doCreateSession(config).then(resolve, reject),
+      );
+    });
+    return result;
+  }
+
+  private async _doCreateSession(config: DesktopSessionConfig): Promise<DesktopSession> {
     // Merge with defaults
     const sandboxConfig: SandboxConfig = {
       ...DEFAULT_CONFIG.defaultSandbox,
@@ -146,13 +159,22 @@ export class DesktopSessionManager {
     // Store session
     this.sessions.set(session.id, session);
 
+    // Create abort controller so closeSession() can cancel provisioning
+    const abortController = new AbortController();
+    this.sessionAbortControllers.set(session.id, abortController);
+
     // Broadcast session created (in provisioning state)
     this.broadcast(createSessionCreatedEvent(session.getSession()));
 
     try {
       // Launch sandbox
       console.log(`[Desktop] Launching sandbox for session ${session.id}...`);
-      await this.launchSandbox(session.id, sandboxConfig);
+      await this.launchSandbox(session.id, sandboxConfig, abortController.signal);
+
+      // Check if aborted during sandbox launch
+      if (abortController.signal.aborted) {
+        throw new Error('Session creation aborted');
+      }
 
       // Update sandbox status
       session.updateSandbox({ status: 'running', startedAt: new Date() });
@@ -160,7 +182,7 @@ export class DesktopSessionManager {
 
       // Wait for VNC to become available
       console.log(`[Desktop] Waiting for VNC server on port ${vncConfig.port}...`);
-      await this.waitForVNC(vncConfig.host, vncConfig.port, 60000);
+      await this.waitForVNC(vncConfig.host, vncConfig.port, 60000, abortController.signal);
 
       // Initialize VNC connection
       console.log(`[Desktop] Connecting to VNC...`);
@@ -180,16 +202,28 @@ export class DesktopSessionManager {
       console.log(`[Desktop] Session ${session.id} ready`);
       return session.getSession();
     } catch (error) {
-      // Clean up on failure
       const errorMessage = error instanceof Error ? error.message : String(error);
-      session.updateSandbox({ status: 'error', error: errorMessage });
-      this.broadcast(createSessionUpdatedEvent(session.id, {
-        status: 'error',
-        error: errorMessage,
-        sandbox: session.getSession().sandbox,
-      }));
+      const isAborted = abortController.signal.aborted;
+
+      if (isAborted) {
+        // Session was closed during provisioning — clean up silently
+        console.log(`[Desktop] Session ${session.id} creation was aborted, cleaning up`);
+        await this.stopSandbox(session.id).catch(() => {});
+        this.sessions.delete(session.id);
+        this.broadcast(createSessionClosedEvent(session.id));
+      } else {
+        // Genuine error during provisioning
+        session.updateSandbox({ status: 'error', error: errorMessage });
+        this.broadcast(createSessionUpdatedEvent(session.id, {
+          status: 'error',
+          error: errorMessage,
+          sandbox: session.getSession().sandbox,
+        }));
+      }
 
       throw error;
+    } finally {
+      this.sessionAbortControllers.delete(session.id);
     }
   }
 
@@ -211,16 +245,28 @@ export class DesktopSessionManager {
    * Closes a session.
    */
   async closeSession(sessionId: string): Promise<void> {
-    const session = this.sessions.get(sessionId);
-    if (!session) {
-      console.warn(`[Desktop] Session not found: ${sessionId}`);
-      return;
+    console.log(`[Desktop] Closing session ${sessionId}...`);
+
+    // Abort any in-progress provisioning (waitForVNC, sandbox launch wait, etc.)
+    const abortController = this.sessionAbortControllers.get(sessionId);
+    if (abortController) {
+      console.log(`[Desktop] Aborting in-progress provisioning for session ${sessionId}`);
+      abortController.abort();
+      this.sessionAbortControllers.delete(sessionId);
     }
 
-    // Close the session (VNC disconnect, etc.)
-    await session.close();
+    const session = this.sessions.get(sessionId);
 
-    // Stop the sandbox
+    // Close the session (VNC disconnect, etc.) - if it was ever initialized
+    if (session) {
+      try {
+        await session.close();
+      } catch (error) {
+        console.warn(`[Desktop] Error closing session instance: ${error}`);
+      }
+    }
+
+    // Stop the sandbox (kill processes, clean up)
     await this.stopSandbox(sessionId);
 
     // Remove from sessions
@@ -312,10 +358,10 @@ export class DesktopSessionManager {
   /**
    * Launches a sandbox based on configuration.
    */
-  private async launchSandbox(sessionId: string, config: SandboxConfig): Promise<void> {
+  private async launchSandbox(sessionId: string, config: SandboxConfig, signal?: AbortSignal): Promise<void> {
     switch (config.type) {
       case 'windows-sandbox':
-        await this.launchWindowsSandbox(sessionId, config);
+        await this.launchWindowsSandbox(sessionId, config, signal);
         break;
 
       case 'hyperv':
@@ -344,7 +390,7 @@ export class DesktopSessionManager {
    * 3. Generates a dynamic .wsb config file
    * 4. Launches Windows Sandbox
    */
-  private async launchWindowsSandbox(sessionId: string, config: SandboxConfig): Promise<void> {
+  private async launchWindowsSandbox(sessionId: string, config: SandboxConfig, signal?: AbortSignal): Promise<void> {
     // Check if Windows Sandbox is available
     if (os.platform() !== 'win32') {
       throw new Error('Windows Sandbox is only available on Windows');
@@ -369,12 +415,26 @@ export class DesktopSessionManager {
 
     console.log(`[Desktop] Generated sandbox config: ${wsbPath}`);
 
-    // Launch Windows Sandbox
-    console.log(`[Desktop] Launching Windows Sandbox...`);
-    const sandboxProcess = spawn('cmd.exe', ['/c', 'start', '', 'WindowsSandbox.exe', wsbPath], {
+    // Verify files exist before launching
+    const wsbExists = fs.existsSync(wsbPath);
+    const scriptExists = fs.existsSync(setupScriptPath);
+    console.log(`[Desktop] Config file exists: ${wsbExists}, Setup script exists: ${scriptExists}`);
+
+    // Log the .wsb content for debugging
+    const wsbContent = await fsPromises.readFile(wsbPath, 'utf-8');
+    console.log(`[Desktop] WSB config content:\n${wsbContent}`);
+
+    // Launch Windows Sandbox with the .wsb config
+    // Use path.resolve to ensure absolute path with native backslashes
+    const resolvedWsbPath = path.resolve(wsbPath);
+    console.log(`[Desktop] Launching: WindowsSandbox.exe "${resolvedWsbPath}"`);
+    const sandboxProcess = spawn('WindowsSandbox.exe', [resolvedWsbPath], {
       detached: true,
       stdio: 'ignore',
-      shell: true,
+    });
+
+    sandboxProcess.on('error', (err) => {
+      console.error(`[Desktop] Failed to launch WindowsSandbox.exe:`, err);
     });
 
     sandboxProcess.unref();
@@ -383,7 +443,14 @@ export class DesktopSessionManager {
     // Windows Sandbox takes time to start and run the setup script
     // The setup script installs VNC which takes additional time
     console.log(`[Desktop] Waiting for sandbox to initialize (this may take 30-60 seconds)...`);
-    await new Promise((resolve) => setTimeout(resolve, 20000));
+    await new Promise<void>((resolve, reject) => {
+      if (signal?.aborted) return reject(new Error('Session creation aborted'));
+      const timer = setTimeout(resolve, 20000);
+      signal?.addEventListener('abort', () => {
+        clearTimeout(timer);
+        reject(new Error('Session creation aborted'));
+      }, { once: true });
+    });
   }
 
   /**
@@ -535,6 +602,9 @@ Write-Log "Password: ${vncPassword}"
     const enableGpu = config.enableGpu !== false ? 'Enable' : 'Disable';
     const enableNetwork = config.enableNetwork !== false ? 'Enabled' : 'Disabled';
 
+    // Ensure Windows-native backslashes in the host folder path
+    const resolvedHostFolder = path.resolve(hostFolder);
+
     // Windows Sandbox config XML
     const wsbConfig = `<Configuration>
   <!-- OllieBot Desktop Sandbox Configuration -->
@@ -543,7 +613,7 @@ Write-Log "Password: ${vncPassword}"
   <!-- Map the setup scripts folder into the sandbox -->
   <MappedFolders>
     <MappedFolder>
-      <HostFolder>${hostFolder}</HostFolder>
+      <HostFolder>${resolvedHostFolder}</HostFolder>
       <SandboxFolder>C:\\OllieBot</SandboxFolder>
       <ReadOnly>false</ReadOnly>
     </MappedFolder>
@@ -634,17 +704,15 @@ Write-Log "Password: ${vncPassword}"
     const process = this.sandboxProcesses.get(sessionId);
     const session = this.sessions.get(sessionId);
 
-    if (!session) return;
-
-    const sandboxType = session.getSession().sandbox.type;
+    // Determine sandbox type (fall back to windows-sandbox if session already removed)
+    const sandboxType = session?.getSession().sandbox.type || 'windows-sandbox';
 
     try {
       switch (sandboxType) {
         case 'windows-sandbox':
           // Windows Sandbox - try to close it gracefully
-          // The sandbox window needs to be closed
           if (process) {
-            process.kill();
+            try { process.kill(); } catch { /* already dead */ }
           }
           // Also try to close via taskkill (more reliable)
           try {
@@ -668,7 +736,7 @@ Write-Log "Password: ${vncPassword}"
         case 'tart':
           // Stop Tart VM
           if (process) {
-            process.kill();
+            try { process.kill(); } catch { /* already dead */ }
           }
           await execAsync('tart stop olliebot-macos').catch(() => {
             // Ignore errors if VM is already stopped
@@ -697,10 +765,14 @@ Write-Log "Password: ${vncPassword}"
   /**
    * Waits for VNC server to become available.
    */
-  private async waitForVNC(host: string, port: number, timeoutMs: number): Promise<void> {
+  private async waitForVNC(host: string, port: number, timeoutMs: number, signal?: AbortSignal): Promise<void> {
     const startTime = Date.now();
 
     while (Date.now() - startTime < timeoutMs) {
+      if (signal?.aborted) {
+        throw new Error('Session creation aborted');
+      }
+
       try {
         // Try to connect to VNC port
         const net = await import('net');
@@ -718,13 +790,30 @@ Write-Log "Password: ${vncPassword}"
             socket.destroy();
             reject(new Error('Timeout'));
           });
+
+          // Abort the socket if session is being closed
+          signal?.addEventListener('abort', () => {
+            socket.destroy();
+            reject(new Error('Session creation aborted'));
+          }, { once: true });
         });
 
         console.log(`[Desktop] VNC server available at ${host}:${port}`);
         return;
-      } catch {
+      } catch (err) {
+        if (signal?.aborted) {
+          throw new Error('Session creation aborted');
+        }
         // Not ready yet, wait and retry
-        await new Promise((resolve) => setTimeout(resolve, 2000));
+        await new Promise<void>((resolve, reject) => {
+          const timer = setTimeout(resolve, 2000);
+          signal?.addEventListener('abort', () => {
+            clearTimeout(timer);
+            reject(new Error('Session creation aborted'));
+          }, { once: true });
+        }).catch(() => {
+          throw new Error('Session creation aborted');
+        });
       }
     }
 

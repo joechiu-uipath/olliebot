@@ -115,11 +115,12 @@ The session will launch a sandboxed desktop environment and connect via VNC for 
     const platform = (params.platform as DesktopPlatform) || 'windows';
     const provider = params.provider as ComputerUseProvider | undefined;
 
-    // Check if a session with this name already exists and is active
+    // Check if a session with this name already exists (any non-terminal status)
     if (name) {
       const existingSessions = this.desktopManager.getSessions();
+      const terminalStatuses = new Set(['closed', 'error']);
       const existingSession = existingSessions.find(
-        (s) => s.name === name && s.status === 'active'
+        (s) => s.name === name && !terminalStatuses.has(s.status)
       );
       if (existingSession) {
         console.log(`[DesktopSessionTool] Reusing existing session "${name}" (${existingSession.id})`);

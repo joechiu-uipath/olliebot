@@ -957,7 +957,11 @@ export class OllieBotServer {
       this.webChannel.onDesktopAction(async (action, sessionId) => {
         console.log(`[Server] Desktop action: ${action} for session ${sessionId}`);
         if (action === 'close' && this.desktopManager) {
-          await this.desktopManager.closeSession(sessionId);
+          try {
+            await this.desktopManager.closeSession(sessionId);
+          } catch (error) {
+            console.error(`[Server] Error closing desktop session ${sessionId}:`, error);
+          }
         }
       });
     }

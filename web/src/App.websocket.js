@@ -32,6 +32,11 @@ export function createMessageHandler(deps) {
     setSelectedBrowserSessionId,
     setClickMarkers,
     setExpandedAccordions,
+    // Desktop session state setters
+    setDesktopSessions,
+    setDesktopScreenshots,
+    setSelectedDesktopSessionId,
+    setDesktopClickMarkers,
     setRagProjects,
     setRagIndexingProgress,
     // Eval state setters
@@ -116,6 +121,21 @@ export function createMessageHandler(deps) {
         break;
       case 'browser_click_marker':
         handleBrowserClickMarker(data);
+        break;
+      case 'desktop_session_created':
+        handleDesktopSessionCreated(data);
+        break;
+      case 'desktop_session_updated':
+        handleDesktopSessionUpdated(data);
+        break;
+      case 'desktop_session_closed':
+        handleDesktopSessionClosed(data);
+        break;
+      case 'desktop_screenshot':
+        handleDesktopScreenshot(data);
+        break;
+      case 'desktop_click_marker':
+        handleDesktopClickMarker(data);
         break;
       case 'rag_indexing_started':
         handleRagIndexingStarted(data);
@@ -388,7 +408,7 @@ export function createMessageHandler(deps) {
       if (prev.some((s) => s.id === data.session.id)) return prev;
       return [...prev, data.session];
     });
-    setExpandedAccordions((prev) => ({ ...prev, browserSessions: true }));
+    setExpandedAccordions((prev) => ({ ...prev, computerUse: true }));
   }
 
   function handleBrowserSessionUpdated(data) {
@@ -430,6 +450,59 @@ export function createMessageHandler(deps) {
     setClickMarkers((prev) => [...prev, marker]);
     setTimeout(() => {
       setClickMarkers((prev) => prev.filter((m) => m.id !== marker.id));
+    }, 1500);
+  }
+
+  // ============================================================================
+  // Desktop Session Handlers
+  // ============================================================================
+
+  function handleDesktopSessionCreated(data) {
+    setDesktopSessions((prev) => {
+      if (prev.some((s) => s.id === data.session.id)) return prev;
+      return [...prev, data.session];
+    });
+    setExpandedAccordions((prev) => ({ ...prev, computerUse: true }));
+  }
+
+  function handleDesktopSessionUpdated(data) {
+    setDesktopSessions((prev) =>
+      prev.map((s) =>
+        s.id === data.sessionId ? { ...s, ...data.updates } : s
+      )
+    );
+  }
+
+  function handleDesktopSessionClosed(data) {
+    setDesktopSessions((prev) => prev.filter((s) => s.id !== data.sessionId));
+    setDesktopScreenshots((prev) => {
+      const next = { ...prev };
+      delete next[data.sessionId];
+      return next;
+    });
+    setSelectedDesktopSessionId((prev) => prev === data.sessionId ? null : prev);
+    setDesktopClickMarkers((prev) => prev.filter((m) => m.sessionId !== data.sessionId));
+  }
+
+  function handleDesktopScreenshot(data) {
+    setDesktopScreenshots((prev) => ({
+      ...prev,
+      [data.sessionId]: {
+        screenshot: data.screenshot,
+        timestamp: data.timestamp,
+      },
+    }));
+  }
+
+  function handleDesktopClickMarker(data) {
+    const marker = {
+      ...data.marker,
+      id: `marker-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      sessionId: data.sessionId,
+    };
+    setDesktopClickMarkers((prev) => [...prev, marker]);
+    setTimeout(() => {
+      setDesktopClickMarkers((prev) => prev.filter((m) => m.id !== marker.id));
     }, 1500);
   }
 
