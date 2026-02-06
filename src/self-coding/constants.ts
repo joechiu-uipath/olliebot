@@ -96,15 +96,27 @@ export const BUILD_WORKING_DIR = 'web';
 
 /**
  * Whether to auto-commit changes after successful modification.
+ *
+ * Note: Git auto-commit logic is not yet implemented; this flag is a
+ * configuration placeholder for planned git integration.
+ * TODO: Wire this flag into the git commit workflow when implemented.
  */
 export const AUTO_COMMIT = true;
 
 /**
  * Commit message prefix for self-coding changes.
+ *
+ * Note: Currently used only as configuration; git commit logic that
+ * applies this prefix is planned but not yet implemented.
+ * TODO: Apply this prefix in the git commit message construction.
  */
 export const COMMIT_PREFIX = '[self-coding]';
 
 /**
  * Git working directory (project root).
+ *
+ * Note: This is reserved for future git integration to determine where
+ * git commands should be executed from.
+ * TODO: Use this directory when invoking git commands.
  */
 export const GIT_WORKING_DIR = '.';
