@@ -1,0 +1,26 @@
+<Configuration>
+  <!-- Windows Sandbox configuration for OllieBot Desktop Control -->
+
+  <!-- Map the setup scripts folder into the sandbox -->
+  <MappedFolders>
+    <MappedFolder>
+      <HostFolder>%USERPROFILE%\olliebot-sandbox</HostFolder>
+      <SandboxFolder>C:\OllieBot</SandboxFolder>
+      <ReadOnly>true</ReadOnly>
+    </MappedFolder>
+  </MappedFolders>
+
+  <!-- Enable networking for VNC access -->
+  <Networking>Enabled</Networking>
+
+  <!-- Enable GPU for better performance -->
+  <vGPU>Enable</vGPU>
+
+  <!-- 4GB memory for desktop applications -->
+  <MemoryInMB>4096</MemoryInMB>
+
+  <!-- Run setup script on logon -->
+  <LogonCommand>
+    <Command>powershell.exe -ExecutionPolicy Bypass -File C:\OllieBot\setup-vnc.ps1</Command>
+  </LogonCommand>
+</Configuration>
