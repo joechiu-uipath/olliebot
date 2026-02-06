@@ -18,6 +18,8 @@ const MODES = {
 };
 import { BrowserSessions } from './components/BrowserSessions';
 import { BrowserPreview } from './components/BrowserPreview';
+import { DesktopSessions } from './components/DesktopSessions';
+import { DesktopPreview } from './components/DesktopPreview';
 import RAGProjects from './components/RAGProjects';
 import { SourcePanel } from './components/SourcePanel';
 import { ChatInput } from './components/ChatInput';
@@ -302,6 +304,7 @@ function App() {
     mcps: false,
     tools: false,
     browserSessions: false,
+    desktopSessions: false,
     ragProjects: false,
   });
   const [agentTasks, setAgentTasks] = useState([]);
@@ -315,6 +318,12 @@ function App() {
   const [selectedBrowserSessionId, setSelectedBrowserSessionId] = useState(null);
   const [browserScreenshots, setBrowserScreenshots] = useState({});
   const [clickMarkers, setClickMarkers] = useState([]);
+
+  // Desktop session state
+  const [desktopSessions, setDesktopSessions] = useState([]);
+  const [selectedDesktopSessionId, setSelectedDesktopSessionId] = useState(null);
+  const [desktopScreenshots, setDesktopScreenshots] = useState({});
+  const [desktopClickMarkers, setDesktopClickMarkers] = useState([]);
 
   // RAG projects state
   const [ragProjects, setRagProjects] = useState([]);
@@ -678,6 +687,55 @@ function App() {
       // Auto-remove marker after animation completes (1.5s)
       setTimeout(() => {
         setClickMarkers((prev) => prev.filter((m) => m.id !== marker.id));
+      }, 1500);
+    } else if (data.type === 'desktop_session_created') {
+      // New desktop session was created
+      setDesktopSessions((prev) => {
+        if (prev.some((s) => s.id === data.session.id)) return prev;
+        return [...prev, data.session];
+      });
+      // Auto-expand accordion when first session is created
+      setExpandedAccordions((prev) => ({ ...prev, desktopSessions: true }));
+    } else if (data.type === 'desktop_session_updated') {
+      // Desktop session was updated
+      setDesktopSessions((prev) =>
+        prev.map((s) =>
+          s.id === data.sessionId ? { ...s, ...data.updates } : s
+        )
+      );
+    } else if (data.type === 'desktop_session_closed') {
+      // Desktop session was closed
+      setDesktopSessions((prev) => prev.filter((s) => s.id !== data.sessionId));
+      // Clear screenshot for this session
+      setDesktopScreenshots((prev) => {
+        const next = { ...prev };
+        delete next[data.sessionId];
+        return next;
+      });
+      // Clear selection if this was selected
+      setSelectedDesktopSessionId((prev) => prev === data.sessionId ? null : prev);
+      // Remove click markers for this session
+      setDesktopClickMarkers((prev) => prev.filter((m) => m.sessionId !== data.sessionId));
+    } else if (data.type === 'desktop_screenshot') {
+      // New screenshot from desktop session
+      setDesktopScreenshots((prev) => ({
+        ...prev,
+        [data.sessionId]: {
+          screenshot: data.screenshot,
+          timestamp: data.timestamp,
+        },
+      }));
+    } else if (data.type === 'desktop_click_marker') {
+      // Click marker for visualization
+      const marker = {
+        ...data.marker,
+        id: `marker-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+        sessionId: data.sessionId,
+      };
+      setDesktopClickMarkers((prev) => [...prev, marker]);
+      // Auto-remove marker after animation completes (1.5s)
+      setTimeout(() => {
+        setDesktopClickMarkers((prev) => prev.filter((m) => m.id !== marker.id));
       }, 1500);
     } else if (data.type === 'rag_indexing_started') {
       // RAG indexing started
@@ -1702,6 +1760,36 @@ function App() {
     toggleAccordion('browserSessions');
   }, [toggleAccordion]);
 
+  // Select desktop session for preview - memoized
+  const handleSelectDesktopSession = useCallback((sessionId) => {
+    setSelectedDesktopSessionId(sessionId);
+  }, []);
+
+  // Close desktop preview
+  const handleCloseDesktopPreview = useCallback(() => {
+    setSelectedDesktopSessionId(null);
+  }, []);
+
+  // Close desktop session (terminate the sandbox) - memoized
+  const handleCloseDesktopSession = useCallback((sessionId) => {
+    // Optimistically remove from UI immediately
+    setDesktopSessions((prev) => prev.filter((s) => s.id !== sessionId));
+    setDesktopScreenshots((prev) => {
+      const next = { ...prev };
+      delete next[sessionId];
+      return next;
+    });
+    // Use functional update to check selected session without dependency
+    setSelectedDesktopSessionId((prev) => prev === sessionId ? null : prev);
+    // Send close request to server
+    sendMessage({ type: 'desktop-action', action: 'close', sessionId });
+  }, [sendMessage]);
+
+  // Toggle desktop sessions accordion - memoized
+  const handleToggleDesktopSessions = useCallback(() => {
+    toggleAccordion('desktopSessions');
+  }, [toggleAccordion]);
+
   // Toggle RAG projects accordion - memoized
   const handleToggleRagProjects = useCallback(() => {
     toggleAccordion('ragProjects');
@@ -1751,6 +1839,11 @@ function App() {
   // Get selected browser session object
   const selectedBrowserSession = browserSessions.find(
     (s) => s.id === selectedBrowserSessionId
+  );
+
+  // Get selected desktop session object
+  const selectedDesktopSession = desktopSessions.find(
+    (s) => s.id === selectedDesktopSessionId
   );
 
   // Render a single message item for Virtuoso (index-based for totalCount mode)
@@ -2336,6 +2429,17 @@ function App() {
               expanded={expandedAccordions.browserSessions}
               onToggle={handleToggleBrowserSessions}
             />
+
+            {/* Desktop Sessions Accordion - always visible */}
+            <DesktopSessions
+              sessions={desktopSessions}
+              screenshots={desktopScreenshots}
+              selectedSessionId={selectedDesktopSessionId}
+              onSelectSession={handleSelectDesktopSession}
+              onCloseSession={handleCloseDesktopSession}
+              expanded={expandedAccordions.desktopSessions}
+              onToggle={handleToggleDesktopSessions}
+            />
           </div>
           </>
         )}
@@ -2519,6 +2623,17 @@ function App() {
             clickMarkers={clickMarkers}
             onClose={handleCloseBrowserPreview}
             onCloseSession={handleCloseBrowserSession}
+          />
+        )}
+
+        {/* Desktop Preview Modal */}
+        {selectedDesktopSession && (
+          <DesktopPreview
+            session={selectedDesktopSession}
+            screenshot={desktopScreenshots[selectedDesktopSessionId]}
+            clickMarkers={desktopClickMarkers}
+            onClose={handleCloseDesktopPreview}
+            onCloseSession={handleCloseDesktopSession}
           />
         )}
         </main>

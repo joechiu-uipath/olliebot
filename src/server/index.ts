@@ -14,6 +14,7 @@ import type { LLMService } from '../llm/service.js';
 import { getModelCapabilities } from '../llm/model-capabilities.js';
 import { setupEvalRoutes } from './eval-routes.js';
 import type { BrowserSessionManager } from '../browser/index.js';
+import type { DesktopSessionManager } from '../desktop/index.js';
 import type { TaskManager } from '../tasks/index.js';
 import { type RAGProjectService, createRAGProjectRoutes, type IndexingProgress } from '../rag-projects/index.js';
 import { getMessageEventService, setMessageEventServiceChannel } from '../services/message-event-service.js';
@@ -26,6 +27,7 @@ export interface ServerConfig {
   toolRunner?: ToolRunner;
   llmService?: LLMService;
   browserManager?: BrowserSessionManager;
+  desktopManager?: DesktopSessionManager;
   taskManager?: TaskManager;
   ragProjectService?: RAGProjectService;
   // LLM configuration for model capabilities endpoint
@@ -58,6 +60,7 @@ export class OllieBotServer {
   private toolRunner?: ToolRunner;
   private llmService?: LLMService;
   private browserManager?: BrowserSessionManager;
+  private desktopManager?: DesktopSessionManager;
   private taskManager?: TaskManager;
   private ragProjectService?: RAGProjectService;
   private mainProvider?: string;
@@ -80,6 +83,7 @@ export class OllieBotServer {
     this.toolRunner = config.toolRunner;
     this.llmService = config.llmService;
     this.browserManager = config.browserManager;
+    this.desktopManager = config.desktopManager;
     this.taskManager = config.taskManager;
     this.ragProjectService = config.ragProjectService;
     this.mainProvider = config.mainProvider;
@@ -929,6 +933,19 @@ export class OllieBotServer {
         console.log(`[Server] Browser action: ${action} for session ${sessionId}`);
         if (action === 'close' && this.browserManager) {
           await this.browserManager.closeSession(sessionId);
+        }
+      });
+    }
+
+    // Attach web channel to desktop manager if present
+    if (this.desktopManager) {
+      this.desktopManager.attachWebChannel(this.webChannel);
+
+      // Handle desktop actions from web clients
+      this.webChannel.onDesktopAction(async (action, sessionId) => {
+        console.log(`[Server] Desktop action: ${action} for session ${sessionId}`);
+        if (action === 'close' && this.desktopManager) {
+          await this.desktopManager.closeSession(sessionId);
         }
       });
     }
