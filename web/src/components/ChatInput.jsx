@@ -97,32 +97,27 @@ export const ChatInput = memo(function ChatInput({
     };
   }, []);
 
-  // Pre-acquire microphone and prepare upstream when voice mode is turned ON
-  useEffect(() => {
-    if (voiceModeOn && isWsConnected && !isRecording && !isConnecting) {
-      prepareRecording();
-    }
-  }, [voiceModeOn, isWsConnected, isRecording, isConnecting, prepareRecording]);
-
   // Toggle voice mode ON/OFF
-  const handleVoiceToggle = useCallback(() => {
+  const handleVoiceToggle = useCallback(async () => {
     if (voiceModeOn) {
-      // Turn OFF - release mic and cleanup
+      // Turn OFF - release mic and cleanup (also disconnects voice WebSocket)
       releaseRecording();
       setVoiceModeOn(false);
     } else {
-      // Turn ON - will trigger prepareRecording via useEffect
+      // Turn ON - activate voice mode and connect WebSocket
       setVoiceModeOn(true);
-      // Also start recording immediately on initial click (treat as hover-in)
-      // Use setTimeout to allow state update and prepareRecording to complete first
+      // prepareRecording activates voice WebSocket and pre-acquires mic
+      await prepareRecording();
+      // Start recording immediately on initial click (treat as hover-in)
+      // Small delay to allow WebSocket to connect
       setTimeout(() => {
-        if (!isRecording && !isConnecting && !isFlushing && isConnected && isWsConnected && !isResponsePending && !input.trim()) {
+        if (!isRecording && !isConnecting && !isFlushing && isConnected && !isResponsePending && !input.trim()) {
           setVoiceInputWasEmpty(true);
           startRecording();
         }
-      }, 100);
+      }, 200);
     }
-  }, [voiceModeOn, releaseRecording, isRecording, isConnecting, isFlushing, isConnected, isWsConnected, isResponsePending, input, startRecording]);
+  }, [voiceModeOn, releaseRecording, prepareRecording, isRecording, isConnecting, isFlushing, isConnected, isResponsePending, input, startRecording]);
 
   // Voice button handlers (only active when voice mode is ON)
   // Hover-to-talk: enter to start, leave to stop
@@ -404,7 +399,7 @@ export const ChatInput = memo(function ChatInput({
           onClick={handleVoiceToggle}
           onMouseEnter={handleVoiceMouseEnter}
           onMouseLeave={handleVoiceMouseLeave}
-          disabled={!isConnected || !isWsConnected || isResponsePending || isFlushing}
+          disabled={!isConnected || isResponsePending || isFlushing || (voiceModeOn && !isWsConnected)}
           title={voiceModeOn ? "Voice ON - hover to talk, click to turn OFF" : "Click to enable voice mode"}
         >
           {isConnecting ? (

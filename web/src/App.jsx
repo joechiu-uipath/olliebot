@@ -1,312 +1,33 @@
-import React, { useState, useEffect, useRef, memo, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import ReactMarkdown from 'react-markdown';
-import rehypeRaw from 'rehype-raw';
-import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
-import remarkGfm from 'remark-gfm';
-import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
-import { oneDark } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { Virtuoso } from 'react-virtuoso';
 import { useWebSocket } from './hooks/useWebSocket';
-import HtmlPreview from './components/HtmlPreview';
-import { EvalSidebar, EvalRunner } from './components/eval';
+
+import { BrowserSessions } from './components/BrowserSessions';
+import { BrowserPreview } from './components/BrowserPreview';
+import RAGProjects from './components/RAGProjects';
+import { CitationPanel } from './components/CitationPanel';
+import { PDFViewerModal } from './components/PDFViewerModal';
+import { ChatInput } from './components/ChatInput';
+import { AudioPlayer } from './components/AudioPlayer';
+import { MessageContent } from './components/MessageContent';
+
+// Extracted eval mode (fully self-contained)
+import { useEvalMode, EvalSidebarContent, EvalMainContent } from './App.Eval';
+
+// Extracted utilities
+import { transformMessages, shouldCollapseByDefault } from './utils/messageHelpers';
+import { createMessageHandler } from './App.websocket';
 
 // Mode constants
 const MODES = {
   CHAT: 'chat',
   EVAL: 'eval',
 };
-import { BrowserSessions } from './components/BrowserSessions';
-import { BrowserPreview } from './components/BrowserPreview';
-import RAGProjects from './components/RAGProjects';
-import { CitationPanel } from './components/CitationPanel';
-import { CitedContent } from './components/CitedContent';
-import { PDFViewerModal } from './components/PDFViewerModal';
-import { ChatInput } from './components/ChatInput';
-import { playAudioData } from './utils/audio';
-
-// Code block component with copy button and language header
-// Uses deferred rendering for faster initial display
-function CodeBlock({ language, children }) {
-  const [copied, setCopied] = useState(false);
-  const [isReady, setIsReady] = useState(false);
-  const hasLanguage = language && language !== 'text';
-
-  // Defer syntax highlighting until browser is idle
-  useEffect(() => {
-    const scheduleRender = window.requestIdleCallback || ((cb) => setTimeout(cb, 1));
-    const id = scheduleRender(() => setIsReady(true), { timeout: 100 });
-    return () => {
-      if (window.cancelIdleCallback) {
-        window.cancelIdleCallback(id);
-      } else {
-        clearTimeout(id);
-      }
-    };
-  }, []);
-
-  const handleCopy = async () => {
-    let success = false;
-    try {
-      await navigator.clipboard.writeText(children);
-      success = true;
-    } catch (err) {
-      console.error('Failed to copy:', err);
-    }
-    if (success) {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    }
-  };
-
-  return (
-    <div className={`code-block-container ${hasLanguage ? 'has-header' : ''}`}>
-      {hasLanguage && (
-        <div className="code-block-header">
-          <span className="code-block-language">{language}</span>
-        </div>
-      )}
-      <button
-        className={`code-copy-button ${copied ? 'copied' : ''}`}
-        onClick={handleCopy}
-        title={copied ? 'Copied!' : 'Copy code'}
-      >
-        {copied ? '✓' : '⧉'}
-      </button>
-      {isReady ? (
-        <SyntaxHighlighter
-          style={oneDark}
-          language={language || 'text'}
-          PreTag="div"
-          className="code-block-highlighted"
-          customStyle={{
-            margin: 0,
-            borderRadius: hasLanguage ? '0 0 6px 6px' : '6px',
-            fontSize: '13px',
-          }}
-        >
-          {children}
-        </SyntaxHighlighter>
-      ) : (
-        <div
-          className="code-block-placeholder"
-          style={{
-            margin: 0,
-            padding: '1em',
-            borderRadius: hasLanguage ? '0 0 6px 6px' : '6px',
-            fontSize: '13px',
-            background: '#282c34',
-            color: '#abb2bf',
-            fontFamily: 'monospace',
-            whiteSpace: 'pre-wrap',
-            overflow: 'hidden',
-            maxHeight: '200px',
-          }}
-        >
-          {children}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// Static markdown components that don't depend on props (defined once, reused)
-const staticMarkdownComponents = {
-  pre({ children }) {
-    return <div className="code-block-wrapper">{children}</div>;
-  },
-  table({ children }) {
-    return (
-      <div className="table-wrapper">
-        <table>{children}</table>
-      </div>
-    );
-  },
-};
-
-// Custom sanitize schema that allows mark tags for citations
-const sanitizeSchema = {
-  ...defaultSchema,
-  tagNames: [...(defaultSchema.tagNames || []), 'mark'],
-  attributes: {
-    ...defaultSchema.attributes,
-    mark: ['className', 'class'],
-    '*': [...(defaultSchema.attributes?.['*'] || []), 'className'],
-  },
-  // Allow citation-related class names
-  clobber: [],
-  clobberPrefix: '',
-};
-
-// Rehype plugin arrays (stable references)
-const rehypePluginsWithHtml = [rehypeRaw, [rehypeSanitize, sanitizeSchema]];
-const rehypePluginsDefault = [[rehypeSanitize, sanitizeSchema]];
-const remarkPluginsDefault = [remarkGfm];
-
-// Factory to create code component (only recreated when isStreaming changes)
-function createCodeComponent(isStreaming) {
-  return function CodeComponent({ node, className, children, ...props }) {
-    const match = /language-(\w+)/.exec(className || '');
-    const language = match ? match[1] : null;
-    const isBlock = match || (node?.tagName === 'code' && node?.parent?.tagName === 'pre');
-
-    if (isBlock) {
-      const codeContent = String(children).replace(/\n$/, '');
-      if (language === 'html' || language === 'htm') {
-        return <HtmlPreview html={codeContent} isStreaming={isStreaming} />;
-      }
-      return <CodeBlock language={language}>{codeContent}</CodeBlock>;
-    }
-    return (
-      <code className="inline-code" {...props}>
-        {children}
-      </code>
-    );
-  };
-}
-
-// Cache for markdown components keyed by isStreaming value
-const markdownComponentsCache = new Map();
-function getMarkdownComponents(isStreaming) {
-  if (!markdownComponentsCache.has(isStreaming)) {
-    markdownComponentsCache.set(isStreaming, {
-      ...staticMarkdownComponents,
-      code: createCodeComponent(isStreaming),
-    });
-  }
-  return markdownComponentsCache.get(isStreaming);
-}
-
-/**
- * Message content component for rendering markdown messages.
- * Supports citation highlighting when citations prop is provided.
- * Memoized to prevent re-renders when parent re-renders with same props.
- */
-const MessageContent = memo(function MessageContent({ content, html = false, isStreaming = false, citations = null, messageId = null }) {
-  const components = getMarkdownComponents(isStreaming);
-  const rehypePlugins = html ? rehypePluginsWithHtml : rehypePluginsDefault;
-
-  // Use CitedContent when citations with references are available
-  if (citations?.references?.length > 0 && !isStreaming) {
-    return (
-      <CitedContent
-        content={content}
-        citations={citations}
-        messageId={messageId}
-        html={html}
-        isStreaming={isStreaming}
-        rehypePlugins={rehypePlugins}
-        remarkPlugins={[remarkGfm]}
-        components={components}
-      />
-    );
-  }
-
-  return (
-    <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
-      rehypePlugins={rehypePlugins}
-      components={components}
-    >
-      {content}
-    </ReactMarkdown>
-  );
-}, (prevProps, nextProps) => {
-  // Custom comparison - check each prop for equality
-  return (
-    prevProps.content === nextProps.content &&
-    prevProps.html === nextProps.html &&
-    prevProps.isStreaming === nextProps.isStreaming &&
-    prevProps.citations === nextProps.citations &&
-    prevProps.messageId === nextProps.messageId
-  );
-});
 
 // Module-level flag to prevent double-fetching in React Strict Mode
 // (Strict Mode unmounts/remounts component, so refs don't persist)
 let appInitialLoadDone = false;
-
-// Helper function to check if an agent type should collapse by default
-// Uses agentTemplates data from backend (passed as parameter)
-function shouldCollapseByDefault(agentType, agentName, agentTemplates) {
-  if (!agentTemplates || agentTemplates.length === 0) {
-    return false; // No templates loaded yet
-  }
-
-  // Check by agentType first
-  if (agentType) {
-    const template = agentTemplates.find(t => t.type === agentType);
-    if (template?.collapseResponseByDefault) {
-      return true;
-    }
-  }
-
-  // Fall back to matching by display name (for legacy messages without agentType)
-  if (agentName) {
-    const template = agentTemplates.find(t => t.name === agentName);
-    if (template?.collapseResponseByDefault) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-// Helper to transform message data from API format (pure function, no component deps)
-function transformMessages(data) {
-  return data.map((msg) => {
-    let role = msg.role;
-    if (msg.messageType === 'task_run') role = 'task_run';
-    else if (msg.messageType === 'tool_event' || msg.role === 'tool') role = 'tool';
-    else if (msg.messageType === 'delegation') role = 'delegation';
-
-    return {
-      id: msg.id,
-      role,
-      content: msg.content,
-      timestamp: msg.createdAt,
-      agentName: msg.agentName || msg.delegationAgentId,
-      agentEmoji: msg.agentEmoji,
-      attachments: msg.attachments,
-      taskId: msg.taskId,
-      taskName: msg.taskName,
-      taskDescription: msg.taskDescription,
-      toolName: msg.toolName,
-      source: msg.toolSource,
-      status: msg.toolSuccess === true ? 'completed' : msg.toolSuccess === false ? 'failed' : undefined,
-      durationMs: msg.toolDurationMs,
-      error: msg.toolError,
-      parameters: msg.toolParameters,
-      result: msg.toolResult,
-      agentType: msg.agentType || msg.delegationAgentType || (msg.agentName?.includes('-') ? msg.agentName : undefined),
-      mission: msg.delegationMission,
-      reasoningMode: msg.reasoningMode,
-      messageType: msg.messageType,
-      citations: msg.citations,
-    };
-  });
-}
-
-// Audio player component - play button for on-demand playback
-function AudioPlayer({ audioBase64, mimeType }) {
-  const [isPlaying, setIsPlaying] = useState(false);
-
-  const handlePlay = async () => {
-    setIsPlaying(true);
-    await playAudioData(audioBase64, mimeType);
-    setIsPlaying(false);
-  };
-
-  return (
-    <button
-      className={`audio-play-button ${isPlaying ? 'playing' : ''}`}
-      onClick={handlePlay}
-      disabled={isPlaying}
-    >
-      {isPlaying ? '🔊 Playing...' : '▶️ Play'}
-    </button>
-  );
-}
 
 function App() {
   // Router hooks
@@ -353,6 +74,14 @@ function App() {
   const [ragProjects, setRagProjects] = useState([]);
   const [ragIndexingProgress, setRagIndexingProgress] = useState({}); // { projectId: { status, ... } }
 
+  // Eval state (shared via WebSocket, not a separate connection)
+  const [evalJobId, setEvalJobId] = useState(null);
+  const [evalProgress, setEvalProgress] = useState(null);
+  const [evalResults, setEvalResults] = useState(null);
+  const [evalError, setEvalError] = useState(null);
+  const [evalLoading, setEvalLoading] = useState(false);
+  const evalJobIdRef = useRef(null);
+
   // Agent templates metadata (fetched from backend for collapse settings, display names, etc.)
   const [agentTemplates, setAgentTemplates] = useState([]);
 
@@ -381,11 +110,9 @@ function App() {
   // Expanded agent messages (for agents that collapse by default, like research-worker)
   const [expandedAgentMessages, setExpandedAgentMessages] = useState(new Set());
 
-  // Eval mode state
-  const [selectedEvaluation, setSelectedEvaluation] = useState(null);
-  const [selectedSuite, setSelectedSuite] = useState(null);
-  const [selectedResult, setSelectedResult] = useState(null);
-  const [viewingResults, setViewingResults] = useState(null);
+  // Eval mode - managed by useEvalMode hook (state lives in App.Eval.jsx)
+  const evalMode = useEvalMode();
+
   // Response pending state (disable input while waiting)
   const [isResponsePending, setIsResponsePending] = useState(false);
 
@@ -441,384 +168,55 @@ function App() {
     setPdfViewerState((prev) => ({ ...prev, isOpen: false }));
   }, []);
 
-  const handleMessage = (data) => {
-    // Helper to check if message belongs to current conversation
-    const isForCurrentConversation = (msgConversationId) => {
-      // If no conversationId specified, assume it's for current conversation
-      if (!msgConversationId) return true;
-      // If no current conversation, accept all messages
-      if (!currentConversationIdRef.current) return true;
-      // Otherwise, check if it matches
-      return msgConversationId === currentConversationIdRef.current;
-    };
-    if (data.type === 'message') {
-      // Only show messages for current conversation
-      if (!isForCurrentConversation(data.conversationId)) return;
+  // WebSocket message handler - created once using useState lazy initializer
+  // (useState initializer only runs once and avoids ref-access-during-render)
+  const [handleMessage] = useState(() => createMessageHandler({
+    // Getter/setter functions for ref values (called at message time, not render time)
+    getCurrentConversationId: () => currentConversationIdRef.current,
+    setCurrentConversationIdRef: (id) => { currentConversationIdRef.current = id; },
+    getNavigate: () => navigateRef.current,
+    // State setters (stable by React guarantee)
+    setMessages,
+    setTotalMessageCount,
+    setIsResponsePending,
+    setIsConnected,
+    setConversations,
+    setCurrentConversationId,
+    setAgentTasks,
+    setBrowserSessions,
+    setBrowserScreenshots,
+    setSelectedBrowserSessionId,
+    setClickMarkers,
+    setExpandedAccordions,
+    setRagProjects,
+    setRagIndexingProgress,
+    // Eval state (shared WebSocket, no separate connection needed)
+    getEvalJobId: () => evalJobIdRef.current,
+    setEvalProgress,
+    setEvalResults,
+    setEvalError,
+    setEvalLoading,
+  }));
 
-      const messageId = data.id || `msg-${Date.now()}`;
-      setMessages((prev) => {
-        // Deduplicate by ID
-        if (prev.some((m) => m.id === messageId)) {
-          return prev;
-        }
-        // Increment total count for new message
-        setTotalMessageCount((c) => c + 1);
-        return [
-          ...prev,
-          {
-            id: messageId,
-            role: 'assistant',
-            content: data.content,
-            timestamp: data.timestamp,
-            buttons: data.buttons,
-            html: data.html,
-            agentName: data.agentName,
-            agentEmoji: data.agentEmoji,
-          },
-        ];
-      });
-    } else if (data.type === 'stream_start') {
-      // Only show streams for current conversation
-      if (!isForCurrentConversation(data.conversationId)) return;
+  // Callback to set evalJobId - updates both ref (for WebSocket handler) and state
+  const setEvalJobIdWithRef = useCallback((jobId) => {
+    evalJobIdRef.current = jobId;
+    setEvalJobId(jobId);
+  }, []);
 
-      // Start a new streaming message
-      setTotalMessageCount((c) => c + 1);
-      setMessages((prev) => {
-        // Find the most recent user message to get reasoning mode and message type
-        const lastUserMsg = [...prev].reverse().find(m => m.role === 'user');
-        return [
-          ...prev,
-          {
-            id: data.id,
-            role: 'assistant',
-            content: '',
-            timestamp: data.timestamp,
-            isStreaming: true,
-            agentName: data.agentName,
-            agentEmoji: data.agentEmoji,
-            agentType: data.agentType,
-            reasoningMode: lastUserMsg?.reasoningMode || null,
-            messageType: lastUserMsg?.messageType || null,
-          },
-        ];
-      });
-    } else if (data.type === 'stream_chunk') {
-      // Only process chunks for current conversation
-      if (!isForCurrentConversation(data.conversationId)) return;
-
-      // Append chunk to streaming message
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === data.streamId
-            ? { ...m, content: m.content + data.chunk }
-            : m
-        )
-      );
-    } else if (data.type === 'stream_end') {
-      // Only process stream end for current conversation
-      if (!isForCurrentConversation(data.conversationId)) return;
-
-      // Debug: log citation data
-      if (data.citations) {
-        console.log('[Citations] Received in stream_end:', data.citations);
-      } else {
-        console.log('[Citations] No citations in stream_end');
-      }
-
-      // Mark streaming as complete and attach citations if present
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === data.streamId
-            ? { ...m, isStreaming: false, citations: data.citations }
-            : m
-        )
-      );
-      setIsResponsePending(false);
-    } else if (data.type === 'error') {
-      // Only show errors for current conversation
-      if (!isForCurrentConversation(data.conversationId)) return;
-
-      const errorId = data.id || `err-${Date.now()}`;
-      setMessages((prev) => {
-        // Deduplicate by ID
-        if (prev.some((m) => m.id === errorId)) {
-          return prev;
-        }
-        // Increment total count for new message
-        setTotalMessageCount((c) => c + 1);
-        return [
-          ...prev,
-          {
-            id: errorId,
-            role: 'assistant',
-            content: `**Error:** ${data.error}${data.details ? `\n\n\`\`\`\n${data.details}\n\`\`\`` : ''}`,
-            timestamp: data.timestamp,
-            isError: true,
-          },
-        ];
-      });
-      setIsResponsePending(false);
-    } else if (data.type === 'connected') {
-      setIsConnected(true);
-    } else if (data.type === 'tool_requested') {
-      // Only show tool requests for current conversation
-      if (!isForCurrentConversation(data.conversationId)) return;
-
-      // Tool invocation - show compact system message
-      const toolId = `tool-${data.requestId}`;
-      setMessages((prev) => {
-        if (prev.some((m) => m.id === toolId)) return prev;
-        // Increment total count for new message
-        setTotalMessageCount((c) => c + 1);
-        return [
-          ...prev,
-          {
-            id: toolId,
-            role: 'tool',
-            toolName: data.toolName,
-            source: data.source,
-            parameters: data.parameters,
-            status: 'running',
-            timestamp: data.timestamp,
-            // Include agent info for attribution
-            agentId: data.agentId,
-            agentName: data.agentName,
-            agentEmoji: data.agentEmoji,
-            agentType: data.agentType,
-          },
-        ];
-      });
-    } else if (data.type === 'play_audio') {
-      // Play audio immediately (sent from speak tool via emitToolEvent)
-      if (data.audio && typeof data.audio === 'string') {
-        playAudioData(data.audio, data.mimeType || 'audio/pcm;rate=24000');
-      }
-    } else if (data.type === 'tool_execution_finished') {
-      // Only process tool results for current conversation
-      if (!isForCurrentConversation(data.conversationId)) return;
-
-      // Update tool message with result
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === `tool-${data.requestId}`
-            ? {
-                ...m,
-                status: data.success ? 'completed' : 'failed',
-                durationMs: data.durationMs,
-                error: data.error,
-                parameters: data.parameters,
-                result: data.result,
-              }
-            : m
-        )
-      );
-    } else if (data.type === 'delegation') {
-      // Only show delegations for current conversation
-      if (!isForCurrentConversation(data.conversationId)) return;
-
-      // Agent delegation event - show compact system message
-      const delegationId = `delegation-${data.agentId}`;
-      setMessages((prev) => {
-        if (prev.some((m) => m.id === delegationId)) return prev;
-        // Increment total count for new message
-        setTotalMessageCount((c) => c + 1);
-        return [
-          ...prev,
-          {
-            id: delegationId,
-            role: 'delegation',
-            agentName: data.agentName,
-            agentEmoji: data.agentEmoji,
-            agentType: data.agentType,
-            mission: data.mission,
-            timestamp: data.timestamp,
-          },
-        ];
-      });
-    } else if (data.type === 'task_run') {
-      // Task run event - show compact task card
-      const taskRunId = `task-run-${data.taskId}-${Date.now()}`;
-      setMessages((prev) => {
-        if (prev.some((m) => m.taskId === data.taskId && m.role === 'task_run')) return prev;
-        // Increment total count for new message
-        setTotalMessageCount((c) => c + 1);
-        return [
-          ...prev,
-          {
-            id: taskRunId,
-            role: 'task_run',
-            taskId: data.taskId,
-            taskName: data.taskName,
-            taskDescription: data.taskDescription,
-            timestamp: data.timestamp,
-          },
-        ];
-      });
-    } else if (data.type === 'conversation_created') {
-      // New conversation was auto-created by backend
-      const conv = data.conversation;
-      setConversations((prev) => {
-        // Don't add if already exists
-        if (prev.some((c) => c.id === conv.id)) return prev;
-        const newConv = {
-          id: conv.id,
-          title: conv.title,
-          updatedAt: conv.updatedAt,
-          isWellKnown: false,
-        };
-        // Insert after well-known conversations
-        const wellKnownCount = prev.filter((c) => c.isWellKnown).length;
-        return [...prev.slice(0, wellKnownCount), newConv, ...prev.slice(wellKnownCount)];
-      });
-      // Update ref immediately to prevent race condition with incoming stream events
-      // (React state update is async, but stream_start/chunk events may arrive before re-render)
-      currentConversationIdRef.current = conv.id;
-      setCurrentConversationId(conv.id);
-      // Navigate to the new conversation URL
-      navigateRef.current(`/chat/${encodeURIComponent(conv.id)}`, { replace: true });
-    } else if (data.type === 'conversation_updated') {
-      // Conversation title or metadata was updated
-      const { id, title, updatedAt, manuallyNamed } = data.conversation;
-      setConversations((prev) =>
-        prev.map((c) => {
-          if (c.id !== id) return c;
-          // Don't override manually named conversations with auto-generated titles
-          if (c.manuallyNamed && !manuallyNamed) return c;
-          return {
-            ...c,
-            title: title || c.title,
-            updatedAt: updatedAt || c.updatedAt,
-            manuallyNamed: manuallyNamed || c.manuallyNamed,
-          };
-        })
-      );
-    } else if (data.type === 'task_updated') {
-      // Task was updated (e.g., after execution)
-      setAgentTasks((prev) =>
-        prev.map((t) =>
-          t.id === data.task.id ? { ...t, ...data.task } : t
-        )
-      );
-    } else if (data.type === 'browser_session_created') {
-      // New browser session was created
-      setBrowserSessions((prev) => {
-        if (prev.some((s) => s.id === data.session.id)) return prev;
-        return [...prev, data.session];
-      });
-      // Auto-expand accordion when first session is created
-      setExpandedAccordions((prev) => ({ ...prev, browserSessions: true }));
-    } else if (data.type === 'browser_session_updated') {
-      // Browser session was updated
-      setBrowserSessions((prev) =>
-        prev.map((s) =>
-          s.id === data.sessionId ? { ...s, ...data.updates } : s
-        )
-      );
-    } else if (data.type === 'browser_session_closed') {
-      // Browser session was closed
-      setBrowserSessions((prev) => prev.filter((s) => s.id !== data.sessionId));
-      // Clear screenshot for this session
-      setBrowserScreenshots((prev) => {
-        const next = { ...prev };
-        delete next[data.sessionId];
-        return next;
-      });
-      // Clear selection if this was selected
-      setSelectedBrowserSessionId((prev) => prev === data.sessionId ? null : prev);
-      // Remove click markers for this session
-      setClickMarkers((prev) => prev.filter((m) => m.sessionId !== data.sessionId));
-    } else if (data.type === 'browser_screenshot') {
-      // New screenshot from browser session
-      setBrowserScreenshots((prev) => ({
-        ...prev,
-        [data.sessionId]: {
-          screenshot: data.screenshot,
-          url: data.url,
-          timestamp: data.timestamp,
-        },
-      }));
-    } else if (data.type === 'browser_click_marker') {
-      // Click marker for visualization
-      const marker = {
-        ...data.marker,
-        id: `marker-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        sessionId: data.sessionId,
-      };
-      setClickMarkers((prev) => [...prev, marker]);
-      // Auto-remove marker after animation completes (1.5s)
-      setTimeout(() => {
-        setClickMarkers((prev) => prev.filter((m) => m.id !== marker.id));
-      }, 1500);
-    } else if (data.type === 'rag_indexing_started') {
-      // RAG indexing started
-      setRagIndexingProgress((prev) => ({
-        ...prev,
-        [data.projectId]: {
-          status: 'started',
-          totalDocuments: data.totalDocuments,
-          processedDocuments: 0,
-        },
-      }));
-      // Mark project as indexing
-      setRagProjects((prev) =>
-        prev.map((p) =>
-          p.id === data.projectId ? { ...p, isIndexing: true } : p
-        )
-      );
-    } else if (data.type === 'rag_indexing_progress') {
-      // RAG indexing progress update
-      setRagIndexingProgress((prev) => ({
-        ...prev,
-        [data.projectId]: {
-          status: 'processing',
-          totalDocuments: data.totalDocuments,
-          processedDocuments: data.processedDocuments,
-          currentDocument: data.currentDocument,
-        },
-      }));
-    } else if (data.type === 'rag_indexing_completed') {
-      // RAG indexing completed - remove from progress map
-      setRagIndexingProgress((prev) => {
-        const next = { ...prev };
-        delete next[data.projectId];
-        return next;
-      });
-      // Refresh project data
-      fetch('/api/rag/projects')
-        .then((res) => res.ok ? res.json() : [])
-        .then((projects) => setRagProjects(projects))
-        .catch(() => {});
-    } else if (data.type === 'rag_indexing_error') {
-      // RAG indexing error
-      setRagIndexingProgress((prev) => ({
-        ...prev,
-        [data.projectId]: {
-          status: 'error',
-          error: data.error,
-        },
-      }));
-      // Clear progress after a delay
-      setTimeout(() => {
-        setRagIndexingProgress((prev) => {
-          const next = { ...prev };
-          delete next[data.projectId];
-          return next;
-        });
-      }, 5000);
-      // Mark project as not indexing
-      setRagProjects((prev) =>
-        prev.map((p) =>
-          p.id === data.projectId ? { ...p, isIndexing: false } : p
-        )
-      );
-    } else if (data.type === 'rag_projects_changed') {
-      // RAG projects folder changed, refresh list
-      fetch('/api/rag/projects')
-        .then((res) => res.ok ? res.json() : [])
-        .then((projects) => setRagProjects(projects))
-        .catch(() => {});
-    }
-  };
+  // Eval state object to pass to EvalMainContent
+  const evalState = useMemo(() => ({
+    jobId: evalJobId,
+    progress: evalProgress,
+    results: evalResults,
+    error: evalError,
+    loading: evalLoading,
+    setJobId: setEvalJobIdWithRef,
+    setProgress: setEvalProgress,
+    setResults: setEvalResults,
+    setError: setEvalError,
+    setLoading: setEvalLoading,
+  }), [evalJobId, evalProgress, evalResults, evalError, evalLoading, setEvalJobIdWithRef]);
 
   // Ref to hold the loadStartupData function (updated via effect)
   const loadStartupDataRef = useRef(null);
@@ -999,46 +397,8 @@ function App() {
           });
       }
     }
-
-    // Handle eval routes
-    if (path === '/eval') {
-      setSelectedEvaluation(null);
-      setSelectedSuite(null);
-      setSelectedResult(null);
-      setViewingResults(null);
-    } else if (path.startsWith('/eval/result/')) {
-      const resultPath = decodeURIComponent(path.slice(13)); // Remove '/eval/result/'
-      if (resultPath && (!selectedResult || selectedResult.filePath !== resultPath)) {
-        const resultInfo = { filePath: resultPath };
-        setSelectedResult(resultInfo);
-        setSelectedEvaluation(null);
-        setSelectedSuite(null);
-        // Fetch full result data
-        fetch(`/api/eval/result/${encodeURIComponent(resultPath)}`)
-          .then(res => res.ok ? res.json() : null)
-          .then(data => {
-            if (data?.result) setViewingResults(data.result);
-          })
-          .catch(err => console.error('Failed to load result:', err));
-      }
-    } else if (path.startsWith('/eval/suite/')) {
-      const suitePath = decodeURIComponent(path.slice(12)); // Remove '/eval/suite/'
-      if (suitePath && (!selectedSuite || selectedSuite.suitePath !== suitePath)) {
-        setSelectedSuite({ suitePath });
-        setSelectedEvaluation(null);
-        setSelectedResult(null);
-        setViewingResults(null);
-      }
-    } else if (path.startsWith('/eval/')) {
-      const evalPath = decodeURIComponent(path.slice(6)); // Remove '/eval/'
-      if (evalPath && (!selectedEvaluation || selectedEvaluation.path !== evalPath)) {
-        setSelectedEvaluation({ path: evalPath });
-        setSelectedSuite(null);
-        setSelectedResult(null);
-        setViewingResults(null);
-      }
-    }
-  }, [location.pathname, conversations, currentConversationId, selectedEvaluation, selectedResult, selectedSuite, transformMessages]);
+    // Note: Eval routes are handled by useEvalMode hook in App.Eval.jsx
+  }, [location.pathname, conversations, currentConversationId, transformMessages]);
 
   // Redirect root to /chat
   useEffect(() => {
@@ -1707,34 +1067,7 @@ function App() {
     return date.toLocaleDateString();
   };
 
-  // Eval mode handlers - memoized for EvalSidebar/EvalRunner
-  const handleSelectEvaluation = useCallback((evaluation) => {
-    if (evaluation) {
-      navigate(`/eval/${encodeURIComponent(evaluation.path)}`);
-    } else {
-      navigate('/eval');
-    }
-  }, [navigate]);
-
-  const handleSelectSuite = useCallback((suite) => {
-    if (suite) {
-      navigate(`/eval/suite/${encodeURIComponent(suite.suitePath)}`);
-    } else {
-      navigate('/eval');
-    }
-  }, [navigate]);
-
-  const handleSelectResult = useCallback((resultInfo) => {
-    if (resultInfo) {
-      navigate(`/eval/result/${encodeURIComponent(resultInfo.filePath)}`);
-    } else {
-      navigate('/eval');
-    }
-  }, [navigate]);
-
-  const handleEvalBack = useCallback(() => {
-    navigate('/eval');
-  }, [navigate]);
+  // Note: Eval mode handlers are now in useEvalMode hook (App.Eval.jsx)
 
   // Handle browser session selection - memoized
   const handleSelectBrowserSession = useCallback((sessionId) => {
@@ -2055,14 +1388,7 @@ function App() {
         </div>
 
         {sidebarOpen && mode === MODES.EVAL && (
-          <EvalSidebar
-            onSelectEvaluation={handleSelectEvaluation}
-            onSelectSuite={handleSelectSuite}
-            onSelectResult={handleSelectResult}
-            selectedEvaluation={selectedEvaluation}
-            selectedSuite={selectedSuite}
-            selectedResult={selectedResult}
-          />
+          <EvalSidebarContent evalMode={evalMode} />
         )}
 
         {sidebarOpen && mode === MODES.CHAT && (
@@ -2455,16 +1781,7 @@ function App() {
         </header>
 
         {/* Eval Mode Content */}
-        {mode === MODES.EVAL && (
-          <main className="eval-container">
-            <EvalRunner
-              evaluation={selectedEvaluation}
-              suite={selectedSuite}
-              viewingResults={viewingResults}
-              onBack={handleEvalBack}
-            />
-          </main>
-        )}
+        {mode === MODES.EVAL && <EvalMainContent evalMode={evalMode} evalState={evalState} />}
 
         {/* Chat Mode Content */}
         {mode === MODES.CHAT && (

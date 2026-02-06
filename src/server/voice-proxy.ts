@@ -83,15 +83,12 @@ export function setupVoiceProxy(voiceWss: WebSocketServer, config: VoiceProxyCon
     // Function to connect to upstream
     const connectUpstream = () => {
       if (upstream && (upstream.isOpen || upstream.ws.readyState === WebSocket.CONNECTING)) {
-        console.log('[Voice] Upstream already connected or connecting');
         // If session is already ready, notify client immediately
         if (upstream.sessionReady) {
           clientWs.send(JSON.stringify({ type: 'session.ready' }));
         }
         return;
       }
-
-      console.log(`[Voice] Connecting to upstream: ${upstreamUrl}`);
 
       const upstreamWs = new WebSocket(upstreamUrl, { headers: upstreamHeaders });
       upstream = {
@@ -119,7 +116,6 @@ export function setupVoiceProxy(voiceWss: WebSocketServer, config: VoiceProxyCon
       });
 
       upstreamWs.on('open', () => {
-        console.log('[Voice] Connected to upstream');
         if (upstream) {
           upstream.isOpen = true;
         }
@@ -158,7 +154,6 @@ export function setupVoiceProxy(voiceWss: WebSocketServer, config: VoiceProxyCon
 
           // Mark session as ready
           if (msg.type === 'session.created' || msg.type === 'session.updated') {
-            console.log('[Voice] Session ready');
             if (upstream) {
               upstream.sessionReady = true;
             }
@@ -197,8 +192,7 @@ export function setupVoiceProxy(voiceWss: WebSocketServer, config: VoiceProxyCon
         }
       });
 
-      upstreamWs.on('close', (code, reason) => {
-        console.log(`[Voice] Upstream closed: ${code} ${reason}`);
+      upstreamWs.on('close', () => {
         upstream = null;
       });
     };
@@ -213,21 +207,18 @@ export function setupVoiceProxy(voiceWss: WebSocketServer, config: VoiceProxyCon
         // Handle control messages
         if (msg.type === 'voice.prepare') {
           // Pre-connect to upstream (called on hover)
-          console.log('[Voice] Received prepare signal, pre-connecting...');
           connectUpstream();
           return;
         }
 
         if (msg.type === 'voice.start') {
           // Ensure upstream is connected
-          console.log('[Voice] Received start signal');
           connectUpstream();
           return;
         }
 
         if (msg.type === 'voice.stop') {
           // Clear the audio buffer for next session
-          console.log('[Voice] Received stop signal');
           if (upstream?.isOpen && upstream.ws.readyState === WebSocket.OPEN) {
             upstream.ws.send(JSON.stringify({ type: 'input_audio_buffer.clear' }));
           }
@@ -257,6 +248,4 @@ export function setupVoiceProxy(voiceWss: WebSocketServer, config: VoiceProxyCon
       console.error('[Voice] Client error:', error.message);
     });
   });
-
-  console.log('[Voice] WebSocket proxy initialized');
 }

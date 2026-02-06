@@ -176,18 +176,20 @@ export const CitedContent = memo(function CitedContent({
   const hasCitations = citations?.references?.length > 0;
 
   // Build source lookup map for the mark component
+  const sources = citations?.sources;
   const sourceMap = useMemo(() => {
-    if (!citations?.sources) return {};
-    return Object.fromEntries(citations.sources.map(s => [s.id, s]));
-  }, [citations?.sources]);
+    if (!sources) return {};
+    return Object.fromEntries(sources.map(s => [s.id, s]));
+  }, [sources]);
 
   // Inject citation marks into content
+  const references = citations?.references;
   const markedContent = useMemo(() => {
     if (!hasCitations || isStreaming) {
       return content;
     }
-    return injectCitationMarks(content, citations.references);
-  }, [content, citations?.references, hasCitations, isStreaming]);
+    return injectCitationMarks(content, references);
+  }, [content, references, hasCitations, isStreaming]);
 
   // Create custom mark component that uses CitationHighlight
   const markComponent = useCallback(({ node, children, className, ...props }) => {

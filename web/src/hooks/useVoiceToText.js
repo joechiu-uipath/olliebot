@@ -82,7 +82,6 @@ export function useVoiceToText({ onTranscript, onFinalTranscript, onError } = {}
       case 'session.created':
       case 'session.updated':
       case 'session.ready': {
-        console.log('[Voice] Session ready, flushing', audioBufferRef.current.length, 'buffered audio chunks');
         sessionReadyRef.current = true;
 
         // Flush buffered audio
@@ -96,7 +95,6 @@ export function useVoiceToText({ onTranscript, onFinalTranscript, onError } = {}
 
         // If user already released button, complete the stop now
         if (pendingStopRef.current) {
-          console.log('[Voice] Completing pending stop after flush');
           if (ws && ws.readyState === WebSocket.OPEN) {
             ws.send(JSON.stringify({ type: 'input_audio_buffer.commit' }));
             ws.send(JSON.stringify({ type: 'voice.stop' }));
@@ -197,11 +195,7 @@ export function useVoiceToText({ onTranscript, onFinalTranscript, onError } = {}
       }
 
       case 'input_audio_buffer.speech_started':
-        console.log('[Voice] Speech started');
-        break;
-
       case 'input_audio_buffer.speech_stopped':
-        console.log('[Voice] Speech stopped');
         break;
 
       case 'error': {
@@ -213,75 +207,85 @@ export function useVoiceToText({ onTranscript, onFinalTranscript, onError } = {}
     }
   }, [cleanupAudio]);
 
-  // Connect WebSocket on mount, reconnect on close
-  useEffect(() => {
-    let mounted = true;
-    const MAX_RECONNECT_ATTEMPTS = 10;
-    const INITIAL_RECONNECT_DELAY = 2000; // 2s
-    const MAX_RECONNECT_DELAY = 30000; // 30s
+  // Track if voice mode is active (lazy connection)
+  const voiceModeActiveRef = useRef(false);
+  const mountedRef = useRef(true);
+  const connectRef = useRef(null); // Ref to hold connect function for recursive calls
 
-    const connect = () => {
-      if (!mounted) return;
-      // Don't create new connection if one already exists and is usable
-      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-        return;
-      }
+  const MAX_RECONNECT_ATTEMPTS = 10;
+  const INITIAL_RECONNECT_DELAY = 2000; // 2s
+  const MAX_RECONNECT_DELAY = 30000; // 30s
 
-      const wsUrl = getWsUrl();
-      console.log('[Voice] Connecting to backend:', wsUrl,
-        `(attempt ${reconnectAttemptsRef.current + 1}/${MAX_RECONNECT_ATTEMPTS})`);
+  // Connect WebSocket (called lazily when voice mode is activated)
+  const connect = useCallback(() => {
+    if (!mountedRef.current) return;
+    if (!voiceModeActiveRef.current) return; // Don't connect if voice mode not active
+    // Don't create new connection if one already exists and is usable
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      return;
+    }
 
-      const ws = new WebSocket(wsUrl);
-      wsRef.current = ws;
+    const wsUrl = getWsUrl();
+    const ws = new WebSocket(wsUrl);
+    wsRef.current = ws;
 
-      ws.onopen = () => {
-        console.log('[Voice] Backend WebSocket connected');
-        // Reset reconnect state on successful connection
-        reconnectAttemptsRef.current = 0;
-        reconnectDelayRef.current = INITIAL_RECONNECT_DELAY;
-        if (mounted) setIsWsConnected(true);
-      };
-
-      ws.onmessage = handleWsMessage;
-
-      ws.onerror = (error) => {
-        console.error('[Voice] WebSocket error:', error);
-      };
-
-      ws.onclose = () => {
-        console.log('[Voice] Backend WebSocket closed');
-        if (mounted) {
-          setIsWsConnected(false);
-          wsRef.current = null;
-
-          // Check if we've exceeded max reconnect attempts
-          if (reconnectAttemptsRef.current >= MAX_RECONNECT_ATTEMPTS) {
-            console.warn('[Voice] Max reconnection attempts reached. Voice feature unavailable.');
-            onErrorRef.current?.('Voice service unavailable. Please check server configuration.');
-            return;
-          }
-
-          // Exponential backoff with jitter
-          const delay = Math.min(
-            reconnectDelayRef.current * (1 + Math.random() * 0.3), // Add 0-30% jitter
-            MAX_RECONNECT_DELAY
-          );
-
-          console.log(`[Voice] Reconnecting in ${Math.round(delay / 1000)}s...`);
-
-          reconnectTimeoutRef.current = setTimeout(() => {
-            reconnectAttemptsRef.current += 1;
-            reconnectDelayRef.current = Math.min(reconnectDelayRef.current * 2, MAX_RECONNECT_DELAY);
-            connect();
-          }, delay);
-        }
-      };
+    ws.onopen = () => {
+      // Reset reconnect state on successful connection
+      reconnectAttemptsRef.current = 0;
+      reconnectDelayRef.current = INITIAL_RECONNECT_DELAY;
+      if (mountedRef.current) setIsWsConnected(true);
     };
 
-    connect();
+    ws.onmessage = handleWsMessage;
+
+    ws.onerror = (error) => {
+      console.error('[Voice] WebSocket error:', error);
+    };
+
+    ws.onclose = () => {
+      if (mountedRef.current) {
+        setIsWsConnected(false);
+        wsRef.current = null;
+
+        // Only reconnect if voice mode is still active
+        if (!voiceModeActiveRef.current) {
+          return;
+        }
+
+        // Check if we've exceeded max reconnect attempts
+        if (reconnectAttemptsRef.current >= MAX_RECONNECT_ATTEMPTS) {
+          console.warn('[Voice] Max reconnection attempts reached.');
+          onErrorRef.current?.('Voice service unavailable. Please check server configuration.');
+          return;
+        }
+
+        // Exponential backoff with jitter
+        const delay = Math.min(
+          reconnectDelayRef.current * (1 + Math.random() * 0.3), // Add 0-30% jitter
+          MAX_RECONNECT_DELAY
+        );
+
+        reconnectTimeoutRef.current = setTimeout(() => {
+          reconnectAttemptsRef.current += 1;
+          reconnectDelayRef.current = Math.min(reconnectDelayRef.current * 2, MAX_RECONNECT_DELAY);
+          connectRef.current?.(); // Use ref to avoid circular dependency
+        }, delay);
+      }
+    };
+  }, [getWsUrl, handleWsMessage]);
+
+  // Keep connectRef in sync (via effect to satisfy React Compiler)
+  useEffect(() => {
+    connectRef.current = connect;
+  }, [connect]);
+
+  // Cleanup effect for unmount only
+  useEffect(() => {
+    mountedRef.current = true;
 
     return () => {
-      mounted = false;
+      mountedRef.current = false;
+      voiceModeActiveRef.current = false;
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
       }
@@ -302,7 +306,42 @@ export function useVoiceToText({ onTranscript, onFinalTranscript, onError } = {}
         streamRef.current = null;
       }
     };
-  }, [getWsUrl, handleWsMessage]);
+  }, []);
+
+  // Activate voice mode (connect WebSocket lazily)
+  const activateVoiceMode = useCallback(() => {
+    if (voiceModeActiveRef.current) return; // Already active
+    voiceModeActiveRef.current = true;
+    reconnectAttemptsRef.current = 0;
+    reconnectDelayRef.current = INITIAL_RECONNECT_DELAY;
+    connect();
+  }, [connect]);
+
+  // Deactivate voice mode (disconnect WebSocket)
+  const deactivateVoiceMode = useCallback(() => {
+    if (!voiceModeActiveRef.current) return; // Already inactive
+    voiceModeActiveRef.current = false;
+    if (reconnectTimeoutRef.current) {
+      clearTimeout(reconnectTimeoutRef.current);
+      reconnectTimeoutRef.current = null;
+    }
+    if (wsRef.current) {
+      wsRef.current.onopen = null;
+      wsRef.current.onmessage = null;
+      wsRef.current.onerror = null;
+      wsRef.current.onclose = null;
+      if (wsRef.current.readyState === WebSocket.OPEN) {
+        wsRef.current.close();
+      }
+      wsRef.current = null;
+    }
+    setIsWsConnected(false);
+    // Release microphone
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+  }, []);
 
   // Audio capture helper using AudioWorklet
   const startAudioCapture = useCallback(async (audioContext, stream) => {
@@ -311,7 +350,6 @@ export function useVoiceToText({ onTranscript, onFinalTranscript, onError } = {}
       try {
         await audioContext.audioWorklet.addModule('/src/worklets/pcm-processor.js');
         workletLoadedRef.current = true;
-        console.log('[Voice] AudioWorklet processor loaded');
       } catch (error) {
         console.error('[Voice] Failed to load AudioWorklet processor:', error);
         onErrorRef.current?.('Failed to initialize audio processor');
@@ -356,19 +394,23 @@ export function useVoiceToText({ onTranscript, onFinalTranscript, onError } = {}
     source.connect(processor);
   }, []);
 
-  // Pre-acquire microphone and prepare upstream connection (call on hover)
+  // Pre-acquire microphone and prepare upstream connection (call on hover/voice mode activation)
   const prepareRecording = useCallback(async () => {
+    // Activate voice mode (connects WebSocket if not already connected)
+    activateVoiceMode();
+
+    // Wait a bit for WebSocket to connect if needed
+    await new Promise(resolve => setTimeout(resolve, 100));
+
     // Pre-connect upstream
     const ws = wsRef.current;
     if (ws && ws.readyState === WebSocket.OPEN) {
-      console.log('[Voice] Sending prepare signal');
       ws.send(JSON.stringify({ type: 'voice.prepare' }));
     }
 
     // Pre-acquire microphone (if not already acquired)
     if (!streamRef.current) {
       try {
-        console.log('[Voice] Pre-acquiring microphone...');
         const stream = await navigator.mediaDevices.getUserMedia({
           audio: {
             sampleRate: 24000,
@@ -378,12 +420,11 @@ export function useVoiceToText({ onTranscript, onFinalTranscript, onError } = {}
           },
         });
         streamRef.current = stream;
-        console.log('[Voice] Microphone pre-acquired');
       } catch (error) {
         console.error('[Voice] Failed to pre-acquire microphone:', error);
       }
     }
-  }, []);
+  }, [activateVoiceMode]);
 
   // Start recording
   const startRecording = useCallback(async () => {
@@ -404,7 +445,6 @@ export function useVoiceToText({ onTranscript, onFinalTranscript, onError } = {}
 
     // Ensure WebSocket is connected
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-      console.error('[Voice] WebSocket not connected');
       onErrorRef.current?.('Voice connection not ready');
       return;
     }
@@ -414,7 +454,6 @@ export function useVoiceToText({ onTranscript, onFinalTranscript, onError } = {}
       let stream = streamRef.current;
       if (!stream) {
         setIsConnecting(true);
-        console.log('[Voice] Acquiring microphone (not pre-acquired)...');
         stream = await navigator.mediaDevices.getUserMedia({
           audio: {
             sampleRate: 24000,
@@ -453,7 +492,6 @@ export function useVoiceToText({ onTranscript, onFinalTranscript, onError } = {}
 
     // If session not ready yet, mark pending stop and wait for flush
     if (!sessionReadyRef.current) {
-      console.log('[Voice] Session not ready, marking pending stop');
       pendingStopRef.current = true;
       pendingAutoSubmitRef.current = true;
       setIsFlushing(true);
@@ -496,16 +534,12 @@ export function useVoiceToText({ onTranscript, onFinalTranscript, onError } = {}
 
   // Release microphone and cleanup (call when turning voice mode OFF)
   const releaseRecording = useCallback(() => {
-    console.log('[Voice] Releasing microphone');
     cleanupAudio();
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach(track => track.stop());
-      streamRef.current = null;
-    }
+    deactivateVoiceMode(); // Disconnect WebSocket
     setIsRecording(false);
     setIsConnecting(false);
     setIsFlushing(false);
-  }, [cleanupAudio]);
+  }, [cleanupAudio, deactivateVoiceMode]);
 
   return {
     isRecording,
@@ -516,6 +550,8 @@ export function useVoiceToText({ onTranscript, onFinalTranscript, onError } = {}
     stopRecording,
     prepareRecording,
     releaseRecording,
+    activateVoiceMode,
+    deactivateVoiceMode,
     transcript,
   };
 }
