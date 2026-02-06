@@ -38,6 +38,7 @@ export abstract class AbstractAgent implements BaseAgent {
   private ragDataCache: string | null = null;
   private ragDataCacheTime = 0;
   private excludedSkillSources: Array<'builtin' | 'user'> = [];
+  private allowedSkills: string[] | null = null; // Whitelist of skill IDs (takes precedence over excludedSkillSources)
 
   constructor(config: AgentConfig, llmService: LLMService) {
     this.config = config;
@@ -65,7 +66,6 @@ export abstract class AbstractAgent implements BaseAgent {
    */
   setToolRunner(runner: ToolRunner): void {
     this.toolRunner = runner;
-    console.log(`[${this.identity.name}] Tool runner configured with ${runner.getToolsForLLM().length} tools`);
   }
 
   /**
@@ -81,11 +81,6 @@ export abstract class AbstractAgent implements BaseAgent {
    */
   setSkillManager(manager: SkillManager): void {
     this.skillManager = manager;
-    const allSkills = manager.getAllMetadata();
-    if (allSkills.length > 0) {
-      const skillIds = allSkills.map(s => s.id).join(', ');
-      console.log(`[${this.identity.name}] Skills available: ${skillIds}`);
-    }
   }
 
   /**
@@ -102,6 +97,22 @@ export abstract class AbstractAgent implements BaseAgent {
    */
   setExcludedSkillSources(sources: Array<'builtin' | 'user'>): void {
     this.excludedSkillSources = sources;
+  }
+
+  /**
+   * Set allowed skills for this agent (whitelist by skill ID)
+   * Takes precedence over excludedSkillSources
+   * Used to restrict coding agents to only frontend-modifier skill
+   */
+  setAllowedSkills(skillIds: string[]): void {
+    this.allowedSkills = skillIds;
+  }
+
+  /**
+   * Get allowed skills for this agent
+   */
+  getAllowedSkills(): string[] | null {
+    return this.allowedSkills;
   }
 
   /**
@@ -185,11 +196,10 @@ export abstract class AbstractAgent implements BaseAgent {
 
   registerChannel(channel: Channel): void {
     this.channels.set(channel.id, channel);
-    console.log(`[${this.identity.name}] Registered channel: ${channel.id}`);
   }
 
   async init(): Promise<void> {
-    console.log(`[${this.identity.name}] Initialized - ${this.identity.description}`);
+    // Initialization complete - no log needed, task start will log
   }
 
   async shutdown(): Promise<void> {
@@ -248,9 +258,6 @@ export abstract class AbstractAgent implements BaseAgent {
   }
 
   async receiveFromAgent(comm: AgentCommunication): Promise<void> {
-    console.log(
-      `[${this.identity.name}] Received ${comm.type} from agent ${comm.fromAgent}`
-    );
     await this.handleAgentCommunication(comm);
   }
 
@@ -334,8 +341,12 @@ export abstract class AbstractAgent implements BaseAgent {
 
     // Add skill information per Agent Skills spec (progressive disclosure)
     if (this.skillManager) {
-      const skillInstructions = this.skillManager.getSkillUsageInstructions(this.excludedSkillSources.length > 0 ? this.excludedSkillSources : undefined);
-      const skillsXml = this.skillManager.getSkillsForSystemPrompt(this.excludedSkillSources.length > 0 ? this.excludedSkillSources : undefined);
+      // Determine filtering: allowedSkills (whitelist) takes precedence over excludedSkillSources
+      const excludeSources = this.excludedSkillSources.length > 0 ? this.excludedSkillSources : undefined;
+      const allowedIds = this.allowedSkills;
+
+      const skillInstructions = this.skillManager.getSkillUsageInstructions(excludeSources, allowedIds || undefined);
+      const skillsXml = this.skillManager.getSkillsForSystemPrompt(excludeSources, allowedIds || undefined);
 
       if (skillInstructions && skillsXml) {
         prompt += `\n\n${skillInstructions}\n\n${skillsXml}`;
@@ -494,6 +505,7 @@ export interface AgentRegistry {
   findSpecialistTypeByName(name: string): string | undefined;
   loadAgentPrompt(type: string): string;
   getToolAccessForSpecialist(type: string): string[];
+  getAllowedSkillsForSpecialist(type: string): string[] | null;
   // Delegation methods
   getDelegationConfigForSpecialist(type: string): import('./types.js').AgentDelegationConfig;
   canDelegate(sourceAgentType: string, targetAgentType: string, currentWorkflowId: string | null): boolean;

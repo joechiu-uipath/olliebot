@@ -4,3 +4,4 @@
 
 export { stripBinaryDataForLLM } from './strip-binary.js';
 export { formatToolResultBlocks } from './tool-results.js';
+export { logSystemPrompt } from './prompt-logger.js';

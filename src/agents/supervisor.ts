@@ -17,6 +17,7 @@ import { getDb } from '../db/index.js';
 import type { WebChannel } from '../channels/web.js';
 import type { ToolEvent } from '../tools/types.js';
 import { formatToolResultBlocks } from '../utils/index.js';
+import { logSystemPrompt } from '../utils/prompt-logger.js';
 import type { CitationSource, StoredCitationData } from '../citations/types.js';
 import { DEEP_RESEARCH_WORKFLOW_ID, AGENT_IDS } from '../deep-research/constants.js';
 import { SELF_CODING_WORKFLOW_ID, AGENT_IDS as CODING_AGENT_IDS } from '../self-coding/constants.js';
@@ -194,6 +195,11 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
       const systemPrompt = this.buildSystemPrompt();
       const tools = this.getToolsForLLM();
 
+      // Log system prompt to file for debugging
+      logSystemPrompt(this.identity.name, systemPrompt, {
+        toolCount: tools.length,
+      });
+
       // Build initial messages, including image attachments and messageType
       let llmMessages: LLMMessage[] = [
         { role: 'system', content: systemPrompt },
@@ -314,7 +320,7 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
                 this.saveAssistantMessage(message.channel, fullResponse.trim(), reasoningMode);
               }
 
-              console.log(`[${this.identity.name}] Delegating to ${delegationParams.type} for message ${message.id}`);
+              // Delegation logging handled by handleDelegationFromTool
 
               // Unsubscribe from tool events BEFORE delegating
               // This prevents duplicate tool events when the sub-agent uses the same toolRunner
@@ -412,11 +418,7 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
       const delegation = JSON.parse(delegationJson.trim());
       const { type, mission, customName, customEmoji, rationale } = delegation;
 
-      // Log agent selection rationale
-      console.log(`[${this.identity.name}] Agent Selection:`);
-      console.log(`  Type: ${type}`);
-      console.log(`  Rationale: ${rationale || 'Not provided'}`);
-      console.log(`  Mission: ${mission}`);
+      console.log(`[${this.identity.name}] Delegating to ${type}`);
 
       // Spawn appropriate agent (pass type explicitly for prompt loading)
       const agentId = await this.spawnAgent(
@@ -501,11 +503,7 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
     const { type, mission, customName, customEmoji, rationale } = params;
 
     try {
-      // Log agent selection rationale
-      console.log(`[${this.identity.name}] Agent Selection (via tool):`);
-      console.log(`  Type: ${type}`);
-      console.log(`  Rationale: ${rationale || 'Not provided'}`);
-      console.log(`  Mission: ${mission}`);
+      console.log(`[${this.identity.name}] Delegating to ${type}`);
 
       // Spawn appropriate agent (pass type explicitly for prompt loading)
       const agentId = await this.spawnAgent(
@@ -656,6 +654,12 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
       agent.setSkillManager(this.skillManager);
     }
 
+    // Set allowed skills if this agent type has restrictions
+    const allowedSkills = this.agentRegistry.getAllowedSkillsForSpecialist(type);
+    if (allowedSkills) {
+      agent.setAllowedSkills(allowedSkills);
+    }
+
     // Pass the RAG data manager to worker agents
     if (this.ragDataManager) {
       agent.setRagDataManager(this.ragDataManager);
@@ -664,8 +668,6 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
     await agent.init();
     this.subAgents.set(agent.identity.id, agent);
     this.agentRegistry.registerAgent(agent);
-
-    console.log(`[${this.identity.name}] Spawned ${agent.identity.emoji} ${agent.identity.name} (type: ${type}, prompt: ${systemPrompt.length} chars)`);
 
     return agent.identity.id;
   }
@@ -728,10 +730,7 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
         break;
       }
       case 'status_update': {
-        // Log concise status from sub-agents
-        const payload = comm.payload as { status?: string };
-        const agentShortId = comm.fromAgent.split('-').slice(0, 2).join('-');
-        console.log(`[${this.identity.name}] ${agentShortId}: ${payload.status || 'update'}`);
+        // Status updates from sub-agents - no logging needed
         break;
       }
     }

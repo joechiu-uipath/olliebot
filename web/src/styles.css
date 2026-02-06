@@ -1493,6 +1493,24 @@ html, body {
   color: var(--text-secondary);
 }
 
+/* Chat input textarea scrollbar - matches app-wide styling */
+.input-container textarea::-webkit-scrollbar {
+  width: 8px;
+}
+
+.input-container textarea::-webkit-scrollbar-track {
+  background: var(--bg-primary);
+}
+
+.input-container textarea::-webkit-scrollbar-thumb {
+  background: var(--border-color);
+  border-radius: 4px;
+}
+
+.input-container textarea::-webkit-scrollbar-thumb:hover {
+  background: var(--text-secondary);
+}
+
 /* Attachments bar */
 .attachments-bar {
   display: flex;

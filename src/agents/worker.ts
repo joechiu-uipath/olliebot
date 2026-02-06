@@ -13,6 +13,7 @@ import type { LLMMessage } from '../llm/types.js';
 import { getDb } from '../db/index.js';
 import type { WebChannel } from '../channels/web.js';
 import { formatToolResultBlocks } from '../utils/index.js';
+import { logSystemPrompt } from '../utils/prompt-logger.js';
 import type { CitationSource, CitationSourceType, StoredCitationData } from '../citations/types.js';
 import { SUB_AGENT_TIMEOUT_MS } from '../deep-research/constants.js';
 import { getMessageEventService } from '../services/message-event-service.js';
@@ -66,9 +67,6 @@ export class WorkerAgent extends AbstractAgent {
 
   async init(): Promise<void> {
     await super.init();
-    const mission = this.config.mission || 'awaiting task';
-    const missionPreview = mission.length > 80 ? mission.substring(0, 80) + '...' : mission;
-    console.log(`[${this.identity.name}] Initialized: ${missionPreview}`);
   }
 
   async handleMessage(message: Message): Promise<void> {
@@ -186,7 +184,17 @@ export class WorkerAgent extends AbstractAgent {
     // Citation tracking - sources collected from tool executions
     const collectedSources: CitationSource[] = [];
 
-    console.log(`[${this.identity.name}] Starting task (${tools.length} tools)`);
+    // Log tools and skills info
+    const toolInfo = tools.length < 5
+      ? `tools: ${tools.map(t => t.name).join(', ')}`
+      : `${tools.length} tools`;
+    const skills = this.skillManager?.getAllMetadata() || [];
+    const skillInfo = skills.length === 0
+      ? ''
+      : skills.length < 5
+        ? `, skills: ${skills.map(s => s.id).join(', ')}`
+        : `, ${skills.length} skills`;
+    console.log(`[${this.identity.name}] Starting task (${toolInfo}${skillInfo})`);
 
     // Setup tool event broadcasting and persistence via MessageEventService
     let unsubscribeTool: (() => void) | undefined;
@@ -221,6 +229,13 @@ export class WorkerAgent extends AbstractAgent {
       const systemPrompt = this.buildSystemPrompt(
         `Your mission: ${mission}\n\nYou have access to tools including MCP servers, skills, and native tools. Use them to complete your mission.`
       );
+
+      // Log system prompt to file for debugging
+      logSystemPrompt(this.identity.name, systemPrompt, {
+        toolCount: tools.length,
+        skillCount: skills.length,
+        mission,
+      });
 
       // Build initial messages
       let llmMessages: LLMMessage[] = [
@@ -260,7 +275,13 @@ export class WorkerAgent extends AbstractAgent {
 
         const llmDuration = Date.now() - llmStartTime;
         const toolCount = response.toolUse?.length || 0;
-        console.log(`[${this.identity.name}] LLM (${llmDuration}ms) → ${toolCount > 0 ? `${toolCount} tool(s)` : 'done'}`);
+        const toolNames = response.toolUse?.map(t => t.name).join(', ') || '';
+        // Log LLM response: duration, whether it requested tools or finished with text
+        if (toolCount > 0) {
+          console.log(`[${this.identity.name}] LLM response (${llmDuration}ms): requesting ${toolCount} tool(s): ${toolNames}`);
+        } else {
+          console.log(`[${this.identity.name}] LLM response (${llmDuration}ms): text complete (no tool calls)`);
+        }
 
         // Check if LLM requested tool use
         if (response.toolUse && response.toolUse.length > 0) {
@@ -271,11 +292,11 @@ export class WorkerAgent extends AbstractAgent {
 
           const { results, citations } = await this.toolRunner!.executeToolsWithCitations(toolRequests);
 
-          // Log tool results concisely
+          // Log tool execution results
           for (const result of results) {
             const status = result.success ? '✓' : '✗';
             const info = result.success ? `${result.durationMs}ms` : result.error;
-            console.log(`[${this.identity.name}] ${status} ${result.toolName} (${info})`);
+            console.log(`[${this.identity.name}] Tool executed: ${status} ${result.toolName} (${info})`);
           }
 
           // Collect citations from this execution
@@ -292,8 +313,6 @@ export class WorkerAgent extends AbstractAgent {
             const delegationConfig = this.agentRegistry.getDelegationConfigForSpecialist(this.agentType);
 
             if (delegationConfig.canDelegate) {
-              console.log(`[${this.identity.name}] Processing ${delegateResults.length} delegation(s)`);
-
               // Unsubscribe from tool events BEFORE delegating to sub-agents
               // This prevents duplicate tool events when sub-agents use the same toolRunner
               if (unsubscribeTool) {
@@ -364,8 +383,6 @@ export class WorkerAgent extends AbstractAgent {
                   }
                 }
               }
-
-              console.log(`[${this.identity.name}] All ${delegateResults.length} delegation(s) completed`);
 
               // Re-subscribe to tool events after delegations complete
               // (this worker may execute more tools in subsequent iterations)
@@ -473,10 +490,7 @@ export class WorkerAgent extends AbstractAgent {
   ): Promise<string> {
     const { type, mission, rationale, customName, customEmoji } = params;
 
-    console.log(`[${this.identity.name}] Delegating to sub-agent:`);
-    console.log(`  Type: ${type}`);
-    console.log(`  Rationale: ${rationale || 'Not provided'}`);
-    console.log(`  Mission: ${mission.substring(0, 100)}...`);
+    console.log(`[${this.identity.name}] Delegating to ${type}`);
 
     if (!this.agentRegistry) {
       throw new Error('Agent registry not available for delegation');
@@ -533,11 +547,15 @@ export class WorkerAgent extends AbstractAgent {
       subAgent.setRagDataManager(this.ragDataManager);
     }
 
+    // Set allowed skills if this agent type has restrictions
+    const allowedSkills = this.agentRegistry.getAllowedSkillsForSpecialist(type);
+    if (allowedSkills) {
+      subAgent.setAllowedSkills(allowedSkills);
+    }
+
     await subAgent.init();
     this.subAgents.set(subAgent.identity.id, subAgent);
     this.agentRegistry.registerAgent(subAgent);
-
-    console.log(`[${this.identity.name}] Spawned sub-agent ${subAgent.identity.emoji} ${subAgent.identity.name} (${subAgent.identity.id})`);
 
     // Emit delegation event via MessageEventService (broadcasts AND persists)
     const webChannel = channel as WebChannel;
@@ -689,9 +707,7 @@ export class WorkerAgent extends AbstractAgent {
         break;
       }
       case 'status_update': {
-        // Log concise status updates from sub-agents
-        const payload = comm.payload as { status?: string; taskId?: string };
-        console.log(`[${this.identity.name}] Sub-agent ${comm.fromAgent.split('-').slice(0, 2).join('-')}: ${payload.status || 'unknown'}`);
+        // Status updates from sub-agents - no logging needed
         break;
       }
     }

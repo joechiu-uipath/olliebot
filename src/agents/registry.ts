@@ -28,6 +28,8 @@ export interface SpecialistTemplate {
   delegation?: AgentDelegationConfig;
   /** Whether the agent's response should be collapsed by default in the UI */
   collapseResponseByDefault?: boolean;
+  /** Whitelist of skill IDs this agent can use (if set, restricts to only these skills) */
+  allowedSkills?: string[];
 }
 
 /** Default tool exclusions for all specialists (supervisor-only tools) */
@@ -213,6 +215,7 @@ const SPECIALIST_TEMPLATES: SpecialistTemplate[] = [
       supervisorCanInvoke: false, // Only invocable by coding-lead
     },
     collapseResponseByDefault: true,
+    allowedSkills: ['frontend-modifier'], // Only frontend-modifier skill, not docx/pdf/pptx
   },
   {
     type: 'coding-worker',
@@ -234,6 +237,7 @@ const SPECIALIST_TEMPLATES: SpecialistTemplate[] = [
       supervisorCanInvoke: false, // Only invocable by coding-planner
     },
     collapseResponseByDefault: true,
+    allowedSkills: ['frontend-modifier'], // Only frontend-modifier skill, not docx/pdf/pptx
   },
   {
     type: 'coding-fixer',
@@ -391,6 +395,15 @@ export class AgentRegistry {
   getDelegationConfigForSpecialist(type: string): AgentDelegationConfig {
     const template = this.specialists.get(type);
     return template?.delegation || DEFAULT_DELEGATION_CONFIG;
+  }
+
+  /**
+   * Get allowed skills for a specialist type (whitelist)
+   * Returns null if no restrictions (agent can use all skills)
+   */
+  getAllowedSkillsForSpecialist(type: string): string[] | null {
+    const template = this.specialists.get(type);
+    return template?.allowedSkills || null;
   }
 
   /**

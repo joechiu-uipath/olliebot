@@ -182,15 +182,28 @@ export class SkillManager {
    * Get skill metadata for system prompt injection
    * Returns XML format as recommended by the Agent Skills specification
    * @param excludeSources - Optional array of sources to exclude (e.g., ['builtin'])
+   * @param allowedSkillIds - Optional array of skill IDs to include (whitelist, takes precedence over excludeSources)
    */
-  getSkillsForSystemPrompt(excludeSources?: SkillSource[]): string {
+  getSkillsForSystemPrompt(excludeSources?: SkillSource[], allowedSkillIds?: string[]): string {
     if (this.metadata.size === 0) {
       return '';
     }
 
-    const filteredMetadata = excludeSources
-      ? Array.from(this.metadata.values()).filter(meta => !excludeSources.includes(meta.source))
-      : Array.from(this.metadata.values());
+    let filteredMetadata: SkillMetadata[];
+
+    // If allowedSkillIds is provided, use it as a whitelist (takes precedence)
+    if (allowedSkillIds && allowedSkillIds.length > 0) {
+      filteredMetadata = Array.from(this.metadata.values()).filter(
+        meta => allowedSkillIds.includes(meta.id)
+      );
+    } else if (excludeSources) {
+      // Otherwise fall back to source-based filtering
+      filteredMetadata = Array.from(this.metadata.values()).filter(
+        meta => !excludeSources.includes(meta.source)
+      );
+    } else {
+      filteredMetadata = Array.from(this.metadata.values());
+    }
 
     if (filteredMetadata.length === 0) {
       return '';
@@ -216,11 +229,23 @@ ${skillsXml}
    * Get instructions for how the agent should use skills
    * Include this in the system prompt along with available_skills
    * @param excludeSources - Optional array of sources to exclude (e.g., ['builtin'])
+   * @param allowedSkillIds - Optional array of skill IDs to include (whitelist, takes precedence over excludeSources)
    */
-  getSkillUsageInstructions(excludeSources?: SkillSource[]): string {
-    const filteredMetadata = excludeSources
-      ? Array.from(this.metadata.values()).filter(meta => !excludeSources.includes(meta.source))
-      : Array.from(this.metadata.values());
+  getSkillUsageInstructions(excludeSources?: SkillSource[], allowedSkillIds?: string[]): string {
+    let filteredMetadata: SkillMetadata[];
+
+    // If allowedSkillIds is provided, use it as a whitelist (takes precedence)
+    if (allowedSkillIds && allowedSkillIds.length > 0) {
+      filteredMetadata = Array.from(this.metadata.values()).filter(
+        meta => allowedSkillIds.includes(meta.id)
+      );
+    } else if (excludeSources) {
+      filteredMetadata = Array.from(this.metadata.values()).filter(
+        meta => !excludeSources.includes(meta.source)
+      );
+    } else {
+      filteredMetadata = Array.from(this.metadata.values());
+    }
 
     if (filteredMetadata.length === 0) {
       return '';
