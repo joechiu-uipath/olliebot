@@ -172,14 +172,18 @@ export const ragQueryExtractor: CitationExtractor = {
       // Extract page number from metadata if available
       const pageNumber = result.metadata?.pageNumber as number | undefined;
 
+      // Build title with page number for better citation context
+      const title = pageNumber ? `${filename} (page ${pageNumber})` : filename;
+
       return {
         id: `${requestId}-${index}`,
         type: 'file',
         toolName,
         toolRequestId: requestId,
         uri: result.documentPath,
-        title: filename,
-        snippet: result.text.slice(0, 200) + (result.text.length > 200 ? '...' : ''),
+        title,
+        // Use longer snippet (400 chars) for better citation matching
+        snippet: result.text.slice(0, 400) + (result.text.length > 400 ? '...' : ''),
         fullContent: result.text,
         pageNumber,
         projectId: data.projectId, // Include project ID for PDF URL construction

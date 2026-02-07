@@ -76,8 +76,9 @@ export async function generatePostHocCitations(
     .map((source, index) => {
       const num = index + 1;
       const title = source.title || source.uri || 'Unknown';
+      // Use 500 chars for better citation matching context
       const snippet = source.snippet
-        ? `\n   Content: "${source.snippet.slice(0, 300)}${source.snippet.length > 300 ? '...' : ''}"`
+        ? `\n   Content: "${source.snippet.slice(0, 500)}${source.snippet.length > 500 ? '...' : ''}"`
         : '';
       return `[${num}] ${title}${snippet}`;
     })
@@ -111,6 +112,13 @@ ${response}
 If no claims can be attributed to sources, return: {"citations": []}`;
 
   try {
+    // Debug: Log source info before LLM call
+    console.log(`[CitationGenerator] Processing ${sources.length} sources for citation matching`);
+    if (sources.length > 0) {
+      const sampleSource = sources[0];
+      console.log(`[CitationGenerator] Sample source: type=${sampleSource.type}, title=${sampleSource.title}, snippet=${sampleSource.snippet?.slice(0, 50)}...`);
+    }
+
     const llmResponse = await llmService.quickGenerate(
       [{ role: 'user', content: prompt }],
       {
@@ -118,6 +126,9 @@ If no claims can be attributed to sources, return: {"citations": []}`;
         temperature: 0,
       }
     );
+
+    // Debug: Log LLM response
+    console.log(`[CitationGenerator] LLM response: ${llmResponse.content.slice(0, 200)}...`);
 
     // Parse LLM response
     const parsed = parseJsonResponse(llmResponse.content);

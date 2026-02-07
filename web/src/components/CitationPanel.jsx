@@ -15,22 +15,26 @@ const SOURCE_ICONS = {
 
 /**
  * Check if a source is a viewable PDF
+ * Note: title may include page number suffix like "file.pdf (page 2)"
  */
 function isPdfSource(source) {
   return (
     source.type === 'file' &&
     source.title &&
-    source.title.toLowerCase().endsWith('.pdf') &&
+    source.title.toLowerCase().includes('.pdf') &&
     source.projectId
   );
 }
 
 /**
  * Build PDF URL from source
+ * Note: title may include page number suffix like "file.pdf (page 2)", need to extract filename
  */
 function buildPdfUrl(source) {
   if (!source.projectId || !source.title) return null;
-  return `/api/rag/projects/${encodeURIComponent(source.projectId)}/documents/${encodeURIComponent(source.title)}`;
+  // Extract filename from title (strip page number suffix if present)
+  const filename = source.title.replace(/\s*\(page\s+\d+\)$/i, '');
+  return `/api/rag/projects/${encodeURIComponent(source.projectId)}/documents/${encodeURIComponent(filename)}`;
 }
 
 /**
@@ -47,11 +51,13 @@ const SourceCard = memo(function SourceCard({ index, source, isHighlighted }) {
 
     const pdfUrl = buildPdfUrl(source);
     if (pdfUrl) {
+      // Extract clean filename without page suffix for display
+      const filename = source.title.replace(/\s*\(page\s+\d+\)$/i, '');
       window.dispatchEvent(
         new CustomEvent('pdf-view', {
           detail: {
             fileUrl: pdfUrl,
-            filename: source.title,
+            filename,
             initialPage: source.pageNumber || 1,
           },
         })
