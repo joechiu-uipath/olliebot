@@ -1832,17 +1832,6 @@ function App() {
               expanded={expandedAccordions.computerUse}
               onToggle={handleToggleComputerUse}
             />
-
-            {/* Desktop Sessions Accordion - always visible */}
-            <DesktopSessions
-              sessions={desktopSessions}
-              screenshots={desktopScreenshots}
-              selectedSessionId={selectedDesktopSessionId}
-              onSelectSession={handleSelectDesktopSession}
-              onCloseSession={handleCloseDesktopSession}
-              expanded={expandedAccordions.desktopSessions}
-              onToggle={handleToggleDesktopSessions}
-            />
           </div>
           </>
         )}
