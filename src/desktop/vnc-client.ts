@@ -98,7 +98,6 @@ async function patchVncRfbClient(VncClient: VncRfbClientModule): Promise<void> {
 
   // Monkey-patch the prototype to use d3des instead of Node crypto
   const proto = VncClient.prototype as Record<string, unknown>;
-  const original = proto._handleAuthChallenge as () => Promise<void>;
 
   if ((proto as { _patchedForDes?: boolean })._patchedForDes) {
     return; // Already patched
