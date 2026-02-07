@@ -7,6 +7,7 @@ import type {
   AgentConfig,
   AgentCommunication,
   TaskAssignment,
+  TaskResultPayload,
   AgentIdentity,
 } from './types.js';
 import { WorkerAgent } from './worker.js';
@@ -14,6 +15,7 @@ import type { Channel, Message } from '../channels/types.js';
 import type { LLMService } from '../llm/service.js';
 import type { LLMMessage, LLMToolUse } from '../llm/types.js';
 import { getDb } from '../db/index.js';
+import { isWellKnownConversation } from '../db/well-known-conversations.js';
 import type { WebChannel } from '../channels/web.js';
 import type { ToolEvent } from '../tools/types.js';
 import { formatToolResultBlocks } from '../utils/index.js';
@@ -102,9 +104,20 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
     this.processingMessages.add(message.id);
 
     // If message includes a conversationId, set it on the supervisor
+    // IMPORTANT: Well-known conversations (like 'feed') should ONLY be used for scheduled tasks,
+    // not for user-initiated messages. If a user sends a message while viewing Feed, we should
+    // create a new conversation for their request, not pollute the Feed with user interactions.
     const msgConversationId = message.metadata?.conversationId as string | undefined;
+    const isScheduledTask = message.metadata?.type === 'task_run';
     if (msgConversationId) {
-      this.setConversationId(msgConversationId);
+      // Only use well-known conversation IDs for scheduled tasks
+      if (isWellKnownConversation(msgConversationId) && !isScheduledTask) {
+        // User message from Feed view - don't use Feed conversation, will create new one later
+        console.log(`[${this.identity.name}] User message from well-known conversation '${msgConversationId}', will create new conversation`);
+        this.setConversationId(null);
+      } else {
+        this.setConversationId(msgConversationId);
+      }
     }
 
     // Set the turnId for this message processing
@@ -126,21 +139,60 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
     }
 
     try {
-      // Check if channel supports streaming
-      const supportsStreaming = typeof channel.startStream === 'function' && this.llmService.supportsStreaming();
+      // Check for agent command in metadata first (from UI badge selection)
+      const agentCommand = message.metadata?.agentCommand as { command: string; icon: string } | undefined;
+      let commandResult: { command: string; agentType: string; mission: string } | null = null;
 
-      if (supportsStreaming) {
-        await this.generateStreamingResponse(message, channel);
+      if (agentCommand) {
+        // Command was selected via UI badge - find the agent type
+        const triggers = this.agentRegistry.getCommandTriggers();
+        const commandLower = agentCommand.command.toLowerCase();
+        const agentType = triggers.get(commandLower);
+
+        if (agentType) {
+          commandResult = {
+            command: agentCommand.command,
+            agentType,
+            mission: message.content,
+          };
+        }
+      }
+
+      if (commandResult) {
+        const { agentType, mission } = commandResult;
+        console.log(`[${this.identity.name}] Command trigger detected: #${commandResult.command} -> ${agentType}`);
+
+        // Mark as delegated to prevent re-delegation
+        this.delegatedMessages.add(message.id);
+
+        // Directly delegate without LLM decision
+        await this.handleDelegationFromTool(
+          {
+            type: agentType,
+            mission,
+            rationale: `User explicitly requested via #${commandResult.command} command`,
+          },
+          message,
+          channel
+        );
       } else {
-        // Fallback to non-streaming
-        const response = await this.generateResponse(this.conversationHistory.slice(-10));
-        const delegationMatch = response.match(/```delegate\s*([\s\S]*?)```/);
+        // No command trigger - proceed with normal LLM processing
+        // Check if channel supports streaming
+        const supportsStreaming = typeof channel.startStream === 'function' && this.llmService.supportsStreaming();
 
-        if (delegationMatch) {
-          await this.handleDelegation(delegationMatch[1], message, channel);
+        if (supportsStreaming) {
+          await this.generateStreamingResponse(message, channel);
         } else {
-          await this.sendToChannel(channel, response, { markdown: true });
-          this.saveAssistantMessage(message.channel, response, message.metadata?.reasoningMode as string | undefined);
+          // Fallback to non-streaming
+          const response = await this.generateResponse(this.conversationHistory.slice(-10));
+          const delegationMatch = response.match(/```delegate\s*([\s\S]*?)```/);
+
+          if (delegationMatch) {
+            await this.handleDelegation(delegationMatch[1], message, channel);
+          } else {
+            await this.sendToChannel(channel, response, { markdown: true });
+            this.saveAssistantMessage(message.channel, response, message.metadata?.reasoningMode as string | undefined);
+          }
         }
       }
     } catch (error) {
@@ -712,7 +764,7 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
   protected async handleAgentCommunication(comm: AgentCommunication): Promise<void> {
     switch (comm.type) {
       case 'task_result': {
-        const payload = comm.payload as { taskId: string; result: string };
+        const payload = comm.payload as TaskResultPayload;
         const task = this.tasks.get(payload.taskId);
         if (task) {
           task.status = 'completed';

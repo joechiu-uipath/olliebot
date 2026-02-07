@@ -84,6 +84,7 @@ export class WebChannel implements Channel {
       reasoningEffort?: 'medium' | 'high' | 'xhigh';
       messageType?: string; // e.g., 'deep_research'
       messageId?: string; // Client-provided ID for deduplication
+      agentCommand?: { command: string; icon: string }; // e.g., { command: 'Deep Research', icon: '🔬' }
     };
 
     if (msg.type === 'message' && (msg.content || msg.attachments?.length) && this.messageHandler) {
@@ -101,6 +102,8 @@ export class WebChannel implements Channel {
           reasoningMode: msg.reasoningEffort,
           // Message type for special handling (e.g., 'deep_research')
           messageType: msg.messageType,
+          // Agent command for triggering specific agent workflows
+          agentCommand: msg.agentCommand,
         },
         createdAt: new Date(),
       };

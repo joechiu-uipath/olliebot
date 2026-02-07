@@ -38,6 +38,7 @@ export function transformMessages(data) {
       mission: msg.delegationMission,
       reasoningMode: msg.reasoningMode,
       messageType: msg.messageType,
+      agentCommand: msg.agentCommand,
       citations: msg.citations,
     };
   });

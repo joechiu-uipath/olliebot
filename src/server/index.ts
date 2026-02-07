@@ -251,6 +251,8 @@ export class AssistantServer {
             delegationRationale: m.metadata?.rationale,
             // Reasoning mode (vendor-neutral)
             reasoningMode: m.metadata?.reasoningMode,
+            // Agent command (for #Deep Research, #Modify, etc.)
+            agentCommand: m.metadata?.agentCommand,
             // Citations
             citations: m.metadata?.citations,
           })),
@@ -384,6 +386,20 @@ export class AssistantServer {
           collapseResponseByDefault: t.collapseResponseByDefault || false,
         }));
 
+        // 10. Command triggers for #menu (agent commands like #Deep Research, #Modify)
+        const commandTriggers: Array<{ command: string; agentType: string; agentName: string; agentEmoji: string; description: string }> = [];
+        for (const template of registry.getSpecialistTemplates()) {
+          if (template.delegation?.commandTrigger) {
+            commandTriggers.push({
+              command: template.delegation.commandTrigger,
+              agentType: template.type,
+              agentName: template.identity.name,
+              agentEmoji: template.identity.emoji,
+              description: template.identity.description,
+            });
+          }
+        }
+
         res.json({
           modelCapabilities,
           conversations,
@@ -394,6 +410,7 @@ export class AssistantServer {
           tools: { builtin, user, mcp },
           ragProjects,
           agentTemplates,
+          commandTriggers,
         });
       } catch (error) {
         console.error('[API] Startup data fetch failed:', error);
@@ -671,6 +688,8 @@ export class AssistantServer {
             reasoningMode: m.metadata?.reasoningMode,
             // Citations
             citations: m.metadata?.citations,
+            // Agent command (e.g., Deep Research, Modify)
+            agentCommand: m.metadata?.agentCommand,
           };
         };
 

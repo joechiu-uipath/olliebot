@@ -6,6 +6,7 @@ import type {
   AgentConfig,
   AgentCommunication,
   AgentIdentity,
+  TaskResultPayload,
 } from './types.js';
 import type { Channel, Message } from '../channels/types.js';
 import type { LLMService } from '../llm/service.js';
@@ -461,6 +462,8 @@ export class WorkerAgent extends AbstractAgent {
       this.saveAssistantMessage(channel.id, fullResponse, citationData);
       console.log(`[${this.identity.name}] Task done (${iterationCount} iter, ${fullResponse.length} chars)`);
 
+      // Pass both citations (matched) and all collected sources to parent
+      // The parent can use allSources even if no claims were matched
       await this.sendToAgent(this.parentId, {
         type: 'task_result',
         toAgent: this.parentId,
@@ -469,6 +472,7 @@ export class WorkerAgent extends AbstractAgent {
           result: fullResponse,
           status: 'completed',
           citations: citationData, // Pass citations to parent for aggregation
+          allSources: collectedSources, // Pass all sources so parent can use them
         },
       });
     } finally {
@@ -691,7 +695,7 @@ export class WorkerAgent extends AbstractAgent {
       }
       case 'task_result': {
         // Handle results from sub-agents
-        const payload = comm.payload as { taskId: string; result?: string; error?: string; status: string; citations?: StoredCitationData };
+        const payload = comm.payload as TaskResultPayload;
         const pendingResult = this.pendingSubAgentResults.get(comm.fromAgent);
 
         if (pendingResult) {
@@ -701,10 +705,25 @@ export class WorkerAgent extends AbstractAgent {
             console.log(`[${this.identity.name}] Sub-agent ${comm.fromAgent} completed task`);
 
             // Collect citations from sub-agent for aggregation
-            if (payload.citations?.sources) {
-              console.log(`[${this.identity.name}] Collected ${payload.citations.sources.length} citation(s) from sub-agent ${comm.fromAgent}`);
+            // Prefer cited sources, but fall back to all collected sources if none were cited
+            const sourcesToUse = payload.citations?.sources?.length
+              ? payload.citations.sources
+              : payload.allSources || [];
+
+            if (sourcesToUse.length > 0) {
+              console.log(`[${this.identity.name}] Collected ${sourcesToUse.length} source(s) from sub-agent ${comm.fromAgent}`);
               this.subAgentCitations.push(
-                ...payload.citations.sources.map(src => ({ ...src, subAgentId: comm.fromAgent }))
+                ...sourcesToUse.map(src => ({
+                  id: src.id,
+                  type: src.type,
+                  toolName: src.toolName,
+                  uri: src.uri,
+                  title: src.title,
+                  domain: src.domain,
+                  snippet: src.snippet,
+                  pageNumber: src.pageNumber,
+                  subAgentId: comm.fromAgent,
+                }))
               );
             }
 

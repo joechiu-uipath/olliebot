@@ -138,8 +138,10 @@ function App() {
 
   // Reasoning mode state
   const [reasoningMode, setReasoningMode] = useState(null); // null | 'high' | 'xhigh'
-  const [messageType, setMessageType] = useState(null); // null | 'deep_research'
+  const [messageType, setMessageType] = useState(null); // null | 'deep_research' (legacy, may be removed)
   const [modelCapabilities, setModelCapabilities] = useState({ reasoningEfforts: [] });
+  const [commandTriggers, setCommandTriggers] = useState([]); // Agent command triggers from backend
+  const [agentCommand, setAgentCommand] = useState(null); // { command: 'Deep Research', icon: '🔬' }
 
   const virtuosoRef = useRef(null);
   const chatInputRef = useRef(null);
@@ -298,6 +300,11 @@ function App() {
     // Agent templates (for collapse settings, display names, etc.)
     if (data.agentTemplates) {
       setAgentTemplates(data.agentTemplates);
+    }
+
+    // Command triggers for #menu (agent commands like #Deep Research, #Modify)
+    if (data.commandTriggers) {
+      setCommandTriggers(data.commandTriggers);
     }
   }, []);
 
@@ -477,6 +484,26 @@ function App() {
       setIsUserScrolled(false);
     }
   }, []);
+
+  // Check actual scroll position after conversation switch
+  // Virtuoso's atBottomStateChange uses item-based detection which can be wrong for tall items
+  useEffect(() => {
+    if (!currentConversationId || messages.length === 0) return;
+
+    // Wait for DOM to settle after messages render
+    const timeoutId = setTimeout(() => {
+      const scroller = document.querySelector('.virtuoso-scroller');
+      if (!scroller) return;
+
+      const scrollBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
+      // If we're more than 100px from bottom, show the scroll button
+      if (scrollBottom > 100) {
+        setShowScrollButton(true);
+      }
+    }, 100);
+
+    return () => clearTimeout(timeoutId);
+  }, [currentConversationId, messages.length]);
 
   // Helper to insert a new conversation after well-known ones
   const insertConversation = (prev, newConv) => {
@@ -756,11 +783,13 @@ function App() {
   const attachmentsRef = useRef(attachments);
   const reasoningModeRef = useRef(reasoningMode);
   const messageTypeRef = useRef(messageType);
+  const agentCommandRef = useRef(agentCommand);
 
   // Keep refs in sync (currentConversationIdRef is already synced above)
   useEffect(() => { attachmentsRef.current = attachments; }, [attachments]);
   useEffect(() => { reasoningModeRef.current = reasoningMode; }, [reasoningMode]);
   useEffect(() => { messageTypeRef.current = messageType; }, [messageType]);
+  useEffect(() => { agentCommandRef.current = agentCommand; }, [agentCommand]);
 
   // Convert file to base64 (defined before handleSubmit which uses it)
   const fileToBase64 = (file) => {
@@ -779,6 +808,7 @@ function App() {
     const currentAttachments = attachmentsRef.current;
     const currentReasoningMode = reasoningModeRef.current;
     const currentMessageType = messageTypeRef.current;
+    const currentAgentCommand = agentCommandRef.current;
     const convId = currentConversationIdRef.current;
 
     if (!inputText.trim() && currentAttachments.length === 0) return;
@@ -814,11 +844,12 @@ function App() {
       timestamp: new Date().toISOString(),
       reasoningMode: currentReasoningMode,
       messageType: currentMessageType,
+      agentCommand: currentAgentCommand,
     };
     setTotalMessageCount((c) => c + 1);
     setMessages((prev) => [...prev, userMessage]);
 
-    // Send via WebSocket with conversation ID, attachments, reasoning effort, and message type
+    // Send via WebSocket with conversation ID, attachments, reasoning effort, message type, and agent command
     sendMessage({
       type: 'message',
       messageId: messageId,
@@ -827,10 +858,12 @@ function App() {
       conversationId: convId,
       reasoningEffort: currentReasoningMode,
       messageType: currentMessageType,
+      agentCommand: currentAgentCommand,
     });
     setAttachments([]);
     setReasoningMode(null);
     setMessageType(null);
+    setAgentCommand(null);
     setIsResponsePending(true);
   }, [sendMessage]);
 
@@ -1433,7 +1466,13 @@ function App() {
               ))}
             </div>
           )}
-          {msg.messageType && (
+          {msg.agentCommand && (
+            <div className="message-reasoning-chip message-command-chip">
+              <span className="reasoning-chip-icon">{msg.agentCommand.icon}</span>
+              <span className="reasoning-chip-label">{msg.agentCommand.command}</span>
+            </div>
+          )}
+          {msg.messageType && !msg.agentCommand && (
             <div className="message-reasoning-chip message-type-chip">
               <span className="reasoning-chip-icon">🔬</span>
               <span className="reasoning-chip-label">
@@ -2008,6 +2047,9 @@ function App() {
             onReasoningModeChange={setReasoningMode}
             onMessageTypeChange={setMessageType}
             modelCapabilities={modelCapabilities}
+            commandTriggers={commandTriggers}
+            agentCommand={agentCommand}
+            onAgentCommandChange={setAgentCommand}
           />
         </footer>
         </>

@@ -129,6 +129,8 @@ const SPECIALIST_TEMPLATES: SpecialistTemplate[] = [
       allowedDelegates: ['research-worker'], // research-reviewer removed for now - needs workflow redesign
       restrictedToWorkflow: null,
       supervisorCanInvoke: true,
+      commandTrigger: 'Deep Research', // Triggered by #Deep Research
+      commandOnly: true, // Only via command, not auto-delegated
     },
   },
   {
@@ -143,8 +145,9 @@ const SPECIALIST_TEMPLATES: SpecialistTemplate[] = [
       'web_search',
       'web_scrape',
       'wikipedia_search',
-      'mcp.*', // MCP tools
+      'query_rag_project',
     ],
+    allowedSkills: [], // No skills - research workers only use web tools
     delegation: {
       canDelegate: false,
       allowedDelegates: [],
@@ -193,6 +196,8 @@ const SPECIALIST_TEMPLATES: SpecialistTemplate[] = [
       allowedDelegates: ['coding-planner', 'coding-fixer'], // Workers go through planner
       restrictedToWorkflow: null,
       supervisorCanInvoke: true,
+      commandTrigger: 'Modify', // Triggered by #Modify
+      commandOnly: true, // Only via command, not auto-delegated
     },
     allowedSkills: [], // No skills - coding-lead delegates to planner/worker who have the skills
   },
@@ -455,6 +460,40 @@ export class AgentRegistry {
   canSupervisorInvoke(agentType: string): boolean {
     const config = this.getDelegationConfigForSpecialist(agentType);
     return config.supervisorCanInvoke;
+  }
+
+  /**
+   * Get all command triggers and their associated agent types
+   * Returns a map of command (lowercase) -> agent type
+   */
+  getCommandTriggers(): Map<string, string> {
+    const triggers = new Map<string, string>();
+    for (const [type, template] of this.specialists) {
+      if (template.delegation?.commandTrigger) {
+        triggers.set(template.delegation.commandTrigger.toLowerCase(), type);
+      }
+    }
+    return triggers;
+  }
+
+  /**
+   * Check if an agent type is command-only (cannot be auto-delegated)
+   */
+  isCommandOnly(agentType: string): boolean {
+    const config = this.getDelegationConfigForSpecialist(agentType);
+    return config.commandOnly === true;
+  }
+
+  /**
+   * Get agent types that are NOT command-only (available for LLM auto-delegation)
+   */
+  getAutoDelegatableTypes(): string[] {
+    return Array.from(this.specialists.entries())
+      .filter(([_, template]) => {
+        const config = template.delegation || DEFAULT_DELEGATION_CONFIG;
+        return config.supervisorCanInvoke && !config.commandOnly;
+      })
+      .map(([type]) => type);
   }
 
   // ============================================================================

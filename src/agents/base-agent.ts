@@ -456,4 +456,8 @@ export interface AgentRegistry {
   // Delegation methods
   getDelegationConfigForSpecialist(type: string): import('./types.js').AgentDelegationConfig;
   canDelegate(sourceAgentType: string, targetAgentType: string, currentWorkflowId: string | null): boolean;
+  // Command trigger methods
+  getCommandTriggers(): Map<string, string>;
+  isCommandOnly(agentType: string): boolean;
+  getAutoDelegatableTypes(): string[];
 }
