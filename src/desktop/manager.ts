@@ -659,7 +659,6 @@ export class DesktopSessionManager {
       console.log(`${tag} Step 3/4: VNC client connected (${Date.now() - t2}ms)`);
 
       // Set up Computer Use provider if configured
-      const t3 = Date.now();
       console.log(`[Desktop] [${session.id.slice(0, 8)}] Step 4/4: Configuring Computer Use provider...`);
       if (config.computerUseProvider) {
         const provider = createComputerUseProvider(config.computerUseProvider as ComputerUseProvider);
