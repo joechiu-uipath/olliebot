@@ -7,7 +7,7 @@
  * automatically created if missing.
  *
  * Well-known conversations:
- * - Have fixed IDs (colon-delimited format like ':feed:')
+ * - Have fixed, simple string IDs (e.g. 'feed')
  * - Have fixed names that cannot be renamed
  * - Have special icons for visual distinction
  * - Are always sorted to the top of the conversation list
@@ -21,7 +21,7 @@ import { getDb, type Conversation } from './index.js';
 
 /**
  * Well-known conversation IDs.
- * These use a colon-delimited format to distinguish them from GUIDs.
+ * Simple string IDs (no special characters) for reliable URL handling.
  */
 export const WellKnownConversations = {
   /**
@@ -29,7 +29,7 @@ export const WellKnownConversations = {
    * When tasks execute automatically (via scheduler), their output goes here
    * instead of interrupting the user's active conversation.
    */
-  FEED: ':feed:',
+  FEED: 'feed',
 } as const;
 
 export type WellKnownConversationId = (typeof WellKnownConversations)[keyof typeof WellKnownConversations];

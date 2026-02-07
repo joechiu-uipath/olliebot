@@ -3,8 +3,9 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { Virtuoso } from 'react-virtuoso';
 import { useWebSocket } from './hooks/useWebSocket';
 
-import { BrowserSessions } from './components/BrowserSessions';
+import { ComputerUseSessions } from './components/ComputerUseSessions';
 import { BrowserPreview } from './components/BrowserPreview';
+import { DesktopPreview } from './components/DesktopPreview';
 import RAGProjects from './components/RAGProjects';
 import { CitationPanel } from './components/CitationPanel';
 import { PDFViewerModal } from './components/PDFViewerModal';
@@ -55,7 +56,7 @@ function App() {
     skills: false,
     mcps: false,
     tools: false,
-    browserSessions: false,
+    computerUse: false,
     ragProjects: false,
   });
   const [agentTasks, setAgentTasks] = useState([]);
@@ -69,6 +70,12 @@ function App() {
   const [selectedBrowserSessionId, setSelectedBrowserSessionId] = useState(null);
   const [browserScreenshots, setBrowserScreenshots] = useState({});
   const [clickMarkers, setClickMarkers] = useState([]);
+
+  // Desktop session state
+  const [desktopSessions, setDesktopSessions] = useState([]);
+  const [selectedDesktopSessionId, setSelectedDesktopSessionId] = useState(null);
+  const [desktopScreenshots, setDesktopScreenshots] = useState({});
+  const [desktopClickMarkers, setDesktopClickMarkers] = useState([]);
 
   // RAG projects state
   const [ragProjects, setRagProjects] = useState([]);
@@ -188,6 +195,11 @@ function App() {
     setSelectedBrowserSessionId,
     setClickMarkers,
     setExpandedAccordions,
+    // Desktop session state setters
+    setDesktopSessions,
+    setDesktopScreenshots,
+    setSelectedDesktopSessionId,
+    setDesktopClickMarkers,
     setRagProjects,
     setRagIndexingProgress,
     // Eval state (shared WebSocket, no separate connection needed)
@@ -237,7 +249,7 @@ function App() {
     setConversations(mappedConversations);
 
     // Set default conversation
-    const feedConversation = mappedConversations.find(c => c.id === ':feed:');
+    const feedConversation = mappedConversations.find(c => c.id === 'feed');
     if (feedConversation) {
       setCurrentConversationId(feedConversation.id);
     } else if (mappedConversations.length > 0) {
@@ -346,6 +358,8 @@ function App() {
   // Sync URL to state for chat mode deep linking
   // Ref to prevent re-triggering when we programmatically set state
   const isNavigatingRef = useRef(false);
+  // Fetch counter to prevent stale responses from overwriting newer ones
+  const messageFetchCounter = useRef(0);
 
   useEffect(() => {
     if (isNavigatingRef.current) {
@@ -355,35 +369,19 @@ function App() {
 
     const path = location.pathname;
 
-    // Handle chat routes
-    if (path === '/' || path === '/chat') {
-      // Default to feed view
-      if (currentConversationId !== ':feed:' && conversations.some(c => c.id === ':feed:')) {
-        setCurrentConversationId(':feed:');
-        // Load feed messages with pagination
-        fetch('/api/conversations/:feed:/messages?limit=20&includeTotal=true')
-          .then(res => res.ok ? res.json() : { items: [], pagination: {} })
-          .then(data => {
-            const pagination = data.pagination || {};
-            setMessages(transformMessages(data.items || []));
-            setHasMoreOlder(pagination.hasOlder || false);
-            setOldestCursor(pagination.oldestCursor || null);
-            setFirstItemIndex(100000);
-          })
-          .catch(() => {
-            setMessages([]);
-            setHasMoreOlder(false);
-            setOldestCursor(null);
-          });
-      }
-    } else if (path.startsWith('/chat/')) {
+    // Handle chat routes - all conversations use /chat/:id pattern
+    if (path.startsWith('/chat/')) {
       const convId = decodeURIComponent(path.slice(6)); // Remove '/chat/'
       if (convId && convId !== currentConversationId) {
         setCurrentConversationId(convId);
         // Load conversation messages with pagination
-        fetch(`/api/conversations/${encodeURIComponent(convId)}/messages?limit=20&includeTotal=true`)
+        const apiConvId = encodeURIComponent(convId);
+        const fetchId = ++messageFetchCounter.current;
+        fetch(`/api/conversations/${apiConvId}/messages?limit=20&includeTotal=true`)
           .then(res => res.ok ? res.json() : { items: [], pagination: {} })
           .then(data => {
+            // Only update if this is still the latest fetch
+            if (fetchId !== messageFetchCounter.current) return;
             const pagination = data.pagination || {};
             setMessages(transformMessages(data.items || []));
             setHasMoreOlder(pagination.hasOlder || false);
@@ -391,6 +389,7 @@ function App() {
             setFirstItemIndex(100000);
           })
           .catch(() => {
+            if (fetchId !== messageFetchCounter.current) return;
             setMessages([]);
             setHasMoreOlder(false);
             setOldestCursor(null);
@@ -400,10 +399,10 @@ function App() {
     // Note: Eval routes are handled by useEvalMode hook in App.Eval.jsx
   }, [location.pathname, conversations, currentConversationId, transformMessages]);
 
-  // Redirect root to /chat
+  // Redirect root and /chat to Feed conversation
   useEffect(() => {
-    if (location.pathname === '/') {
-      navigate('/chat', { replace: true });
+    if (location.pathname === '/' || location.pathname === '/chat') {
+      navigate('/chat/feed', { replace: true });
     }
   }, [location.pathname, navigate]);
 
@@ -426,13 +425,22 @@ function App() {
     if (!convId) return;
 
     setIsLoadingOlder(true);
+    // Capture current fetch counter to verify conversation hasn't changed
+    const fetchId = messageFetchCounter.current;
     let res = null;
     try {
+      const apiConvId = encodeURIComponent(convId);
       res = await fetch(
-        `/api/conversations/${encodeURIComponent(convId)}/messages?limit=20&before=${encodeURIComponent(oldestCursor)}`
+        `/api/conversations/${apiConvId}/messages?limit=20&before=${encodeURIComponent(oldestCursor)}`
       );
     } catch (error) {
       console.error('Failed to load older messages:', error);
+    }
+
+    // Bail if conversation changed while fetching
+    if (fetchId !== messageFetchCounter.current) {
+      setIsLoadingOlder(false);
+      return;
     }
 
     let data = null;
@@ -554,15 +562,15 @@ function App() {
         const nextConv = remaining[0];
         setCurrentConversationId(nextConv.id);
         // Navigate to the next conversation
-        if (nextConv.id === ':feed:') {
-          navigate('/chat');
-        } else {
-          navigate(`/chat/${encodeURIComponent(nextConv.id)}`);
-        }
+        navigate(`/chat/${encodeURIComponent(nextConv.id)}`);
         // Load messages for new current conversation with pagination
-        fetch(`/api/conversations/${encodeURIComponent(nextConv.id)}/messages?limit=20&includeTotal=true`)
+        const apiConvId = encodeURIComponent(nextConv.id);
+        const fetchId = ++messageFetchCounter.current;
+        fetch(`/api/conversations/${apiConvId}/messages?limit=20&includeTotal=true`)
           .then(res => res.ok ? res.json() : null)
           .then(data => {
+            // Only update if this is still the latest fetch
+            if (fetchId !== messageFetchCounter.current) return;
             if (data) {
               const pagination = data.pagination || {};
               setMessages(transformMessages(data.items || []));
@@ -577,8 +585,35 @@ function App() {
         setHasMoreOlder(false);
         setOldestCursor(null);
         setFirstItemIndex(100000);
-        navigate('/chat');
+        navigate('/chat/feed');
       }
+    }
+  };
+
+  // Clear all messages in a conversation (for well-known conversations like Feed)
+  const handleClearConversation = async (convId, e) => {
+    e.stopPropagation();
+    setOpenMenuId(null);
+
+    let clearSuccess = false;
+    try {
+      const apiConvId = encodeURIComponent(convId);
+      const res = await fetch(`/api/conversations/${apiConvId}/messages`, {
+        method: 'DELETE',
+      });
+      clearSuccess = res.ok;
+    } catch (error) {
+      console.error('Failed to clear conversation:', error);
+    }
+
+    if (!clearSuccess) return;
+
+    // If this is the current conversation, clear local messages
+    if (convId === currentConversationId) {
+      setMessages([]);
+      setHasMoreOlder(false);
+      setOldestCursor(null);
+      setFirstItemIndex(100000);
     }
   };
 
@@ -685,18 +720,18 @@ function App() {
     setShowScrollButton(false);
 
     // Navigate to the conversation URL
-    // Special handling for :feed: - use /chat without ID
-    if (convId === ':feed:') {
-      navigate('/chat');
-    } else {
-      navigate(`/chat/${encodeURIComponent(convId)}`);
-    }
+    navigate(`/chat/${encodeURIComponent(convId)}`);
 
     // Update state and load messages with pagination
     setCurrentConversationId(convId);
-    fetch(`/api/conversations/${encodeURIComponent(convId)}/messages?limit=20&includeTotal=true`)
+    const apiConvId = encodeURIComponent(convId);
+    // Increment fetch counter to invalidate any in-flight fetches
+    const fetchId = ++messageFetchCounter.current;
+    fetch(`/api/conversations/${apiConvId}/messages?limit=20&includeTotal=true`)
       .then(res => res.ok ? res.json() : { items: [], pagination: {} })
       .then(data => {
+        // Only update if this is still the latest fetch
+        if (fetchId !== messageFetchCounter.current) return;
         const pagination = data.pagination || {};
         setMessages(transformMessages(data.items || []));
         setHasMoreOlder(pagination.hasOlder || false);
@@ -704,6 +739,7 @@ function App() {
         setFirstItemIndex(100000);
       })
       .catch(() => {
+        if (fetchId !== messageFetchCounter.current) return;
         setMessages([]);
         setHasMoreOlder(false);
         setOldestCursor(null);
@@ -1069,10 +1105,6 @@ function App() {
 
   // Note: Eval mode handlers are now in useEvalMode hook (App.Eval.jsx)
 
-  // Handle browser session selection - memoized
-  const handleSelectBrowserSession = useCallback((sessionId) => {
-    setSelectedBrowserSessionId(sessionId);
-  }, []);
 
   // Close browser preview
   const handleCloseBrowserPreview = useCallback(() => {
@@ -1094,10 +1126,56 @@ function App() {
     sendMessage({ type: 'browser-action', action: 'close', sessionId });
   }, [sendMessage]);
 
-  // Toggle browser sessions accordion - memoized
-  const handleToggleBrowserSessions = useCallback(() => {
-    toggleAccordion('browserSessions');
+  // Toggle computer use accordion - memoized
+  const handleToggleComputerUse = useCallback(() => {
+    toggleAccordion('computerUse');
   }, [toggleAccordion]);
+
+  // Select session for preview - routes to browser or desktop based on kind
+  const handleSelectSession = useCallback((sessionId, kind) => {
+    if (kind === 'desktop') {
+      setSelectedDesktopSessionId(sessionId);
+    } else {
+      setSelectedBrowserSessionId(sessionId);
+    }
+  }, []);
+
+  // Close desktop preview
+  const handleCloseDesktopPreview = useCallback(() => {
+    setSelectedDesktopSessionId(null);
+  }, []);
+
+  // Close desktop session (terminate the sandbox) - memoized
+  const handleCloseDesktopSession = useCallback((sessionId) => {
+    // Optimistically remove from UI immediately
+    setDesktopSessions((prev) => prev.filter((s) => s.id !== sessionId));
+    setDesktopScreenshots((prev) => {
+      const next = { ...prev };
+      delete next[sessionId];
+      return next;
+    });
+    // Use functional update to check selected session without dependency
+    setSelectedDesktopSessionId((prev) => prev === sessionId ? null : prev);
+    // Unlock chat input — the user explicitly chose to stop, don't make them
+    // wait for the LLM to comment on the abort. Any in-flight LLM response
+    // will still arrive and update messages in the background.
+    setIsResponsePending(false);
+    // Mark any streaming message as done so it doesn't show the spinner
+    setMessages((prev) =>
+      prev.map((m) => {
+        if (m.isStreaming) return { ...m, isStreaming: false };
+        // Also mark any running desktop_session tool calls as cancelled
+        // so the tool indicator stops spinning (tool_execution_finished
+        // may never arrive if the abort kills the pipeline).
+        if (m.role === 'tool' && m.toolName === 'desktop_session' && m.status === 'running') {
+          return { ...m, status: 'failed', error: 'Session closed by user' };
+        }
+        return m;
+      })
+    );
+    // Send close request to server
+    sendMessage({ type: 'desktop-action', action: 'close', sessionId });
+  }, [sendMessage]);
 
   // Toggle RAG projects accordion - memoized
   const handleToggleRagProjects = useCallback(() => {
@@ -1148,6 +1226,11 @@ function App() {
   // Get selected browser session object
   const selectedBrowserSession = browserSessions.find(
     (s) => s.id === selectedBrowserSessionId
+  );
+
+  // Get selected desktop session object
+  const selectedDesktopSession = desktopSessions.find(
+    (s) => s.id === selectedDesktopSessionId
   );
 
   // Render a single message item for Virtuoso (index-based for totalCount mode)
@@ -1439,34 +1522,45 @@ function App() {
                     </>
                   )}
                 </div>
-                {/* Hide actions menu for well-known conversations */}
-                {!conv.isWellKnown && (
-                  <div className="conversation-actions">
-                    <button
-                      className="actions-menu-btn"
-                      onClick={(e) => toggleActionsMenu(conv.id, e)}
-                      title="Actions"
-                    >
-                      ⋯
-                    </button>
-                    {openMenuId === conv.id && (
-                      <div className="actions-menu">
-                        <button
-                          className="actions-menu-item"
-                          onClick={(e) => handleRenameConversation(conv.id, e)}
-                        >
-                          Rename
-                        </button>
+                {/* Actions menu - different options for well-known vs regular conversations */}
+                <div className="conversation-actions">
+                  <button
+                    className="actions-menu-btn"
+                    onClick={(e) => toggleActionsMenu(conv.id, e)}
+                    title="Actions"
+                  >
+                    ⋯
+                  </button>
+                  {openMenuId === conv.id && (
+                    <div className="actions-menu">
+                      {conv.isWellKnown ? (
+                        /* Well-known conversations (like Feed) only have Clear option */
                         <button
                           className="actions-menu-item delete"
-                          onClick={(e) => handleDeleteConversation(conv.id, e)}
+                          onClick={(e) => handleClearConversation(conv.id, e)}
                         >
-                          Delete
+                          Clear
                         </button>
-                      </div>
-                    )}
-                  </div>
-                )}
+                      ) : (
+                        /* Regular conversations have Rename and Delete */
+                        <>
+                          <button
+                            className="actions-menu-item"
+                            onClick={(e) => handleRenameConversation(conv.id, e)}
+                          >
+                            Rename
+                          </button>
+                          <button
+                            className="actions-menu-item delete"
+                            onClick={(e) => handleDeleteConversation(conv.id, e)}
+                          >
+                            Delete
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
             ))}
 
@@ -1725,15 +1819,18 @@ function App() {
               )}
             </div>
 
-            {/* Browser Sessions Accordion - always visible */}
-            <BrowserSessions
-              sessions={browserSessions}
-              screenshots={browserScreenshots}
-              selectedSessionId={selectedBrowserSessionId}
-              onSelectSession={handleSelectBrowserSession}
-              onCloseSession={handleCloseBrowserSession}
-              expanded={expandedAccordions.browserSessions}
-              onToggle={handleToggleBrowserSessions}
+            {/* Computer Use Sessions Accordion - browser + desktop */}
+            <ComputerUseSessions
+              browserSessions={browserSessions}
+              desktopSessions={desktopSessions}
+              browserScreenshots={browserScreenshots}
+              desktopScreenshots={desktopScreenshots}
+              selectedSessionId={selectedBrowserSessionId || selectedDesktopSessionId}
+              onSelectSession={handleSelectSession}
+              onCloseBrowserSession={handleCloseBrowserSession}
+              onCloseDesktopSession={handleCloseDesktopSession}
+              expanded={expandedAccordions.computerUse}
+              onToggle={handleToggleComputerUse}
             />
           </div>
           </>
@@ -1761,7 +1858,7 @@ function App() {
             <div className="mode-switcher">
               <button
                 className={`mode-btn ${mode === MODES.CHAT ? 'active' : ''}`}
-                onClick={() => navigate('/chat')}
+                onClick={() => navigate(currentConversationId ? `/chat/${encodeURIComponent(currentConversationId)}` : '/chat/feed')}
               >
                 <span className="mode-icon">💬</span>
                 Chat
@@ -1827,6 +1924,17 @@ function App() {
             clickMarkers={clickMarkers}
             onClose={handleCloseBrowserPreview}
             onCloseSession={handleCloseBrowserSession}
+          />
+        )}
+
+        {/* Desktop Preview Modal */}
+        {selectedDesktopSession && (
+          <DesktopPreview
+            session={selectedDesktopSession}
+            screenshot={desktopScreenshots[selectedDesktopSessionId]}
+            clickMarkers={desktopClickMarkers}
+            onClose={handleCloseDesktopPreview}
+            onCloseSession={handleCloseDesktopSession}
           />
         )}
         </main>

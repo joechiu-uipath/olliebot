@@ -7,7 +7,7 @@ import type { SupervisorAgent } from '../agents/types.js';
 import { getAgentRegistry } from '../agents/index.js';
 import { WebChannel } from '../channels/index.js';
 import { getDb } from '../db/index.js';
-import { isWellKnownConversation, getWellKnownConversationMeta } from '../db/well-known-conversations.js';
+import { isWellKnownConversation, getWellKnownConversationMeta, WellKnownConversations } from '../db/well-known-conversations.js';
 import type { MCPClient } from '../mcp/index.js';
 import type { SkillManager } from '../skills/index.js';
 import type { ToolRunner } from '../tools/index.js';
@@ -15,6 +15,7 @@ import type { LLMService } from '../llm/service.js';
 import { getModelCapabilities } from '../llm/model-capabilities.js';
 import { setupEvalRoutes } from './eval-routes.js';
 import type { BrowserSessionManager } from '../browser/index.js';
+import type { DesktopSessionManager } from '../desktop/index.js';
 import type { TaskManager } from '../tasks/index.js';
 import { type RAGProjectService, createRAGProjectRoutes, type IndexingProgress } from '../rag-projects/index.js';
 import { getMessageEventService, setMessageEventServiceChannel } from '../services/message-event-service.js';
@@ -27,6 +28,7 @@ export interface ServerConfig {
   toolRunner?: ToolRunner;
   llmService?: LLMService;
   browserManager?: BrowserSessionManager;
+  desktopManager?: DesktopSessionManager;
   taskManager?: TaskManager;
   ragProjectService?: RAGProjectService;
   // LLM configuration for model capabilities endpoint
@@ -59,6 +61,7 @@ export class OllieBotServer {
   private toolRunner?: ToolRunner;
   private llmService?: LLMService;
   private browserManager?: BrowserSessionManager;
+  private desktopManager?: DesktopSessionManager;
   private taskManager?: TaskManager;
   private ragProjectService?: RAGProjectService;
   private mainProvider?: string;
@@ -81,6 +84,7 @@ export class OllieBotServer {
     this.toolRunner = config.toolRunner;
     this.llmService = config.llmService;
     this.browserManager = config.browserManager;
+    this.desktopManager = config.desktopManager;
     this.taskManager = config.taskManager;
     this.ragProjectService = config.ragProjectService;
     this.mainProvider = config.mainProvider;
@@ -216,8 +220,9 @@ export class OllieBotServer {
           return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
         });
 
-        // 3. Messages for default :feed: conversation (paginated - last 20)
-        const paginatedResult = db.messages.findByConversationIdPaginated(':feed:', { limit: 20, includeTotal: true });
+        // 3. Messages for default `feed` conversation (paginated - last 20)
+        const paginatedResult = db.messages.findByConversationIdPaginated(
+          WellKnownConversations.FEED, { limit: 20, includeTotal: true });
         const feedMessages = {
           items: paginatedResult.items.map(m => ({
             id: m.id,
@@ -624,6 +629,30 @@ export class OllieBotServer {
       }
     });
 
+    // Delete all messages in a conversation (hard delete)
+    this.app.delete('/api/conversations/:id/messages', (req: Request, res: Response) => {
+      try {
+        const db = getDb();
+        const conversationId = req.params.id as string;
+
+        // Verify conversation exists
+        const conversation = db.conversations.findById(conversationId);
+        if (!conversation) {
+          res.status(404).json({ error: 'Conversation not found' });
+          return;
+        }
+
+        // Delete all messages in the conversation
+        const deletedCount = db.messages.deleteByConversationId(conversationId);
+        console.log(`[API] Cleared ${deletedCount} messages from conversation ${conversationId}`);
+
+        res.json({ success: true, deletedCount });
+      } catch (error) {
+        console.error('[API] Failed to clear messages:', error);
+        res.status(500).json({ error: 'Failed to clear messages' });
+      }
+    });
+
     // Create a new conversation
     this.app.post('/api/conversations', (req: Request, res: Response) => {
       try {
@@ -941,6 +970,23 @@ export class OllieBotServer {
         console.log(`[Server] Browser action: ${action} for session ${sessionId}`);
         if (action === 'close' && this.browserManager) {
           await this.browserManager.closeSession(sessionId);
+        }
+      });
+    }
+
+    // Attach web channel to desktop manager if present
+    if (this.desktopManager) {
+      this.desktopManager.attachWebChannel(this.webChannel);
+
+      // Handle desktop actions from web clients
+      this.webChannel.onDesktopAction(async (action, sessionId) => {
+        console.log(`[Server] Desktop action: ${action} for session ${sessionId}`);
+        if (action === 'close' && this.desktopManager) {
+          try {
+            await this.desktopManager.closeSession(sessionId);
+          } catch (error) {
+            console.error(`[Server] Error closing desktop session ${sessionId}:`, error);
+          }
         }
       });
     }

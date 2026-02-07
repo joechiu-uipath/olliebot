@@ -14,6 +14,9 @@ export interface GetActionParams {
   /** Current screenshot as base64 */
   screenshot: string;
 
+  /** Screenshot MIME type (default: image/jpeg) */
+  screenshotMimeType?: 'image/jpeg' | 'image/png';
+
   /** The instruction to execute */
   instruction: string;
 

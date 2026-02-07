@@ -54,6 +54,12 @@ import {
   BrowserActionTool,
   BrowserScreenshotTool,
 } from './browser/index.js';
+import {
+  DesktopSessionManager,
+  DesktopSessionTool,
+  DesktopActionTool,
+  DesktopScreenshotTool,
+} from './desktop/index.js';
 
 /**
  * Parse MCP server configurations from various formats.
@@ -411,6 +417,16 @@ async function main(): Promise<void> {
   toolRunner.registerNativeTool(new BrowserScreenshotTool(browserManager));
   console.log('[Init] Browser tools registered');
 
+  // Initialize Desktop Session Manager
+  console.log('[Init] Initializing desktop session manager...');
+  const desktopManager = new DesktopSessionManager();
+
+  // Register desktop tools
+  toolRunner.registerNativeTool(new DesktopSessionTool(desktopManager));
+  toolRunner.registerNativeTool(new DesktopActionTool(desktopManager));
+  toolRunner.registerNativeTool(new DesktopScreenshotTool(desktopManager));
+  console.log('[Init] Desktop tools registered');
+
   // Register RAG project query tool (if service is available)
   if (ragProjectService) {
     toolRunner.registerNativeTool(new QueryRAGProjectTool(ragProjectService));
@@ -631,6 +647,7 @@ async function main(): Promise<void> {
       toolRunner,
       llmService,
       browserManager,
+      desktopManager,
       taskManager,
       ragProjectService: ragProjectService || undefined,
       mainProvider: CONFIG.mainProvider,
@@ -651,7 +668,7 @@ async function main(): Promise<void> {
         const taskDescription = (task.jsonConfig as { description?: string }).description || '';
 
         // Create a task message for the supervisor
-        // Route to the well-known :feed: conversation for background tasks
+        // Route to the well-known `feed` conversation for background tasks
         const taskMessage = {
           id: crypto.randomUUID(),
           channel: 'web-main',  // Use web channel so responses are visible in UI
@@ -702,6 +719,7 @@ async function main(): Promise<void> {
     console.log('\n[Shutdown] Gracefully shutting down...');
     await registry.shutdown();
     await browserManager.shutdown();
+    await desktopManager.closeAllSessions();
     await taskManager.close();
     await userToolManager.close();
     await skillManager.close();

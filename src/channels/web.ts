@@ -69,6 +69,7 @@ export class WebChannel implements Channel {
 
   private newConversationHandler: (() => void) | null = null;
   private browserActionHandler: ((action: string, sessionId: string) => Promise<void>) | null = null;
+  private desktopActionHandler: ((action: string, sessionId: string) => Promise<void>) | null = null;
 
   private async handleClientMessage(clientId: string, data: unknown): Promise<void> {
     const msg = data as {
@@ -113,6 +114,8 @@ export class WebChannel implements Channel {
       this.newConversationHandler();
     } else if (msg.type === 'browser-action' && msg.action && msg.sessionId && this.browserActionHandler) {
       await this.browserActionHandler(msg.action, msg.sessionId);
+    } else if (msg.type === 'desktop-action' && msg.action && msg.sessionId && this.desktopActionHandler) {
+      await this.desktopActionHandler(msg.action, msg.sessionId);
     }
   }
 
@@ -282,6 +285,10 @@ export class WebChannel implements Channel {
 
   onBrowserAction(handler: (action: string, sessionId: string) => Promise<void>): void {
     this.browserActionHandler = handler;
+  }
+
+  onDesktopAction(handler: (action: string, sessionId: string) => Promise<void>): void {
+    this.desktopActionHandler = handler;
   }
 
   isConnected(): boolean {
