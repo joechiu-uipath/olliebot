@@ -2,6 +2,7 @@ import { select, search } from '@inquirer/prompts';
 import { v4 as uuid } from 'uuid';
 import * as readline from 'readline';
 import type { Channel, Message, SendOptions } from './types.js';
+import { SUPERVISOR_ICON, SUPERVISOR_NAME } from '../constants.js';
 
 export interface Conversation {
   id: string;
@@ -146,7 +147,7 @@ export class ConsoleChannel implements Channel {
     // Delay showing prompt and starting input loop to allow async initialization logs to complete
     // (e.g., ConfigWatcher ready event) - prevents console.log from corrupting inquirer prompt
     setTimeout(() => {
-      console.log('\n🤖 OllieBot Console Interface');
+      console.log(`\n${SUPERVISOR_ICON} ${SUPERVISOR_NAME} Console Interface`);
       console.log('Type your message and press Enter. Type "exit" to quit.');
       console.log('Press / for commands\n');
       this.startInputLoop();
@@ -457,7 +458,7 @@ export class ConsoleChannel implements Channel {
       if (msg.role === 'user') {
         console.log(`\n👤 You: ${this.truncateMessage(msg.content)}`);
       } else if (msg.role === 'assistant') {
-        console.log(`\n🤖 OllieBot: ${this.truncateMessage(msg.content)}`);
+        console.log(`\n${SUPERVISOR_ICON} ${SUPERVISOR_NAME}: ${this.truncateMessage(msg.content)}`);
       }
       // Skip system and tool messages for cleaner display
     }
@@ -625,7 +626,7 @@ export class ConsoleChannel implements Channel {
       const aliases = cmd.aliases.length > 0 ? ` (${cmd.aliases.map(a => '/' + a).join(', ')})` : '';
       console.log(`  /${cmd.name}${aliases} - ${cmd.description}`);
     });
-    console.log('  exit - Quit OllieBot\n');
+    console.log(`  exit - Quit ${SUPERVISOR_NAME}\n`);
   }
 
   private formatDate(isoString: string): string {
@@ -652,7 +653,7 @@ export class ConsoleChannel implements Channel {
       output = this.stripMarkdown(output);
     }
 
-    console.log(`\n🤖 OllieBot: ${output}\n`);
+    console.log(`\n${SUPERVISOR_ICON} ${SUPERVISOR_NAME}: ${output}\n`);
 
     // Show action buttons if provided
     if (options?.buttons && options.buttons.length > 0) {
@@ -678,7 +679,7 @@ export class ConsoleChannel implements Channel {
   ): Promise<void> {
     const agentLabel = options?.agentEmoji && options?.agentName
       ? `${options.agentEmoji} ${options.agentName}`
-      : '🤖 OllieBot';
+      : `${SUPERVISOR_ICON} ${SUPERVISOR_NAME}`;
 
     let output = content;
     if (!options?.markdown) {
@@ -692,7 +693,7 @@ export class ConsoleChannel implements Channel {
   startStream(streamId: string, agentInfo?: { agentId?: string; agentName?: string; agentEmoji?: string }): void {
     const agentLabel = agentInfo?.agentEmoji && agentInfo?.agentName
       ? `${agentInfo.agentEmoji} ${agentInfo.agentName}`
-      : '🤖 OllieBot';
+      : `${SUPERVISOR_ICON} ${SUPERVISOR_NAME}`;
     this.activeStreams.set(streamId, { agentName: agentInfo?.agentName, agentEmoji: agentInfo?.agentEmoji });
     process.stdout.write(`\n${agentLabel}: `);
   }

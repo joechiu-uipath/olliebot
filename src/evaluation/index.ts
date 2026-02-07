@@ -1,7 +1,7 @@
 /**
  * Evaluation System
  *
- * A comprehensive system for evaluating prompt quality in OllieBot.
+ * A comprehensive system for evaluating prompt quality.
  * Supports testing supervisor, sub-agent, and tool-generator prompts
  * with mocked tool outputs and statistical comparison.
  */

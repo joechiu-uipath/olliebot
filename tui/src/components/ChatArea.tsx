@@ -27,7 +27,7 @@ export function ChatArea({ messages, width, height, isFocused }: ChatAreaProps) 
       });
     } else if (msg.role === 'assistant') {
       lines.push({ text: '', color: 'white' }); // Empty line before
-      const agentLabel = msg.agentName || 'OllieBot';
+      const agentLabel = msg.agentName || 'Unknown';
       lines.push({ text: `${agentLabel}:`, color: 'magenta', bold: true });
 
       // Simple markdown rendering

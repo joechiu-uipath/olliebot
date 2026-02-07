@@ -1,7 +1,7 @@
 /**
  * Browser Automation Module
  *
- * Provides browser automation capabilities for OllieBot with:
+ * Provides browser automation capabilities with:
  * - Strategy abstraction (Computer Use vs DOM)
  * - Multiple provider support
  * - Debug mode with live preview

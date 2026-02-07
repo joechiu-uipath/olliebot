@@ -2,6 +2,7 @@ import 'dotenv/config';
 import { join } from 'path';
 import { initDb, closeDb, getDb } from './db/index.js';
 import { ensureWellKnownConversations, WellKnownConversations } from './db/well-known-conversations.js';
+import { SUPERVISOR_ICON, SUPERVISOR_NAME } from './constants.js';
 import { SupervisorAgentImpl, getAgentRegistry } from './agents/index.js';
 import {
   LLMService,
@@ -12,7 +13,7 @@ import {
   type LLMProvider,
 } from './llm/index.js';
 import { ConsoleChannel } from './channels/index.js';
-import { OllieBotServer } from './server/index.js';
+import { AssistantServer } from './server/index.js';
 import { MCPClient } from './mcp/index.js';
 import type { MCPServerConfig } from './mcp/types.js';
 import { SkillManager } from './skills/index.js';
@@ -236,7 +237,7 @@ function createEmbeddingProvider() {
 
 
 async function main(): Promise<void> {
-  console.log('🤖 OllieBot Starting...\n');
+  console.log(`${SUPERVISOR_ICON} ${SUPERVISOR_NAME} Starting...\n`);
 
   // Validate at least one API key is available
   const hasApiKey =
@@ -639,7 +640,7 @@ async function main(): Promise<void> {
   } else {
     // Server mode - HTTP + WebSocket
     console.log('[Init] Starting in server mode...');
-    const server = new OllieBotServer({
+    const server = new AssistantServer({
       port: CONFIG.port,
       supervisor,
       mcpClient,
@@ -699,18 +700,21 @@ async function main(): Promise<void> {
     taskManager.startScheduler();
 
     console.log(`
-✅ OllieBot ready! (Multi-Agent Architecture)
+✅ ${SUPERVISOR_NAME} ready!
 
   🌐 Web UI:     http://localhost:${CONFIG.port}
   📡 WebSocket:  ws://localhost:${CONFIG.port}
   📚 API:        http://localhost:${CONFIG.port}/api
 
   📁 Config:     ${CONFIG.tasksDir}
-  🗄️  Database:   ${CONFIG.dbPath}
+  🗄️ Database:   ${CONFIG.dbPath}
   🧠 Main LLM:   ${CONFIG.mainProvider}/${CONFIG.mainModel}
   ⚡ Fast LLM:   ${CONFIG.fastProvider}/${CONFIG.fastModel}
+     Img Gen:    ${CONFIG.imageGenProvider}/${CONFIG.imageGenModel}
+     Voice:      ${CONFIG.voiceProvider}/${CONFIG.voiceModel}
+  Deep Research: ${CONFIG.deepResearchProvider}/${CONFIG.deepResearchModel} 
 
-  🤖 Supervisor: ${supervisor.identity.emoji} ${supervisor.identity.name}
+  ${SUPERVISOR_ICON} Supervisor: ${supervisor.identity.emoji} ${supervisor.identity.name}
 `);
   }
 

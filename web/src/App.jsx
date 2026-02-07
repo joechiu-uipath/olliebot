@@ -26,6 +26,11 @@ const MODES = {
   EVAL: 'eval',
 };
 
+// Branding constants
+const SUPERVISOR_ICON = '🐙';
+const SUPERVISOR_NAME = 'OllieBot';
+const DEFAULT_AGENT_ICON = '🤖';
+
 // Module-level flag to prevent double-fetching in React Strict Mode
 // (Strict Mode unmounts/remounts component, so refs don't persist)
 let appInitialLoadDone = false;
@@ -1346,7 +1351,7 @@ function App() {
           {expandedAgentMessages.has(msg.id) && (
             <div className={`message ${msg.role}${msg.isError ? ' error' : ''}${msg.isStreaming ? ' streaming' : ''}`}>
               <div className="message-avatar">
-                {msg.isError ? '⚠️' : (msg.agentEmoji || '🐙')}
+                {msg.isError ? '⚠️' : (msg.agentEmoji || DEFAULT_AGENT_ICON)}
               </div>
               <div className="message-content">
                 <MessageContent content={msg.content} html={msg.html} isStreaming={msg.isStreaming} citations={msg.citations} messageId={msg.id} />
@@ -1364,7 +1369,7 @@ function App() {
     return (
       <div className={`message ${msg.role}${msg.isError ? ' error' : ''}${msg.isStreaming ? ' streaming' : ''}`}>
         <div className="message-avatar">
-          {msg.isError ? '⚠️' : msg.role === 'user' ? '👤' : (msg.agentEmoji || '🐙')}
+          {msg.isError ? '⚠️' : msg.role === 'user' ? '👤' : (msg.agentEmoji || DEFAULT_AGENT_ICON)}
         </div>
         <div className="message-content">
           {msg.agentName && msg.role === 'assistant' && (
@@ -1851,8 +1856,8 @@ function App() {
               </button>
             )}
             <div className="logo">
-              <span className="logo-icon">🐙</span>
-              <h1>OllieBot</h1>
+              <span className="logo-icon">{SUPERVISOR_ICON}</span>
+              <h1>{SUPERVISOR_NAME}</h1>
             </div>
             {/* Mode Switcher */}
             <div className="mode-switcher">
@@ -1887,7 +1892,7 @@ function App() {
           <div className="messages">
           {messages.length === 0 ? (
             <div className="welcome">
-              <h2>Welcome to OllieBot</h2>
+              <h2>Welcome to {SUPERVISOR_NAME}</h2>
               <p>Your personal support agent is ready to help.</p>
             </div>
           ) : (

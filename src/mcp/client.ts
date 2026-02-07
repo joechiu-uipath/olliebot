@@ -8,6 +8,7 @@ import type {
   MCPResource,
   MCPPrompt,
 } from './types.js';
+import { SUPERVISOR_NAME } from '../constants.js';
 
 /**
  * MCP Client - Connects to MCP servers and invokes tools
@@ -116,7 +117,7 @@ export class MCPClient {
       await this.sendStdioRequest(config, 'initialize', {
         protocolVersion: '2024-11-05',
         capabilities: {},
-        clientInfo: { name: 'OllieBot', version: '0.1.0' },
+        clientInfo: { name: SUPERVISOR_NAME, version: '0.1.0' },
       });
       // Send initialized notification to complete handshake
       this.sendStdioNotification(config, 'notifications/initialized', {});

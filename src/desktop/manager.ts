@@ -54,7 +54,7 @@ const fsPromises = fs.promises;
 
 /**
  * Path where the host temp folder is mapped inside Windows Sandbox.
- * Must be under the sandbox user profile — root-level paths like C:\OllieBot
+ * Must be under the sandbox user profile
  * are not reliably created by MappedFolders on all Windows builds.
  */
 const SANDBOX_MAPPED_DIR = 'C:\\Users\\WDAGUtilityAccount\\Desktop\\OllieBot';

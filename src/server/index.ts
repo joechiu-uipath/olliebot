@@ -49,7 +49,7 @@ export interface ServerConfig {
   allowedOrigins?: string[];
 }
 
-export class OllieBotServer {
+export class AssistantServer {
   private app: Express;
   private server: Server;
   private wss: WebSocketServer;

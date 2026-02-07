@@ -22,6 +22,7 @@ import type { CitationSource, StoredCitationData } from '../citations/types.js';
 import { DEEP_RESEARCH_WORKFLOW_ID, AGENT_IDS } from '../deep-research/constants.js';
 import { SELF_CODING_WORKFLOW_ID, AGENT_IDS as CODING_AGENT_IDS } from '../self-coding/constants.js';
 import { getMessageEventService } from '../services/message-event-service.js';
+import { SUPERVISOR_ICON, SUPERVISOR_NAME } from '../constants.js';
 
 export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAgent {
   private subAgents: Map<string, WorkerAgent> = new Map();
@@ -42,8 +43,8 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
     const config: AgentConfig = {
       identity: {
         id: 'supervisor-main',
-        name: 'OllieBot',
-        emoji: '🤖',
+        name: SUPERVISOR_NAME,
+        emoji: SUPERVISOR_ICON,
         role: 'supervisor',
         description: 'Main supervisor agent that orchestrates tasks and delegates to specialists',
       },
