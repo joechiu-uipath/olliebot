@@ -7,7 +7,7 @@
  * automatically created if missing.
  *
  * Well-known conversations:
- * - Have fixed IDs (colon-delimited format like 'feed')
+ * - Have fixed, simple string IDs (e.g. 'feed')
  * - Have fixed names that cannot be renamed
  * - Have special icons for visual distinction
  * - Are always sorted to the top of the conversation list
