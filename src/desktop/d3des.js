@@ -57,8 +57,8 @@ var pc2 = [
 function deskey(key, edf)
 {
 	var i, j, l, m, n;
-        var pc1m = new Buffer(56);
-        var pcr = new Buffer(56);
+        var pc1m = Buffer.alloc(56);
+        var pcr = Buffer.alloc(56);
 	var kn = new Array(32);
 
 	for ( j = 0; j < 56; j++ ) {
