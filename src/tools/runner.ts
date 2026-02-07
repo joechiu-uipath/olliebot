@@ -33,6 +33,21 @@ export interface ToolExecutionResult {
   citations: CitationSource[];
 }
 
+/**
+ * Internal result from invokeToolBySource carrying display metadata alongside output.
+ */
+interface InvokeToolResult {
+  output: unknown;
+  files?: Array<{
+    name: string;
+    dataUrl: string;
+    size: number;
+    mediaType?: string;
+  }>;
+  displayOnly?: boolean;
+  displayOnlySummary?: string;
+}
+
 export interface ToolRunnerConfig {
   mcpClient?: MCPClient;
   nativeTools?: Map<string, NativeTool>;
@@ -207,17 +222,20 @@ export class ToolRunner {
     let result: ToolResult;
 
     try {
-      const output = await this.invokeToolBySource(request);
+      const invokeResult = await this.invokeToolBySource(request);
       const endTime = new Date();
 
       result = {
         requestId: request.id,
         toolName: request.toolName,
         success: true,
-        output,
+        output: invokeResult.output,
+        files: invokeResult.files,
         startTime,
         endTime,
         durationMs: endTime.getTime() - startTime.getTime(),
+        displayOnly: invokeResult.displayOnly,
+        displayOnlySummary: invokeResult.displayOnlySummary,
       };
 
     } catch (error) {
@@ -317,7 +335,7 @@ export class ToolRunner {
   /**
    * Route tool execution to appropriate handler based on source
    */
-  private async invokeToolBySource(request: ToolRequest): Promise<unknown> {
+  private async invokeToolBySource(request: ToolRequest): Promise<InvokeToolResult> {
     const { toolName, source, parameters } = request;
 
     switch (source) {
@@ -331,14 +349,12 @@ export class ToolRunner {
         if (!result.success) {
           throw new Error(result.error || 'Tool execution failed');
         }
-        // Include files in the returned output if present (for images, charts, etc.)
-        if (result.files && result.files.length > 0) {
-          return {
-            output: result.output,
-            files: result.files,
-          };
-        }
-        return result.output;
+        return {
+          output: result.output,
+          files: result.files,
+          displayOnly: result.displayOnly,
+          displayOnlySummary: result.displayOnlySummary,
+        };
       }
 
       case 'user': {
@@ -351,14 +367,12 @@ export class ToolRunner {
         if (!result.success) {
           throw new Error(result.error || 'Tool execution failed');
         }
-        // Include files in the returned output if present
-        if (result.files && result.files.length > 0) {
-          return {
-            output: result.output,
-            files: result.files,
-          };
-        }
-        return result.output;
+        return {
+          output: result.output,
+          files: result.files,
+          displayOnly: result.displayOnly,
+          displayOnlySummary: result.displayOnlySummary,
+        };
       }
 
       case 'mcp': {
@@ -377,7 +391,7 @@ export class ToolRunner {
         if (!result.success) {
           throw new Error(result.error || 'MCP tool execution failed');
         }
-        return result.output;
+        return { output: result.output };
       }
 
       default:

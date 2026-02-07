@@ -40,6 +40,15 @@ export interface ToolResult {
   startTime: Date;
   endTime: Date;
   durationMs: number;
+  /**
+   * When true, the full output is displayed to the user via UI events but
+   * is NOT sent to the LLM. A minimal acknowledgment is sent instead.
+   */
+  displayOnly?: boolean;
+  /**
+   * Short summary sent to the LLM when displayOnly is true.
+   */
+  displayOnlySummary?: string;
 }
 
 // Event: Tool requested (emitted when tool execution starts)

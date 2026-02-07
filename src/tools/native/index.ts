@@ -18,5 +18,6 @@ export * from './query-rag-project.js';
 export * from './speak.js';
 export * from './generate-python.js';
 export * from './run-python.js';
+export * from './website-crawler.js';
 
 // Frontend code tools moved to src/self-coding/tools/
