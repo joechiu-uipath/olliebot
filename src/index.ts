@@ -40,6 +40,7 @@ import {
   DelegateTool,
   QueryRAGProjectTool,
   SpeakTool,
+  WebsiteCrawlerTool,
 } from './tools/index.js';
 import {
   ReadFrontendCodeTool,
@@ -359,6 +360,9 @@ async function main(): Promise<void> {
 
   // Web scraping (uses LLM for summarization)
   toolRunner.registerNativeTool(new WebScrapeTool({ llmService }));
+
+  // Website crawler (display-only result — full URL list shown in UI, summary sent to LLM)
+  toolRunner.registerNativeTool(new WebsiteCrawlerTool());
 
   toolRunner.registerNativeTool(new TakeScreenshotTool());
   toolRunner.registerNativeTool(new AnalyzeImageTool(llmService));

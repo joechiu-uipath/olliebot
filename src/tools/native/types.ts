@@ -14,6 +14,19 @@ export interface NativeToolResult {
     media_type: 'image/png' | 'image/jpeg' | 'image/webp';
     data: string;
   };
+  /**
+   * When true, the tool's output is displayed to the user via the UI event
+   * broadcast but is NOT fed back to the LLM as a tool_result content block.
+   * Instead, a minimal acknowledgment string is sent to the LLM.
+   * Use this for tools that produce large display-oriented output (e.g. URL
+   * lists, tables, logs) that the LLM does not need to reason over.
+   */
+  displayOnly?: boolean;
+  /**
+   * Short summary sent to the LLM in place of the full output when
+   * displayOnly is true. If omitted, a generic acknowledgment is used.
+   */
+  displayOnlySummary?: string;
 }
 
 export interface NativeTool {

@@ -16,5 +16,6 @@ export * from './http-client.js';
 export * from './delegate.js';
 export * from './query-rag-project.js';
 export * from './speak.js';
+export * from './website-crawler.js';
 
 // Frontend code tools moved to src/self-coding/tools/
