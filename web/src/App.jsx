@@ -1177,7 +1177,6 @@ function App() {
     sendMessage({ type: 'desktop-action', action: 'close', sessionId });
   }, [sendMessage]);
 
-
   // Toggle RAG projects accordion - memoized
   const handleToggleRagProjects = useCallback(() => {
     toggleAccordion('ragProjects');
@@ -1832,6 +1831,17 @@ function App() {
               onCloseDesktopSession={handleCloseDesktopSession}
               expanded={expandedAccordions.computerUse}
               onToggle={handleToggleComputerUse}
+            />
+
+            {/* Desktop Sessions Accordion - always visible */}
+            <DesktopSessions
+              sessions={desktopSessions}
+              screenshots={desktopScreenshots}
+              selectedSessionId={selectedDesktopSessionId}
+              onSelectSession={handleSelectDesktopSession}
+              onCloseSession={handleCloseDesktopSession}
+              expanded={expandedAccordions.desktopSessions}
+              onToggle={handleToggleDesktopSessions}
             />
           </div>
           </>
