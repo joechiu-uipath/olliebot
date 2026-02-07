@@ -512,7 +512,7 @@ export class DesktopSessionManager {
       // Set up Computer Use provider if configured
       if (config.computerUseProvider) {
         const provider = createComputerUseProvider(config.computerUseProvider as ComputerUseProvider);
-        if (provider && provider.isAvailable()) {
+        if (provider) {
           session.setComputerUseProvider(provider);
           console.log(`${tag} Computer Use provider set: ${config.computerUseProvider}`);
         }
