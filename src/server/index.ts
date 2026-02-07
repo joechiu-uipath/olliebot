@@ -7,7 +7,7 @@ import type { SupervisorAgent } from '../agents/types.js';
 import { getAgentRegistry } from '../agents/index.js';
 import { WebChannel } from '../channels/index.js';
 import { getDb } from '../db/index.js';
-import { isWellKnownConversation, getWellKnownConversationMeta } from '../db/well-known-conversations.js';
+import { isWellKnownConversation, getWellKnownConversationMeta, WellKnownConversations } from '../db/well-known-conversations.js';
 import type { MCPClient } from '../mcp/index.js';
 import type { SkillManager } from '../skills/index.js';
 import type { ToolRunner } from '../tools/index.js';
@@ -220,8 +220,9 @@ export class OllieBotServer {
           return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
         });
 
-        // 3. Messages for default :feed: conversation (paginated - last 20)
-        const paginatedResult = db.messages.findByConversationIdPaginated(':feed:', { limit: 20, includeTotal: true });
+        // 3. Messages for default `feed` conversation (paginated - last 20)
+        const paginatedResult = db.messages.findByConversationIdPaginated(
+          WellKnownConversations.FEED, { limit: 20, includeTotal: true });
         const feedMessages = {
           items: paginatedResult.items.map(m => ({
             id: m.id,
@@ -625,6 +626,30 @@ export class OllieBotServer {
       } catch (error) {
         console.error('[API] Failed to fetch messages:', error);
         res.status(500).json({ error: 'Failed to fetch messages' });
+      }
+    });
+
+    // Delete all messages in a conversation (hard delete)
+    this.app.delete('/api/conversations/:id/messages', (req: Request, res: Response) => {
+      try {
+        const db = getDb();
+        const conversationId = req.params.id as string;
+
+        // Verify conversation exists
+        const conversation = db.conversations.findById(conversationId);
+        if (!conversation) {
+          res.status(404).json({ error: 'Conversation not found' });
+          return;
+        }
+
+        // Delete all messages in the conversation
+        const deletedCount = db.messages.deleteByConversationId(conversationId);
+        console.log(`[API] Cleared ${deletedCount} messages from conversation ${conversationId}`);
+
+        res.json({ success: true, deletedCount });
+      } catch (error) {
+        console.error('[API] Failed to clear messages:', error);
+        res.status(500).json({ error: 'Failed to clear messages' });
       }
     });
 

@@ -10,10 +10,11 @@ import type { SandboxType, DesktopPlatform, ComputerUseProvider } from '../types
 
 export class DesktopSessionTool implements NativeTool {
   readonly name = 'desktop_session';
-  readonly description = `Create, list, or close sandboxed desktop sessions for desktop application automation.
+  readonly description = `Create, list, resume, or close sandboxed desktop sessions for desktop application automation.
 
 Actions:
 - create: Create a new desktop session (launches a sandboxed environment with VNC)
+- resume: Resume/connect to an existing VNC server without launching a sandbox (faster)
 - list: List all active desktop sessions
 - close: Close a specific session
 - get: Get details of a specific session
@@ -23,6 +24,16 @@ When creating a session, you can specify:
 - platform: Target platform (windows, macos, linux)
 - provider: Computer Use provider for AI control (azure_openai, google, anthropic, openai)
 
+When resuming, you can optionally specify:
+- vncHost: IP address of the VNC server (auto-discovered if not provided)
+- vncPort: VNC port (default: 5900)
+- vncPassword: VNC password (default: olliebot)
+
+If vncHost is not provided, the tool will:
+1. Check existing session folders for connection.json files
+2. Probe each known IP to find alive VNC servers
+3. Scan the Hyper-V network (172.x.x.x) as a fallback
+
 The session will launch a sandboxed desktop environment and connect via VNC for remote control.`;
 
   readonly inputSchema = {
@@ -30,7 +41,7 @@ The session will launch a sandboxed desktop environment and connect via VNC for 
     properties: {
       action: {
         type: 'string',
-        enum: ['create', 'list', 'close', 'get'],
+        enum: ['create', 'resume', 'list', 'close', 'get'],
         description: 'The action to perform',
       },
       sessionId: {
@@ -86,6 +97,9 @@ The session will launch a sandboxed desktop environment and connect via VNC for 
         case 'create':
           return await this.createSession(params);
 
+        case 'resume':
+          return await this.resumeSession(params);
+
         case 'list':
           return await this.listSessions();
 
@@ -140,6 +154,8 @@ The session will launch a sandboxed desktop environment and connect via VNC for 
       }
     }
 
+    console.log(`[DesktopSessionTool] Creating new session (name: ${name || '(auto)'}, sandbox: ${sandboxType}, platform: ${platform})`);
+    const t0 = Date.now();
     const session = await this.desktopManager.createSession({
       name,
       sandbox: {
@@ -154,10 +170,55 @@ The session will launch a sandboxed desktop environment and connect via VNC for 
       computerUseProvider: provider,
     });
 
+    const durationMs = Date.now() - t0;
+    console.log(`[DesktopSessionTool] Session created successfully: ${session.id} (${durationMs}ms)`);
+
     return {
       success: true,
       output: {
         message: `Desktop session created: ${session.id}`,
+        session: {
+          id: session.id,
+          name: session.name,
+          status: session.status,
+          sandboxType: session.sandbox.type,
+          platform: session.sandbox.platform,
+          viewport: session.viewport,
+        },
+      },
+    };
+  }
+
+  private async resumeSession(params: Record<string, unknown>): Promise<NativeToolResult> {
+    const vncHost = params.vncHost ? String(params.vncHost) : undefined;
+    const vncPort = params.vncPort ? Number(params.vncPort) : undefined;
+    const vncPassword = params.vncPassword ? String(params.vncPassword) : undefined;
+    const name = params.name ? String(params.name) : undefined;
+    const provider = params.provider as ComputerUseProvider | undefined;
+
+    if (vncHost) {
+      console.log(`[DesktopSessionTool] Resuming session - connecting to VNC at ${vncHost}:${vncPort || 5900}`);
+    } else {
+      console.log(`[DesktopSessionTool] Resuming session - auto-discovering VNC server...`);
+    }
+
+    const t0 = Date.now();
+
+    const session = await this.desktopManager.resumeSession({
+      name,
+      vncHost,
+      vncPort,
+      vncPassword,
+      computerUseProvider: provider,
+    });
+
+    const durationMs = Date.now() - t0;
+    console.log(`[DesktopSessionTool] Session resumed successfully: ${session.id} (${durationMs}ms)`);
+
+    return {
+      success: true,
+      output: {
+        message: `Desktop session resumed: ${session.id}`,
         session: {
           id: session.id,
           name: session.name,

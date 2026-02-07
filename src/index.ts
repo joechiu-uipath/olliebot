@@ -668,7 +668,7 @@ async function main(): Promise<void> {
         const taskDescription = (task.jsonConfig as { description?: string }).description || '';
 
         // Create a task message for the supervisor
-        // Route to the well-known :feed: conversation for background tasks
+        // Route to the well-known `feed` conversation for background tasks
         const taskMessage = {
           id: crypto.randomUUID(),
           channel: 'web-main',  // Use web channel so responses are visible in UI

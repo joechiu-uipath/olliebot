@@ -89,16 +89,28 @@ export class GoogleComputerUseProvider implements IComputerUseProvider {
   }
 
   async getAction(params: GetActionParams): Promise<ComputerUseResponse> {
+    const tag = '[Google CU]';
+
     if (!this.isAvailable()) {
       throw new Error('Google API key not configured');
     }
 
-    const { screenshot, instruction, screenSize, history } = params;
+    const { screenshot, screenshotMimeType, instruction, screenSize, history } = params;
+    const mimeType = screenshotMimeType || 'image/jpeg';
+
+    console.log(`${tag} ========== getAction ==========`);
+    console.log(`${tag} Instruction: "${instruction}"`);
+    console.log(`${tag} Screen size: ${screenSize.width}x${screenSize.height}`);
+    console.log(`${tag} Screenshot: ${mimeType}, ${Math.round(screenshot.length / 1024)}KB base64`);
+    console.log(`${tag} History items: ${history?.length || 0}`);
 
     // Build the request
-    const contents = this.buildContents(instruction, screenshot, history);
+    const contents = this.buildContents(instruction, screenshot, mimeType, history);
 
     try {
+      console.log(`${tag} Request: model=${this.model}, contents=${contents.length} items`);
+
+      const t0 = Date.now();
       const response = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:generateContent?key=${this.apiKey}`,
         {
@@ -118,16 +130,34 @@ export class GoogleComputerUseProvider implements IComputerUseProvider {
           }),
         }
       );
+      const latency = Date.now() - t0;
 
       if (!response.ok) {
         const errorText = await response.text();
+        console.error(`${tag} API error (${latency}ms):`, response.status, errorText);
         throw new Error(`Gemini API error: ${response.status} - ${errorText}`);
       }
 
       const data = await response.json() as GeminiResponse;
-      return this.parseResponse(data, screenSize);
+      console.log(`${tag} Response received (${latency}ms)`);
+
+      // Log raw response text
+      const rawText = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      if (rawText) {
+        console.log(`${tag} Raw model text: ${rawText.slice(0, 500)}${rawText.length > 500 ? '...' : ''}`);
+      } else {
+        console.log(`${tag} No text in response`);
+      }
+
+      const result = this.parseResponse(data, screenSize);
+      console.log(`${tag} Parsed result: isComplete=${result.isComplete}, reasoning="${result.reasoning?.slice(0, 100) || '(none)'}"`);
+      if (result.action) {
+        console.log(`${tag} Action: ${JSON.stringify(result.action)}`);
+      }
+
+      return result;
     } catch (error) {
-      console.error('[GoogleCU] Error getting action:', error);
+      console.error(`${tag} Error getting action:`, error);
       throw error;
     }
   }
@@ -138,6 +168,7 @@ export class GoogleComputerUseProvider implements IComputerUseProvider {
   private buildContents(
     instruction: string,
     screenshot: string,
+    mimeType: string,
     history?: GetActionParams['history']
   ): GeminiContent[] {
     const contents: GeminiContent[] = [];
@@ -169,7 +200,7 @@ export class GoogleComputerUseProvider implements IComputerUseProvider {
       parts: [
         {
           inlineData: {
-            mimeType: 'image/png',
+            mimeType,
             data: screenshot,
           },
         },

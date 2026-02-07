@@ -184,7 +184,7 @@ export function App() {
             icon: c.icon as string | undefined,
           })));
           // Default to Feed conversation
-          const feed = convData.find((c) => c.id === ':feed:');
+          const feed = convData.find((c) => c.id === 'feed');
           if (feed) setCurrentConversationId(feed.id as string);
         }
 
@@ -230,7 +230,7 @@ export function App() {
           const data = await res.json() as Array<Record<string, unknown>>;
           // Debug: log message count and first few messages for Feed
           process.stderr.write(`[TUI] Loaded ${data.length} messages for ${currentConversationId}\n`);
-          if (currentConversationId === ':feed:' && data.length > 0) {
+          if (currentConversationId === 'feed' && data.length > 0) {
             process.stderr.write(`[TUI] Feed sample: ${JSON.stringify(data[0], null, 2)}\n`);
           }
           setMessages(data.map((msg) => ({

@@ -1,12 +1,13 @@
 /**
  * VNC Client Wrapper
  *
- * Wraps the rfb2 library to provide a clean interface for VNC operations.
+ * Wraps the vnc-rfb-client library to provide a clean interface for VNC operations.
  * Handles screenshot capture, mouse/keyboard input, and connection management.
  */
 
 import { EventEmitter } from 'events';
 import { PNG } from 'pngjs';
+import sharp from 'sharp';
 import type {
   VNCConfig,
   VNCConnectionInfo,
@@ -14,37 +15,6 @@ import type {
   DesktopAction,
   ActionResult,
 } from './types';
-
-// rfb2 types (the package doesn't have TypeScript definitions)
-interface RfbRect {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  encoding: number;
-  data: Buffer;
-}
-
-interface RfbClient {
-  width: number;
-  height: number;
-  pixelFormat: PixelFormat;
-  title: string;
-
-  // Methods
-  requestUpdate(incremental: boolean, x: number, y: number, width: number, height: number): void;
-  pointerEvent(x: number, y: number, buttonMask: number): void;
-  keyEvent(keySym: number, isDown: boolean): void;
-  end(): void;
-
-  // Events
-  on(event: 'connect', callback: () => void): void;
-  on(event: 'error', callback: (error: Error) => void): void;
-  on(event: 'rect', callback: (rect: RfbRect) => void): void;
-  on(event: 'clipboard', callback: (text: string) => void): void;
-  on(event: 'bell', callback: () => void): void;
-  on(event: 'close', callback: () => void): void;
-}
 
 // VNC Key codes (X11 keysyms)
 const KEY_CODES: Record<string, number> = {
@@ -105,15 +75,6 @@ const KEY_CODES: Record<string, number> = {
   pause: 0xff13,
 };
 
-// Mouse button masks
-const MOUSE_BUTTONS = {
-  left: 1,
-  middle: 2,
-  right: 4,
-  scrollUp: 8,
-  scrollDown: 16,
-};
-
 export interface VNCClientEvents {
   connect: () => void;
   disconnect: () => void;
@@ -122,22 +83,91 @@ export interface VNCClientEvents {
   clipboard: (text: string) => void;
 }
 
+// Import types from declaration file
+import type VncClientType from 'vnc-rfb-client';
+type VncRfbClient = InstanceType<typeof VncClientType>;
+type VncRfbClientModule = typeof VncClientType;
+
+/**
+ * Patch vnc-rfb-client to use pure JavaScript DES instead of Node crypto.
+ * Node.js 17+ with OpenSSL 3.0 removed support for legacy DES algorithm.
+ */
+async function patchVncRfbClient(VncClient: VncRfbClientModule): Promise<void> {
+  // Import our pure JS d3des implementation
+  const d3des = await import('./d3des.js');
+
+  // Monkey-patch the prototype to use d3des instead of Node crypto
+  const proto = VncClient.prototype as Record<string, unknown>;
+  const original = proto._handleAuthChallenge as () => Promise<void>;
+
+  if ((proto as { _patchedForDes?: boolean })._patchedForDes) {
+    return; // Already patched
+  }
+
+  proto._handleAuthChallenge = async function (this: VncRfbClient & {
+    _challengeResponseSent: boolean;
+    _socketBuffer: { readUInt32BE: () => number; buffer: Buffer; waitBytes: (n: number, msg: string) => Promise<void> };
+    _authenticated: boolean;
+    _expectingChallenge: boolean;
+    _password: string;
+    _log: (msg: string, debug: boolean, level?: number) => void;
+    sendData: (data: Buffer) => void;
+    _sendClientInit: () => void;
+    resetState: () => void;
+    emit: (event: string, ...args: unknown[]) => void;
+  }) {
+    if (this._challengeResponseSent) {
+      // Challenge response already sent. Checking result.
+      if (this._socketBuffer.readUInt32BE() === 0) {
+        this._log('Authenticated successfully (d3des)', true);
+        this._authenticated = true;
+        this.emit('authenticated');
+        this._expectingChallenge = false;
+        this._sendClientInit();
+      } else {
+        this._log('Authentication failed', true);
+        this.emit('authError');
+        this.resetState();
+      }
+    } else {
+      // Wait for the 16-byte challenge to arrive (important!)
+      this._log('Challenge received, waiting for 16 bytes...', true);
+      await this._socketBuffer.waitBytes(16, 'Auth challenge');
+
+      // Use d3des pure JS implementation instead of Node crypto
+      const challenge = this._socketBuffer.buffer.slice(0, 16);
+      const response = d3des.response(challenge, this._password || '');
+
+      this._log('Sending response (d3des): ' + response.toString('hex'), true, 2);
+
+      this.sendData(response);
+      this._challengeResponseSent = true;
+    }
+  };
+
+  (proto as { _patchedForDes?: boolean })._patchedForDes = true;
+  console.log('[VNCClient] Patched vnc-rfb-client to use pure JS DES (OpenSSL 3.0 compatible)');
+}
+
 export class VNCClient extends EventEmitter {
-  private client: RfbClient | null = null;
+  private client: VncRfbClient | null = null;
   private config: VNCConfig;
-  private frameBuffer: Buffer | null = null;
-  private frameBufferDirty = false;
   private connected = false;
   private width = 0;
   private height = 0;
   private pixelFormat: PixelFormat | null = null;
   private serverName = '';
-  private pendingFrameRequest = false;
+  private hasFirstFrame = false;
+
+  // Change detection state
+  private lastFrameHash: number = 0;
+  private lastScreenshot: string | null = null;
+  private unchangedFrameCount = 0;
 
   constructor(config: VNCConfig) {
     super();
     this.config = {
-      connectTimeout: 10000,
+      connectTimeout: 30000,
       ...config,
     };
   }
@@ -146,166 +176,300 @@ export class VNCClient extends EventEmitter {
    * Connect to VNC server
    */
   async connect(): Promise<VNCConnectionInfo> {
+    const tag = `[VNCClient]`;
     return new Promise((resolve, reject) => {
+      const timeoutMs = this.config.connectTimeout || 30000;
+      console.log(`${tag} connect: Starting (host=${this.config.host}, port=${this.config.port}, timeout=${timeoutMs}ms)`);
+
+      let settled = false;
       const timeoutId = setTimeout(() => {
-        reject(new Error(`Connection timeout after ${this.config.connectTimeout}ms`));
-      }, this.config.connectTimeout);
+        if (!settled) {
+          settled = true;
+          console.error(`${tag} connect: TIMEOUT after ${timeoutMs}ms`);
+          reject(new Error(`Connection timeout after ${timeoutMs}ms`));
+        }
+      }, timeoutMs);
 
-      // Dynamic import of rfb2
-      import('rfb2').then((rfb2Module) => {
-        const rfb = rfb2Module.default || rfb2Module;
+      // Dynamic import of vnc-rfb-client
+      console.log(`${tag} connect: Loading vnc-rfb-client module...`);
+      import('vnc-rfb-client').then(async (module) => {
+        const VncClient = module.default as VncRfbClientModule;
+        console.log(`${tag} connect: vnc-rfb-client loaded`);
 
-        this.client = rfb.createConnection({
-          host: this.config.host,
-          port: this.config.port,
-          password: this.config.password || '',
-        }) as RfbClient;
+        // Patch to use pure JS DES (OpenSSL 3.0 compatibility)
+        await patchVncRfbClient(VncClient);
 
-        this.client.on('connect', () => {
-          clearTimeout(timeoutId);
-          this.connected = true;
-          this.width = this.client!.width;
-          this.height = this.client!.height;
-          this.pixelFormat = this.client!.pixelFormat;
-          this.serverName = this.client!.title || 'VNC Server';
-
-          // Initialize frame buffer (RGBA)
-          this.frameBuffer = Buffer.alloc(this.width * this.height * 4);
-          this.frameBufferDirty = false;
-
-          // Request initial full frame
-          this.requestFullFrame();
-
-          this.emit('connect');
-
-          resolve({
-            connected: true,
-            host: this.config.host,
-            port: this.config.port,
-            width: this.width,
-            height: this.height,
-            pixelFormat: this.pixelFormat!,
-            serverName: this.serverName,
-          });
+        // Create client with supported encodings (Raw, CopyRect, Hextile, ZRLE)
+        this.client = new VncClient({
+          debug: false,
+          debugLevel: 0,
+          encodings: [
+            VncClient.consts.encodings.copyRect,
+            VncClient.consts.encodings.zrle,
+            VncClient.consts.encodings.hextile,
+            VncClient.consts.encodings.raw,
+            VncClient.consts.encodings.pseudoDesktopSize,
+          ],
         });
 
-        this.client.on('rect', (rect: RfbRect) => {
-          this.handleRect(rect);
+        this.client.on('connected', () => {
+          console.log(`${tag} connected event`);
         });
 
-        this.client.on('error', (error: Error) => {
-          clearTimeout(timeoutId);
-          this.emit('error', error);
-          reject(error);
+        this.client.on('authenticated', () => {
+          console.log(`${tag} authenticated event`);
         });
 
-        this.client.on('close', () => {
+        this.client.on('authError', () => {
+          if (!settled) {
+            settled = true;
+            clearTimeout(timeoutId);
+            console.error(`${tag} authError event - password rejected`);
+            reject(new Error('VNC authentication failed - wrong password'));
+          }
+        });
+
+        this.client.on('firstFrameUpdate', (fb: Buffer) => {
+          if (!settled) {
+            settled = true;
+            clearTimeout(timeoutId);
+
+            this.connected = true;
+            this.hasFirstFrame = true;
+            this.width = this.client!.clientWidth;
+            this.height = this.client!.clientHeight;
+            this.serverName = 'VNC Server';
+
+            // Default pixel format (vnc-rfb-client normalizes to RGBA)
+            this.pixelFormat = {
+              bitsPerPixel: 32,
+              depth: 24,
+              bigEndianFlag: false,
+              trueColorFlag: true,
+              redMax: 255,
+              greenMax: 255,
+              blueMax: 255,
+              redShift: 0,
+              greenShift: 8,
+              blueShift: 16,
+            };
+
+            // Check if framebuffer has content
+            const firstNonZero = fb.findIndex(b => b !== 0);
+            const hasContent = firstNonZero >= 0;
+            console.log(`${tag} firstFrameUpdate: ${this.width}x${this.height}, fbSize=${fb.length}, hasContent=${hasContent}${hasContent ? ` (first non-zero at byte ${firstNonZero})` : ''}`);
+
+            // Set FPS for updates
+            this.client!.changeFps(5);
+
+            this.emit('connect');
+
+            resolve({
+              connected: true,
+              host: this.config.host,
+              port: this.config.port,
+              width: this.width,
+              height: this.height,
+              pixelFormat: this.pixelFormat,
+              serverName: this.serverName,
+            });
+          }
+        });
+
+        this.client.on('frameUpdated', () => {
+          // Frame updated, can capture new screenshot
+        });
+
+        this.client.on('disconnect', () => {
+          console.log(`${tag} disconnect event`);
           this.connected = false;
           this.emit('disconnect');
         });
 
-        this.client.on('clipboard', (text: string) => {
+        this.client.on('connectTimeout', () => {
+          if (!settled) {
+            settled = true;
+            clearTimeout(timeoutId);
+            console.error(`${tag} connectTimeout event`);
+            reject(new Error('VNC connection timeout'));
+          }
+        });
+
+        this.client.on('connectError', (error: Error) => {
+          if (!settled) {
+            settled = true;
+            clearTimeout(timeoutId);
+            console.error(`${tag} connectError event: ${error.message}`);
+            reject(error);
+          }
+        });
+
+        this.client.on('cutText', (text: string) => {
           this.emit('clipboard', text);
         });
+
+        // Connect
+        console.log(`${tag} connect: Connecting to ${this.config.host}:${this.config.port}...`);
+        this.client.connect({
+          host: this.config.host,
+          port: this.config.port,
+          password: this.config.password || '',
+          set8BitColor: false,
+        });
+
       }).catch((error) => {
-        clearTimeout(timeoutId);
-        reject(new Error(`Failed to load rfb2: ${error.message}`));
+        if (!settled) {
+          settled = true;
+          clearTimeout(timeoutId);
+          console.error(`${tag} connect: Failed to load vnc-rfb-client: ${error.message}`);
+          reject(new Error(`Failed to load vnc-rfb-client: ${error.message}`));
+        }
       });
     });
   }
 
   /**
-   * Handle incoming rectangle update
+   * Fast hash of framebuffer for change detection.
+   * Samples every Nth pixel for speed.
    */
-  private handleRect(rect: RfbRect): void {
-    if (!this.frameBuffer || !rect.data) return;
-
-    // Copy rect data into frame buffer
-    // rect.data is in the server's pixel format, need to convert to RGBA
-    const bytesPerPixel = this.pixelFormat?.bitsPerPixel ? this.pixelFormat.bitsPerPixel / 8 : 4;
-
-    for (let y = 0; y < rect.height; y++) {
-      for (let x = 0; x < rect.width; x++) {
-        const srcOffset = (y * rect.width + x) * bytesPerPixel;
-        const dstOffset = ((rect.y + y) * this.width + (rect.x + x)) * 4;
-
-        if (dstOffset + 3 < this.frameBuffer.length && srcOffset + bytesPerPixel <= rect.data.length) {
-          // Convert pixel format to RGBA
-          if (bytesPerPixel === 4) {
-            // Assume BGRA or RGBA
-            if (this.pixelFormat?.blueShift === 0) {
-              // BGRA
-              this.frameBuffer[dstOffset + 0] = rect.data[srcOffset + 2]; // R
-              this.frameBuffer[dstOffset + 1] = rect.data[srcOffset + 1]; // G
-              this.frameBuffer[dstOffset + 2] = rect.data[srcOffset + 0]; // B
-              this.frameBuffer[dstOffset + 3] = 255; // A
-            } else {
-              // RGBA
-              this.frameBuffer[dstOffset + 0] = rect.data[srcOffset + 0];
-              this.frameBuffer[dstOffset + 1] = rect.data[srcOffset + 1];
-              this.frameBuffer[dstOffset + 2] = rect.data[srcOffset + 2];
-              this.frameBuffer[dstOffset + 3] = 255;
-            }
-          } else if (bytesPerPixel === 3) {
-            // RGB
-            this.frameBuffer[dstOffset + 0] = rect.data[srcOffset + 0];
-            this.frameBuffer[dstOffset + 1] = rect.data[srcOffset + 1];
-            this.frameBuffer[dstOffset + 2] = rect.data[srcOffset + 2];
-            this.frameBuffer[dstOffset + 3] = 255;
-          }
-        }
-      }
+  private computeFrameHash(fb: Buffer): number {
+    // Sample every 1000th byte for a quick hash
+    let hash = 0;
+    const step = 1000;
+    for (let i = 0; i < fb.length; i += step) {
+      hash = ((hash << 5) - hash + fb[i]) | 0;
     }
-
-    this.frameBufferDirty = true;
-    this.pendingFrameRequest = false;
+    return hash;
   }
 
   /**
-   * Request full frame update from server
+   * Capture screenshot as base64 JPEG (fast) or PNG.
+   * Includes change detection - returns cached screenshot if frame unchanged.
+   *
+   * @param format - 'jpeg' (default, fast) or 'png' (lossless)
+   * @param quality - JPEG quality 1-100 (default: 80)
+   * @param forceCapture - Skip change detection and always encode
+   * @returns Object with screenshot and whether it changed since last capture
    */
-  requestFullFrame(): void {
-    if (!this.client || !this.connected) return;
-    this.pendingFrameRequest = true;
-    this.client.requestUpdate(false, 0, 0, this.width, this.height);
-  }
+  async captureScreenshotWithChangeInfo(options?: {
+    format?: 'jpeg' | 'png';
+    quality?: number;
+    forceCapture?: boolean;
+  }): Promise<{ screenshot: string; changed: boolean; mimeType: string }> {
+    const t0 = Date.now();
+    const tag = '[VNCClient] captureScreenshot:';
+    const format = options?.format || 'jpeg';
+    const quality = options?.quality || 80;
+    const forceCapture = options?.forceCapture || false;
+    const mimeType = format === 'jpeg' ? 'image/jpeg' : 'image/png';
 
-  /**
-   * Request incremental frame update
-   */
-  requestIncrementalFrame(): void {
-    if (!this.client || !this.connected) return;
-    this.client.requestUpdate(true, 0, 0, this.width, this.height);
-  }
-
-  /**
-   * Capture screenshot as base64 PNG
-   */
-  async captureScreenshot(): Promise<string> {
-    if (!this.connected || !this.frameBuffer) {
+    if (!this.connected || !this.client) {
       throw new Error('Not connected to VNC server');
     }
 
-    // Request frame update and wait for it
-    this.requestFullFrame();
-    await this.waitForFrame(2000);
+    // Get framebuffer directly from vnc-rfb-client
+    const fb = this.client.getFb();
+    const t1 = Date.now();
 
-    // Convert frame buffer to PNG
-    const png = new PNG({ width: this.width, height: this.height });
-    this.frameBuffer.copy(png.data);
+    if (!fb || fb.length === 0) {
+      throw new Error('No framebuffer available');
+    }
 
-    const pngBuffer = PNG.sync.write(png);
-    return pngBuffer.toString('base64');
+    // Change detection - compute quick hash and compare
+    const currentHash = this.computeFrameHash(fb);
+    const t2 = Date.now();
+
+    if (!forceCapture && currentHash === this.lastFrameHash && this.lastScreenshot) {
+      this.unchangedFrameCount++;
+      // Only log occasionally to avoid spam
+      if (this.unchangedFrameCount % 10 === 0) {
+        console.log(`${tag} unchanged (${this.unchangedFrameCount} frames), returning cached`);
+      }
+      return { screenshot: this.lastScreenshot, changed: false, mimeType };
+    }
+
+    // Frame changed - reset counter and encode
+    if (this.unchangedFrameCount > 0) {
+      console.log(`${tag} frame changed after ${this.unchangedFrameCount} unchanged frames`);
+    }
+    this.unchangedFrameCount = 0;
+    this.lastFrameHash = currentHash;
+
+    // Use sharp for fast encoding
+    // vnc-rfb-client returns RGBA buffer
+    const t3 = Date.now();
+    let outputBuffer: Buffer;
+
+    if (format === 'jpeg') {
+      outputBuffer = await sharp(fb, {
+        raw: { width: this.width, height: this.height, channels: 4 }
+      })
+        .jpeg({ quality, mozjpeg: true })
+        .toBuffer();
+    } else {
+      outputBuffer = await sharp(fb, {
+        raw: { width: this.width, height: this.height, channels: 4 }
+      })
+        .png({ compressionLevel: 6 })
+        .toBuffer();
+    }
+    const t4 = Date.now();
+
+    const base64 = outputBuffer.toString('base64');
+    const t5 = Date.now();
+
+    // Cache the screenshot
+    this.lastScreenshot = base64;
+
+    console.log(`${tag} ${this.width}x${this.height} ${format.toUpperCase()}, getFb=${t1-t0}ms, hash=${t2-t1}ms, encode=${t4-t3}ms, base64=${t5-t4}ms, total=${t5-t0}ms, size=${(base64.length/1024).toFixed(1)}KB`);
+
+    return { screenshot: base64, changed: true, mimeType };
   }
 
   /**
-   * Wait for frame update
+   * Capture screenshot as base64 JPEG (fast) or PNG.
+   * Includes change detection - returns cached screenshot if frame unchanged.
+   *
+   * @param format - 'jpeg' (default, fast) or 'png' (lossless)
+   * @param quality - JPEG quality 1-100 (default: 80)
+   * @param forceCapture - Skip change detection and always encode
    */
-  private async waitForFrame(timeoutMs = 1000): Promise<void> {
-    const startTime = Date.now();
-    while (this.pendingFrameRequest && Date.now() - startTime < timeoutMs) {
-      await new Promise((resolve) => setTimeout(resolve, 50));
+  async captureScreenshot(options?: {
+    format?: 'jpeg' | 'png';
+    quality?: number;
+    forceCapture?: boolean;
+  }): Promise<string> {
+    const result = await this.captureScreenshotWithChangeInfo(options);
+    return result.screenshot;
+  }
+
+  /**
+   * Legacy PNG capture method (slower, for compatibility)
+   */
+  async captureScreenshotPng(): Promise<string> {
+    const t0 = Date.now();
+    const tag = '[VNCClient] captureScreenshotPng:';
+
+    if (!this.connected || !this.client) {
+      throw new Error('Not connected to VNC server');
     }
+
+    const fb = this.client.getFb();
+
+    if (!fb || fb.length === 0) {
+      throw new Error('No framebuffer available');
+    }
+
+    // vnc-rfb-client returns RGBA buffer, convert to PNG using pngjs
+    const png = new PNG({ width: this.width, height: this.height });
+    fb.copy(png.data, 0, 0, Math.min(fb.length, png.data.length));
+
+    const pngBuffer = PNG.sync.write(png);
+    const base64 = pngBuffer.toString('base64');
+
+    console.log(`${tag} ${this.width}x${this.height}, total=${Date.now()-t0}ms, size=${(base64.length/1024).toFixed(1)}KB`);
+
+    return base64;
   }
 
   /**
@@ -399,11 +563,29 @@ export class VNCClient extends EventEmitter {
   }
 
   /**
+   * Send pointer event using vnc-rfb-client's 8-button interface
+   */
+  private sendPointer(x: number, y: number, buttons: { left?: boolean; middle?: boolean; right?: boolean; scrollUp?: boolean; scrollDown?: boolean } = {}): void {
+    if (!this.client) throw new Error('Not connected');
+
+    this.client.sendPointerEvent(
+      x, y,
+      buttons.left || false,      // button1 (left)
+      buttons.middle || false,    // button2 (middle)
+      buttons.right || false,     // button3 (right)
+      buttons.scrollUp || false,  // button4 (scroll up)
+      buttons.scrollDown || false, // button5 (scroll down)
+      false,                      // button6
+      false,                      // button7
+      false                       // button8
+    );
+  }
+
+  /**
    * Move mouse to coordinates
    */
   async moveMouse(x: number, y: number): Promise<void> {
-    if (!this.client) throw new Error('Not connected');
-    this.client.pointerEvent(x, y, 0);
+    this.sendPointer(x, y);
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
 
@@ -411,16 +593,16 @@ export class VNCClient extends EventEmitter {
    * Left click at coordinates
    */
   async click(x: number, y: number): Promise<void> {
-    if (!this.client) throw new Error('Not connected');
-
     // Move to position
-    this.client.pointerEvent(x, y, 0);
+    this.sendPointer(x, y);
     await new Promise((resolve) => setTimeout(resolve, 10));
 
-    // Press and release left button
-    this.client.pointerEvent(x, y, MOUSE_BUTTONS.left);
+    // Press left button
+    this.sendPointer(x, y, { left: true });
     await new Promise((resolve) => setTimeout(resolve, 50));
-    this.client.pointerEvent(x, y, 0);
+
+    // Release
+    this.sendPointer(x, y);
   }
 
   /**
@@ -436,28 +618,24 @@ export class VNCClient extends EventEmitter {
    * Right click at coordinates
    */
   async rightClick(x: number, y: number): Promise<void> {
-    if (!this.client) throw new Error('Not connected');
-
-    this.client.pointerEvent(x, y, 0);
+    this.sendPointer(x, y);
     await new Promise((resolve) => setTimeout(resolve, 10));
 
-    this.client.pointerEvent(x, y, MOUSE_BUTTONS.right);
+    this.sendPointer(x, y, { right: true });
     await new Promise((resolve) => setTimeout(resolve, 50));
-    this.client.pointerEvent(x, y, 0);
+    this.sendPointer(x, y);
   }
 
   /**
    * Drag from one point to another
    */
   async drag(startX: number, startY: number, endX: number, endY: number): Promise<void> {
-    if (!this.client) throw new Error('Not connected');
-
     // Move to start
-    this.client.pointerEvent(startX, startY, 0);
+    this.sendPointer(startX, startY);
     await new Promise((resolve) => setTimeout(resolve, 10));
 
     // Press button
-    this.client.pointerEvent(startX, startY, MOUSE_BUTTONS.left);
+    this.sendPointer(startX, startY, { left: true });
     await new Promise((resolve) => setTimeout(resolve, 50));
 
     // Move to end (with intermediate steps for smoothness)
@@ -465,12 +643,12 @@ export class VNCClient extends EventEmitter {
     for (let i = 1; i <= steps; i++) {
       const x = startX + ((endX - startX) * i) / steps;
       const y = startY + ((endY - startY) * i) / steps;
-      this.client.pointerEvent(Math.round(x), Math.round(y), MOUSE_BUTTONS.left);
+      this.sendPointer(Math.round(x), Math.round(y), { left: true });
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
 
     // Release button
-    this.client.pointerEvent(endX, endY, 0);
+    this.sendPointer(endX, endY);
   }
 
   /**
@@ -482,23 +660,21 @@ export class VNCClient extends EventEmitter {
     x?: number,
     y?: number
   ): Promise<void> {
-    if (!this.client) throw new Error('Not connected');
-
     // Default to center of screen
     const scrollX = x ?? Math.round(this.width / 2);
     const scrollY = y ?? Math.round(this.height / 2);
 
     // Move to position
-    this.client.pointerEvent(scrollX, scrollY, 0);
+    this.sendPointer(scrollX, scrollY);
     await new Promise((resolve) => setTimeout(resolve, 10));
 
-    // VNC scroll is done via button 4 (up) and button 5 (down)
-    const buttonMask = direction === 'up' ? MOUSE_BUTTONS.scrollUp : MOUSE_BUTTONS.scrollDown;
+    const isUp = direction === 'up';
+    const isDown = direction === 'down';
 
     for (let i = 0; i < clicks; i++) {
-      this.client.pointerEvent(scrollX, scrollY, buttonMask);
+      this.sendPointer(scrollX, scrollY, { scrollUp: isUp, scrollDown: isDown });
       await new Promise((resolve) => setTimeout(resolve, 50));
-      this.client.pointerEvent(scrollX, scrollY, 0);
+      this.sendPointer(scrollX, scrollY);
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
   }
@@ -514,17 +690,17 @@ export class VNCClient extends EventEmitter {
       const needsShift = this.needsShift(char);
 
       if (needsShift) {
-        this.client.keyEvent(KEY_CODES.shift, true);
+        this.client.sendKeyEvent(KEY_CODES.shift, true);
         await new Promise((resolve) => setTimeout(resolve, 10));
       }
 
-      this.client.keyEvent(keySym, true);
+      this.client.sendKeyEvent(keySym, true);
       await new Promise((resolve) => setTimeout(resolve, 20));
-      this.client.keyEvent(keySym, false);
+      this.client.sendKeyEvent(keySym, false);
 
       if (needsShift) {
         await new Promise((resolve) => setTimeout(resolve, 10));
-        this.client.keyEvent(KEY_CODES.shift, false);
+        this.client.sendKeyEvent(KEY_CODES.shift, false);
       }
 
       await new Promise((resolve) => setTimeout(resolve, 30));
@@ -538,9 +714,9 @@ export class VNCClient extends EventEmitter {
     if (!this.client) throw new Error('Not connected');
 
     const keySym = this.keyToKeySym(key);
-    this.client.keyEvent(keySym, true);
+    this.client.sendKeyEvent(keySym, true);
     await new Promise((resolve) => setTimeout(resolve, 50));
-    this.client.keyEvent(keySym, false);
+    this.client.sendKeyEvent(keySym, false);
   }
 
   /**
@@ -552,14 +728,14 @@ export class VNCClient extends EventEmitter {
     // Press all keys down
     for (const key of keys) {
       const keySym = this.keyToKeySym(key);
-      this.client.keyEvent(keySym, true);
+      this.client.sendKeyEvent(keySym, true);
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
 
     // Release all keys in reverse order
-    for (const key of keys.reverse()) {
+    for (const key of [...keys].reverse()) {
       const keySym = this.keyToKeySym(key);
-      this.client.keyEvent(keySym, false);
+      this.client.sendKeyEvent(keySym, false);
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
   }
@@ -572,10 +748,6 @@ export class VNCClient extends EventEmitter {
 
     // ASCII printable characters
     if (code >= 0x20 && code <= 0x7e) {
-      // For uppercase and symbols that need shift, return the base keysym
-      if (char >= 'A' && char <= 'Z') {
-        return code; // Keep uppercase
-      }
       return code;
     }
 
@@ -633,7 +805,7 @@ export class VNCClient extends EventEmitter {
       port: this.config.port,
       width: this.width,
       height: this.height,
-      pixelFormat: this.pixelFormat || undefined,
+      pixelFormat: this.pixelFormat ?? undefined,
       serverName: this.serverName,
     };
   }
@@ -657,10 +829,10 @@ export class VNCClient extends EventEmitter {
    */
   disconnect(): void {
     if (this.client) {
-      this.client.end();
+      this.client.disconnect();
       this.client = null;
     }
     this.connected = false;
-    this.frameBuffer = null;
+    this.hasFirstFrame = false;
   }
 }

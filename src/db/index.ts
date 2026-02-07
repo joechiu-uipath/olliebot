@@ -111,6 +111,7 @@ export interface MessageRepository {
   findByConversationIdPaginated(conversationId: string, options?: MessageQueryOptions): PaginatedResult<Message>;
   countByConversationId(conversationId: string): number;
   create(message: Message): void;
+  deleteByConversationId(conversationId: string): number;
 }
 
 export interface TaskRepository {
@@ -511,6 +512,14 @@ class Database {
         };
         alasql('INSERT INTO messages VALUES ?', [row]);
         this.scheduleSave();
+      },
+
+      deleteByConversationId: (conversationId: string): number => {
+        const countResult = alasql('SELECT COUNT(*) as cnt FROM messages WHERE conversationId = ?', [conversationId]) as Array<{ cnt: number }>;
+        const count = countResult[0]?.cnt ?? 0;
+        alasql('DELETE FROM messages WHERE conversationId = ?', [conversationId]);
+        this.scheduleSave();
+        return count;
       },
     };
   }

@@ -482,6 +482,21 @@ export function createMessageHandler(deps) {
     });
     setSelectedDesktopSessionId((prev) => prev === data.sessionId ? null : prev);
     setDesktopClickMarkers((prev) => prev.filter((m) => m.sessionId !== data.sessionId));
+    // If the session was closed while the create tool was still running,
+    // unlock the chat input so the user isn't stuck waiting for the LLM
+    // to finish commenting on the abort. The LLM response (if any) will
+    // still arrive and update messages in the background.
+    setIsResponsePending(false);
+    setMessages((prev) =>
+      prev.map((m) => {
+        if (m.isStreaming) return { ...m, isStreaming: false };
+        // Mark any running desktop_session tool calls as cancelled
+        if (m.role === 'tool' && m.toolName === 'desktop_session' && m.status === 'running') {
+          return { ...m, status: 'failed', error: 'Session closed' };
+        }
+        return m;
+      })
+    );
   }
 
   function handleDesktopScreenshot(data) {

@@ -21,7 +21,24 @@ import type {
 } from './types';
 
 // Import Computer Use providers (reuse from browser module)
-import type { IComputerUseProvider, ComputerUseResponse } from '../browser/strategies/computer-use/providers/types';
+import type { IComputerUseProvider, ComputerUseResponse, ComputerUseHistoryItem } from '../browser/strategies/computer-use/providers/types';
+
+/**
+ * Race a promise against an AbortSignal.
+ * Rejects immediately if the signal fires before the promise settles.
+ */
+function raceAbort<T>(signal: AbortSignal | undefined, promise: Promise<T>): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted) return Promise.reject(new Error('Session creation aborted'));
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(new Error('Session creation aborted'));
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(
+      (val) => { signal.removeEventListener('abort', onAbort); resolve(val); },
+      (err) => { signal.removeEventListener('abort', onAbort); reject(err); },
+    );
+  });
+}
 
 export interface DesktopSessionEvents {
   'status-changed': (status: DesktopSessionStatus, error?: string) => void;
@@ -51,7 +68,7 @@ export class DesktopSessionInstance extends EventEmitter {
 
   // Computer Use provider (reused from browser module)
   private cuProvider: IComputerUseProvider | null = null;
-  private conversationHistory: Array<{ role: string; content: unknown }> = [];
+  private conversationHistory: ComputerUseHistoryItem[] = [];
 
   constructor(config: DesktopSessionConfig, sandbox: SandboxInfo) {
     super();
@@ -65,39 +82,63 @@ export class DesktopSessionInstance extends EventEmitter {
   /**
    * Initialize the session by connecting to VNC
    */
-  async initialize(vncConfig: VNCConfig): Promise<void> {
+  async initialize(vncConfig: VNCConfig, signal?: AbortSignal): Promise<void> {
+    const tag = `[Desktop] [${this.id.slice(0, 8)}]`;
     this.setStatus('starting');
 
+    // Helper: throw if the session was aborted (closed while initializing)
+    const checkAborted = () => {
+      if (signal?.aborted) throw new Error('Session creation aborted');
+    };
+
     try {
+      checkAborted();
+      console.log(`${tag} initialize: Creating VNC client for ${vncConfig.host}:${vncConfig.port}`);
       this.vncClient = new VNCClient(vncConfig);
 
       // Set up VNC event handlers
       this.vncClient.on('error', (error: Error) => {
+        console.error(`${tag} VNC error event: ${error.message}`);
         this.setStatus('error', error.message);
         this.emit('error', error);
       });
 
       this.vncClient.on('disconnect', () => {
+        console.warn(`${tag} VNC disconnect event (status was: ${this.status})`);
         if (this.status !== 'closed') {
           this.setStatus('error', 'VNC connection lost');
         }
       });
 
-      // Connect to VNC server
-      await this.vncClient.connect();
+      // Connect to VNC server (rfb2 handshake + auth).
+      // Race against the abort signal so closeSession() can cancel immediately.
+      console.log(`${tag} initialize: Starting rfb2 connect (timeout: ${vncConfig.connectTimeout ?? 10000}ms)...`);
+      const t0 = Date.now();
+
+      const connInfo = await raceAbort(signal, this.vncClient.connect());
+      console.log(`${tag} initialize: rfb2 connected in ${Date.now() - t0}ms — screen ${connInfo.width}x${connInfo.height}, server: ${connInfo.serverName}`);
+
+      checkAborted();
 
       // Start periodic screenshots if configured
       const interval = this.config.screenshotInterval ?? 1000;
       if (interval > 0) {
+        console.log(`${tag} initialize: Starting periodic screenshots every ${interval}ms`);
         this.startPeriodicScreenshots(interval);
       }
 
       // Capture initial screenshot
-      await this.captureScreenshot();
+      checkAborted();
+      console.log(`${tag} initialize: Capturing initial screenshot...`);
+      const t1 = Date.now();
+      await raceAbort(signal, this.captureScreenshot());
+      console.log(`${tag} initialize: Initial screenshot captured in ${Date.now() - t1}ms`);
 
       this.setStatus('active');
+      console.log(`${tag} initialize: Session is now active`);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      console.error(`${tag} initialize: FAILED — ${message}`);
       this.setStatus('error', message);
       throw error;
     }
@@ -129,17 +170,23 @@ export class DesktopSessionInstance extends EventEmitter {
   }
 
   /**
-   * Capture screenshot
+   * Capture screenshot.
+   * Only emits 'screenshot' event if the frame has actually changed.
    */
   async captureScreenshot(): Promise<string> {
     if (!this.vncClient?.isConnected()) {
       throw new Error('VNC not connected');
     }
 
-    const screenshot = await this.vncClient.captureScreenshot();
+    const { screenshot, changed } = await this.vncClient.captureScreenshotWithChangeInfo();
     this.lastScreenshot = screenshot;
     this.lastScreenshotAt = new Date();
-    this.emit('screenshot', screenshot);
+
+    // Only emit/broadcast if the frame actually changed
+    if (changed) {
+      this.emit('screenshot', screenshot);
+    }
+
     return screenshot;
   }
 
@@ -172,10 +219,11 @@ export class DesktopSessionInstance extends EventEmitter {
         this.emitClickMarker(action.x, action.y, action.type as 'click' | 'double_click' | 'right_click');
       }
 
-      // Update last screenshot
+      // Update last screenshot - always emit after action (action results need to be shown)
       if (result.screenshot) {
         this.lastScreenshot = result.screenshot;
         this.lastScreenshotAt = new Date();
+        // For actions, always emit the screenshot since the user needs to see the result
         this.emit('screenshot', result.screenshot);
       }
 
@@ -255,23 +303,51 @@ export class DesktopSessionInstance extends EventEmitter {
     let lastResponseId = context?.previousResponseId;
     let lastCallId = context?.previousCallId;
 
+    const tag = `[Desktop CU] [${this.id.slice(0, 8)}]`;
+    console.log(`${tag} ========== Starting instruction ==========`);
+    console.log(`${tag} Instruction: "${instruction}"`);
+    console.log(`${tag} Max steps: ${maxSteps}`);
+
     try {
       while (stepCount < maxSteps) {
         stepCount++;
+        console.log(`${tag} ---------- Step ${stepCount}/${maxSteps} ----------`);
 
         // Capture current screenshot
         const screenshot = await this.captureScreenshot();
         const screenSize = this.vncClient.getScreenSize();
+        console.log(`${tag} Screenshot captured: ${screenSize.width}x${screenSize.height}`);
 
         // Get action from Computer Use provider
+        console.log(`${tag} Requesting action from model...`);
+        const t0 = Date.now();
         const cuResponse: ComputerUseResponse = await this.cuProvider.getAction({
           screenshot,
+          screenshotMimeType: 'image/jpeg',
           instruction,
           screenSize,
           history: this.conversationHistory,
           previousResponseId: lastResponseId,
           previousCallId: lastCallId,
         });
+        const modelTime = Date.now() - t0;
+
+        // Log detailed response
+        console.log(`${tag} Model response (${modelTime}ms):`);
+        console.log(`${tag}   isComplete: ${cuResponse.isComplete}`);
+        console.log(`${tag}   reasoning: ${cuResponse.reasoning || '(none)'}`);
+        console.log(`${tag}   result: ${cuResponse.result || '(none)'}`);
+        if (cuResponse.action) {
+          console.log(`${tag}   action: ${JSON.stringify(cuResponse.action)}`);
+        } else {
+          console.log(`${tag}   action: (none)`);
+        }
+        if (cuResponse.responseId) {
+          console.log(`${tag}   responseId: ${cuResponse.responseId}`);
+        }
+        if (cuResponse.callId) {
+          console.log(`${tag}   callId: ${cuResponse.callId}`);
+        }
 
         // Update conversation tracking
         lastResponseId = cuResponse.responseId;
@@ -279,6 +355,9 @@ export class DesktopSessionInstance extends EventEmitter {
 
         // Check if complete
         if (cuResponse.isComplete) {
+          console.log(`${tag} ========== Instruction complete ==========`);
+          console.log(`${tag} Final result: ${cuResponse.result || '(none)'}`);
+          console.log(`${tag} Total steps: ${stepCount}`);
           this.actionLock = false;
           this.setStatus('active');
 
@@ -294,13 +373,18 @@ export class DesktopSessionInstance extends EventEmitter {
         // Execute the action
         if (cuResponse.action) {
           const desktopAction = this.convertToDesktopAction(cuResponse.action);
+          console.log(`${tag} Executing action: ${desktopAction.type}`, desktopAction);
           const result = await this.executeAction(desktopAction);
           executedActions.push(desktopAction);
 
           if (!result.success) {
-            console.warn(`Action failed: ${result.error}`);
+            console.warn(`${tag} Action failed: ${result.error}`);
             // Continue anyway - the model will see the result in the next screenshot
+          } else {
+            console.log(`${tag} Action succeeded (${result.duration}ms)`);
           }
+        } else {
+          console.warn(`${tag} Model returned no action and isComplete=false - this is unexpected`);
         }
 
         // Brief pause between actions
@@ -432,6 +516,20 @@ export class DesktopSessionInstance extends EventEmitter {
    */
   updateSandbox(info: Partial<SandboxInfo>): void {
     this.sandbox = { ...this.sandbox, ...info };
+  }
+
+  /**
+   * Reset internal state after a failed initialize() so it can be retried.
+   * Tears down any partially-connected VNC client and stops periodic screenshots.
+   */
+  async resetForRetry(): Promise<void> {
+    this.stopPeriodicScreenshots();
+    if (this.vncClient) {
+      try { this.vncClient.disconnect(); } catch { /* ignore */ }
+      this.vncClient = null;
+    }
+    this.status = 'provisioning';
+    this.error = null;
   }
 
   /**

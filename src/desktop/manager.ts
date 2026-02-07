@@ -53,6 +53,20 @@ const execAsync = promisify(exec);
 const fsPromises = fs.promises;
 
 /**
+ * Path where the host temp folder is mapped inside Windows Sandbox.
+ * Must be under the sandbox user profile — root-level paths like C:\OllieBot
+ * are not reliably created by MappedFolders on all Windows builds.
+ */
+const SANDBOX_MAPPED_DIR = 'C:\\Users\\WDAGUtilityAccount\\Desktop\\OllieBot';
+
+/**
+ * Parent folder for all desktop session temp directories.
+ * Structure: %TEMP%\olliebot-desktop\{sessionId}\
+ * This makes it easy to enumerate all sessions and find existing connections.
+ */
+const DESKTOP_SESSIONS_PARENT = 'olliebot-desktop';
+
+/**
  * Interface for WebChannel-like broadcast capability.
  */
 export interface IBroadcaster {
@@ -73,10 +87,10 @@ export interface DesktopSessionManagerConfig {
 /**
  * Default configuration values
  */
-const DEFAULT_CONFIG: Required<Pick<DesktopSessionManagerConfig, 'defaultSandbox' | 'defaultVnc'>> = {
+const DEFAULT_CONFIG = {
   defaultSandbox: {
-    type: 'windows-sandbox',
-    platform: 'windows',
+    type: 'windows-sandbox' as const,
+    platform: 'windows' as const,
     memory: 4096,
     cpus: 2,
     enableGpu: true,
@@ -111,6 +125,299 @@ export class DesktopSessionManager {
   }
 
   // ===========================================================================
+  // Sandbox Detection
+  // ===========================================================================
+
+  /**
+   * Checks if Windows Sandbox is currently running.
+   */
+  private async isWindowsSandboxRunning(): Promise<boolean> {
+    if (os.platform() !== 'win32') return false;
+
+    try {
+      const { stdout } = await execAsync(
+        'powershell -NoProfile -Command "Get-Process WindowsSandbox -ErrorAction SilentlyContinue | Select-Object -First 1"'
+      );
+      return stdout.trim().length > 0;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Finds an existing temp directory with a valid connection.json.
+   * Returns the temp dir path and the sandbox IP, or null if not found.
+   *
+   * Structure: %TEMP%\olliebot-desktop\{sessionId}\connection.json
+   */
+  private async findExistingSandboxConnection(): Promise<{ tempDir: string; ip: string; port: number; sessionId: string } | null> {
+    try {
+      // Resolve tmpdir to long path (os.tmpdir() returns 8.3 short names)
+      const longTmpDir = fs.realpathSync.native(os.tmpdir());
+      const parentDir = path.join(longTmpDir, DESKTOP_SESSIONS_PARENT);
+
+      // Check if parent folder exists
+      try {
+        const stat = await fsPromises.stat(parentDir);
+        if (!stat.isDirectory()) return null;
+      } catch {
+        // Parent folder doesn't exist yet
+        return null;
+      }
+
+      // Enumerate session subdirectories
+      const sessionDirs = await fsPromises.readdir(parentDir);
+
+      for (const sessionId of sessionDirs) {
+        const tempDir = path.join(parentDir, sessionId);
+        const connectionFile = path.join(tempDir, 'connection.json');
+
+        try {
+          const stat = await fsPromises.stat(tempDir);
+          if (!stat.isDirectory()) continue;
+
+          const raw = await fsPromises.readFile(connectionFile, 'utf-8');
+          const content = raw.replace(/^\uFEFF/, ''); // Strip BOM
+          const data = JSON.parse(content);
+
+          if (data.ip && typeof data.ip === 'string') {
+            console.log(`[Desktop] Found existing connection.json in ${DESKTOP_SESSIONS_PARENT}/${sessionId}: ip=${data.ip}, port=${data.port || 5900}`);
+            return {
+              tempDir,
+              ip: data.ip,
+              port: data.port || 5900,
+              sessionId,
+            };
+          }
+        } catch {
+          // This directory doesn't have a valid connection.json, continue
+        }
+      }
+    } catch (err) {
+      console.warn(`[Desktop] Error searching for existing sandbox connection: ${err}`);
+    }
+
+    return null;
+  }
+
+  /**
+   * Lists all session directories in the olliebot-desktop parent folder.
+   * Useful for debugging and understanding what sessions exist on disk.
+   */
+  async listSessionDirectories(): Promise<Array<{ sessionId: string; hasConnection: boolean; ip?: string; port?: number }>> {
+    const results: Array<{ sessionId: string; hasConnection: boolean; ip?: string; port?: number }> = [];
+
+    try {
+      const longTmpDir = fs.realpathSync.native(os.tmpdir());
+      const parentDir = path.join(longTmpDir, DESKTOP_SESSIONS_PARENT);
+
+      try {
+        const stat = await fsPromises.stat(parentDir);
+        if (!stat.isDirectory()) return results;
+      } catch {
+        return results; // Parent doesn't exist
+      }
+
+      const sessionDirs = await fsPromises.readdir(parentDir);
+
+      for (const sessionId of sessionDirs) {
+        const tempDir = path.join(parentDir, sessionId);
+        const connectionFile = path.join(tempDir, 'connection.json');
+
+        try {
+          const stat = await fsPromises.stat(tempDir);
+          if (!stat.isDirectory()) continue;
+
+          try {
+            const raw = await fsPromises.readFile(connectionFile, 'utf-8');
+            const content = raw.replace(/^\uFEFF/, '');
+            const data = JSON.parse(content);
+            results.push({
+              sessionId,
+              hasConnection: true,
+              ip: data.ip,
+              port: data.port || 5900,
+            });
+          } catch {
+            results.push({ sessionId, hasConnection: false });
+          }
+        } catch {
+          // Not a directory, skip
+        }
+      }
+    } catch (err) {
+      console.warn(`[Desktop] Error listing session directories: ${err}`);
+    }
+
+    return results;
+  }
+
+  /**
+   * Finds an alive VNC server by probing all known session connections.
+   * Returns the first server that responds on its VNC port.
+   */
+  private async findAliveVNCServer(): Promise<{ ip: string; port: number; sessionId: string } | null> {
+    const sessions = await this.listSessionDirectories();
+
+    if (sessions.length === 0) {
+      console.log('[Desktop] No session directories found');
+      return null;
+    }
+
+    console.log(`[Desktop] Found ${sessions.length} session directories, probing VNC ports...`);
+
+    const net = await import('net');
+
+    for (const session of sessions) {
+      if (!session.hasConnection || !session.ip) continue;
+
+      const { ip, port, sessionId } = session;
+      console.log(`[Desktop] Probing VNC at ${ip}:${port} (session: ${sessionId})...`);
+
+      try {
+        // Quick TCP probe with 3 second timeout
+        await new Promise<void>((resolve, reject) => {
+          const socket = net.createConnection(port!, ip);
+          socket.setTimeout(3000);
+
+          socket.on('connect', () => {
+            socket.end();
+            resolve();
+          });
+
+          socket.on('error', (err) => {
+            socket.destroy();
+            reject(err);
+          });
+
+          socket.on('timeout', () => {
+            socket.destroy();
+            reject(new Error('timeout'));
+          });
+        });
+
+        console.log(`[Desktop] VNC server alive at ${ip}:${port}`);
+        return { ip, port: port!, sessionId };
+      } catch (err) {
+        const code = (err as NodeJS.ErrnoException).code || (err instanceof Error ? err.message : 'unknown');
+        console.log(`[Desktop] VNC at ${ip}:${port} not responding: ${code}`);
+      }
+    }
+
+    // No session folders have alive VNC, try ARP table as fallback
+    console.log('[Desktop] No alive VNC in session folders, scanning Hyper-V network...');
+    return await this.scanHyperVNetworkForVNC();
+  }
+
+  /**
+   * Scans the Hyper-V network (172.x.x.x) for VNC servers as a fallback.
+   * This handles cases where the sandbox was started manually or session folders were cleaned up.
+   */
+  private async scanHyperVNetworkForVNC(): Promise<{ ip: string; port: number; sessionId: string } | null> {
+    if (os.platform() !== 'win32') return null;
+
+    try {
+      // Get ARP table entries for 172.x.x.x (Hyper-V range)
+      const { stdout } = await execAsync('arp -a');
+      const lines = stdout.split('\n');
+      const hyperVIPs: string[] = [];
+
+      for (const line of lines) {
+        const match = line.match(/\b(172\.\d+\.\d+\.\d+)\b/);
+        if (match) {
+          hyperVIPs.push(match[1]);
+        }
+      }
+
+      if (hyperVIPs.length === 0) {
+        console.log('[Desktop] No Hyper-V IPs found in ARP table');
+        return null;
+      }
+
+      console.log(`[Desktop] Found ${hyperVIPs.length} Hyper-V IPs, probing port 5900...`);
+
+      const net = await import('net');
+
+      for (const ip of hyperVIPs) {
+        try {
+          await new Promise<void>((resolve, reject) => {
+            const socket = net.createConnection(5900, ip);
+            socket.setTimeout(2000);
+
+            socket.on('connect', () => {
+              socket.end();
+              resolve();
+            });
+
+            socket.on('error', reject);
+            socket.on('timeout', () => reject(new Error('timeout')));
+          });
+
+          console.log(`[Desktop] Found VNC server at ${ip}:5900`);
+          return { ip, port: 5900, sessionId: 'discovered' };
+        } catch {
+          // Not a VNC server, continue
+        }
+      }
+    } catch (err) {
+      console.warn(`[Desktop] ARP scan failed: ${err}`);
+    }
+
+    return null;
+  }
+
+  /**
+   * Stops all running Windows Sandbox instances.
+   */
+  private async stopAllWindowsSandboxes(): Promise<void> {
+    console.log('[Desktop] Stopping all Windows Sandbox instances...');
+    for (const img of ['WindowsSandbox.exe', 'WindowsSandboxClient.exe']) {
+      try {
+        await execAsync(`taskkill /IM ${img} /F`);
+      } catch {
+        // Process wasn't running — that's fine
+      }
+    }
+    // Wait a moment for processes to fully terminate
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+  }
+
+  /**
+   * Launches sandbox and discovers its IP address.
+   * This is the "fresh launch" path when no sandbox is running.
+   */
+  private async launchAndDiscoverSandbox(
+    session: DesktopSessionInstance,
+    sandboxConfig: SandboxConfig,
+    vncConfig: VNCConfig,
+    abortController: AbortController,
+    t0: number
+  ): Promise<void> {
+    const tag = `[Desktop] [${session.id.slice(0, 8)}]`;
+
+    // Launch sandbox
+    await this.launchSandbox(session.id, sandboxConfig, abortController.signal);
+    console.log(`${tag} Step 1/4: Sandbox launched (${Date.now() - t0}ms)`);
+
+    // Check if aborted during sandbox launch
+    if (abortController.signal.aborted) {
+      throw new Error('Session creation aborted');
+    }
+
+    // Update sandbox status
+    session.updateSandbox({ status: 'running', startedAt: new Date() });
+    this.broadcast(createSessionUpdatedEvent(session.id, { sandbox: session.getSession().sandbox }));
+
+    // Discover sandbox IP from connection.json written by setup-vnc.ps1.
+    const t1 = Date.now();
+    console.log(`${tag} Step 2/4: Discovering sandbox IP from connection.json...`);
+
+    const sandboxHost = await this.discoverSandboxIP(session.id, 600000, abortController.signal);
+    vncConfig.host = sandboxHost;
+    console.log(`${tag} Step 2/4: Sandbox IP discovered: ${sandboxHost} (${Date.now() - t1}ms)`);
+  }
+
+  // ===========================================================================
   // Session Management
   // ===========================================================================
 
@@ -128,6 +435,106 @@ export class DesktopSessionManager {
     return result;
   }
 
+  /**
+   * Resumes/connects to an existing VNC server without launching a sandbox.
+   * This is faster than createSession when a sandbox is already running.
+   *
+   * If vncHost is not provided, auto-discovers by probing session folders.
+   */
+  async resumeSession(config: {
+    name?: string;
+    vncHost?: string;
+    vncPort?: number;
+    vncPassword?: string;
+    computerUseProvider?: import('./types').ComputerUseProvider;
+  }): Promise<DesktopSession> {
+    const t0 = Date.now();
+    const tag = `[Desktop] [resume]`;
+
+    let vncHost = config.vncHost;
+    let vncPort = config.vncPort || 5900;
+
+    // Auto-discover VNC server if host not provided
+    if (!vncHost) {
+      console.log(`${tag} No vncHost provided, auto-discovering from session folders...`);
+      const aliveServer = await this.findAliveVNCServer();
+      if (!aliveServer) {
+        throw new Error('No alive VNC server found. Ensure Windows Sandbox is running with VNC enabled.');
+      }
+      vncHost = aliveServer.ip;
+      vncPort = aliveServer.port;
+      console.log(`${tag} Auto-discovered VNC server at ${vncHost}:${vncPort}`);
+    }
+
+    // Create VNC config
+    const vncConfig: VNCConfig = {
+      host: vncHost,
+      port: vncPort,
+      password: config.vncPassword || 'olliebot',
+      connectTimeout: 30000,
+    };
+
+    // Create minimal sandbox info (not launching, just tracking)
+    const sandboxInfo: SandboxInfo = {
+      type: 'windows-sandbox',
+      platform: 'windows',
+      status: 'running', // Already running
+      vncPort: vncConfig.port,
+    };
+
+    // Create session config
+    const sessionConfig: DesktopSessionConfig = {
+      name: config.name,
+      sandbox: { type: 'windows-sandbox', platform: 'windows' },
+      vnc: vncConfig,
+      computerUseProvider: config.computerUseProvider,
+    };
+
+    // Create session instance
+    const session = new DesktopSessionInstance(sessionConfig, sandboxInfo);
+
+    // Wire up event handlers
+    this.setupSessionEventHandlers(session);
+
+    // Store session
+    this.sessions.set(session.id, session);
+
+    // Broadcast session created
+    this.broadcast(createSessionCreatedEvent(session.getSession()));
+
+    console.log(`${tag} Connecting to VNC at ${vncConfig.host}:${vncConfig.port}...`);
+
+    try {
+      // Connect to VNC (no sandbox launch, direct connection)
+      await session.initialize(vncConfig);
+      console.log(`${tag} VNC connected (${Date.now() - t0}ms)`);
+
+      // Set up Computer Use provider if configured
+      if (config.computerUseProvider) {
+        const provider = createComputerUseProvider(config.computerUseProvider as ComputerUseProvider);
+        if (provider && provider.isAvailable()) {
+          session.setComputerUseProvider(provider);
+          console.log(`${tag} Computer Use provider set: ${config.computerUseProvider}`);
+        }
+      }
+
+      console.log(`${tag} Session ready! Total time: ${Date.now() - t0}ms`);
+      return session.getSession();
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      console.error(`${tag} Failed to connect: ${errorMessage}`);
+
+      session.updateSandbox({ status: 'error', error: errorMessage });
+      this.broadcast(createSessionUpdatedEvent(session.id, {
+        status: 'error',
+        error: errorMessage,
+        sandbox: session.getSession().sandbox,
+      }));
+
+      throw error;
+    }
+  }
+
   private async _doCreateSession(config: DesktopSessionConfig): Promise<DesktopSession> {
     // Merge with defaults
     const sandboxConfig: SandboxConfig = {
@@ -137,7 +544,8 @@ export class DesktopSessionManager {
     };
 
     const vncConfig: VNCConfig = {
-      ...DEFAULT_CONFIG.defaultVnc,
+      host: DEFAULT_CONFIG.defaultVnc.host,
+      port: DEFAULT_CONFIG.defaultVnc.port,
       ...this.config.defaultVnc,
       ...config.vnc,
     };
@@ -167,39 +575,106 @@ export class DesktopSessionManager {
     this.broadcast(createSessionCreatedEvent(session.getSession()));
 
     try {
-      // Launch sandbox
-      console.log(`[Desktop] Launching sandbox for session ${session.id}...`);
-      await this.launchSandbox(session.id, sandboxConfig, abortController.signal);
+      const t0 = Date.now();
+      const tag = `[Desktop] [${session.id.slice(0, 8)}]`;
+      let sandboxHost: string;
 
-      // Check if aborted during sandbox launch
+      // Check if Windows Sandbox is already running with a valid connection
+      const sandboxRunning = sandboxConfig.type === 'windows-sandbox' && await this.isWindowsSandboxRunning();
+
+      if (sandboxRunning) {
+        console.log(`${tag} Step 1/4: Windows Sandbox is already running, checking for existing connection...`);
+        const existingConnection = await this.findExistingSandboxConnection();
+
+        if (existingConnection) {
+          console.log(`${tag} Step 1/4: Reusing existing sandbox (ip=${existingConnection.ip}, port=${existingConnection.port})`);
+          // Reuse the existing temp directory
+          this.sessionTempDirs.set(session.id, existingConnection.tempDir);
+          sandboxHost = existingConnection.ip;
+          vncConfig.host = sandboxHost;
+          vncConfig.port = existingConnection.port;
+
+          // Update sandbox status
+          session.updateSandbox({ status: 'running', startedAt: new Date() });
+          this.broadcast(createSessionUpdatedEvent(session.id, { sandbox: session.getSession().sandbox }));
+
+          console.log(`${tag} Step 1/4: Skipped sandbox launch — reusing existing (${Date.now() - t0}ms)`);
+        } else {
+          console.log(`${tag} Step 1/4: Sandbox running but no valid connection.json found, launching fresh sandbox...`);
+          // Stop the existing sandbox and launch a new one
+          await this.stopAllWindowsSandboxes();
+          await this.launchAndDiscoverSandbox(session, sandboxConfig, vncConfig, abortController, t0);
+          sandboxHost = vncConfig.host;
+        }
+      } else {
+        // No sandbox running — launch a new one
+        console.log(`${tag} Step 1/4: Launching sandbox...`);
+        await this.launchAndDiscoverSandbox(session, sandboxConfig, vncConfig, abortController, t0);
+        sandboxHost = vncConfig.host;
+      }
+
+      // Check if aborted
       if (abortController.signal.aborted) {
         throw new Error('Session creation aborted');
       }
 
-      // Update sandbox status
-      session.updateSandbox({ status: 'running', startedAt: new Date() });
-      this.broadcast(createSessionUpdatedEvent(session.id, { sandbox: session.getSession().sandbox }));
-
-      // Wait for VNC to become available
-      console.log(`[Desktop] Waiting for VNC server on port ${vncConfig.port}...`);
+      // Wait for VNC port to become reachable on the sandbox IP
+      const tVncProbe = Date.now();
+      console.log(`${tag} Step 2/4: Probing VNC at ${vncConfig.host}:${vncConfig.port}...`);
       await this.waitForVNC(vncConfig.host, vncConfig.port, 60000, abortController.signal);
+      console.log(`${tag} Step 2/4: VNC port is open (${Date.now() - tVncProbe}ms)`);
 
-      // Initialize VNC connection
-      console.log(`[Desktop] Connecting to VNC...`);
-      await session.initialize(vncConfig);
+      // Initialize VNC connection (rfb2 auth + framebuffer).
+      // TightVNC may accept TCP connections before the RFB protocol is ready,
+      // so retry the full rfb2 handshake a few times.
+      const t2 = Date.now();
+      const maxVncRetries = 30;
+      const vncRetryDelayMs = 5000;
+      for (let vncAttempt = 1; ; vncAttempt++) {
+        if (abortController.signal.aborted) throw new Error('Session creation aborted');
+        console.log(`${tag} Step 3/4: VNC client connect attempt ${vncAttempt}/${maxVncRetries} to ${vncConfig.host}:${vncConfig.port}...`);
+        try {
+          await session.initialize(vncConfig, abortController.signal);
+          break; // success
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (abortController.signal.aborted) throw err;
+          if (vncAttempt >= maxVncRetries) {
+            console.error(`${tag} Step 3/4: All ${maxVncRetries} VNC connect attempts failed. Last error: ${msg}`);
+            throw err;
+          }
+          console.warn(`${tag} Step 3/4: VNC connect attempt ${vncAttempt} failed: ${msg}. Retrying in ${vncRetryDelayMs / 1000}s...`);
+          // Reset session state so initialize() can be called again
+          await session.resetForRetry();
+          await new Promise<void>((resolve, reject) => {
+            const onAbort = () => { clearTimeout(timer); reject(new Error('Session creation aborted')); };
+            const timer = setTimeout(() => {
+              abortController.signal.removeEventListener('abort', onAbort);
+              resolve();
+            }, vncRetryDelayMs);
+            abortController.signal.addEventListener('abort', onAbort, { once: true });
+          });
+        }
+      }
+      console.log(`${tag} Step 3/4: VNC client connected (${Date.now() - t2}ms)`);
 
       // Set up Computer Use provider if configured
+      const t3 = Date.now();
+      console.log(`[Desktop] [${session.id.slice(0, 8)}] Step 4/4: Configuring Computer Use provider...`);
       if (config.computerUseProvider) {
         const provider = createComputerUseProvider(config.computerUseProvider as ComputerUseProvider);
         if (provider && provider.isAvailable()) {
           session.setComputerUseProvider(provider);
-          console.log(`[Desktop] Computer Use provider set: ${config.computerUseProvider}`);
+          console.log(`[Desktop] [${session.id.slice(0, 8)}] Computer Use provider set: ${config.computerUseProvider}`);
         } else {
-          console.warn(`[Desktop] Computer Use provider not available: ${config.computerUseProvider}`);
+          console.warn(`[Desktop] [${session.id.slice(0, 8)}] Computer Use provider not available: ${config.computerUseProvider}`);
         }
+      } else {
+        console.log(`[Desktop] [${session.id.slice(0, 8)}] No Computer Use provider requested`);
       }
 
-      console.log(`[Desktop] Session ${session.id} ready`);
+      const totalMs = Date.now() - t0;
+      console.log(`[Desktop] [${session.id.slice(0, 8)}] Session ready! Total setup time: ${totalMs}ms (${(totalMs / 1000).toFixed(1)}s)`);
       return session.getSession();
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
@@ -245,37 +720,69 @@ export class DesktopSessionManager {
    * Closes a session.
    */
   async closeSession(sessionId: string): Promise<void> {
-    console.log(`[Desktop] Closing session ${sessionId}...`);
+    const tag = `[Desktop] [close ${sessionId.slice(0, 8)}]`;
+    console.log(`${tag} closeSession() called`);
 
     // Abort any in-progress provisioning (waitForVNC, sandbox launch wait, etc.)
     const abortController = this.sessionAbortControllers.get(sessionId);
     if (abortController) {
-      console.log(`[Desktop] Aborting in-progress provisioning for session ${sessionId}`);
+      console.log(`${tag} Aborting in-progress provisioning (create tool should unblock now)`);
       abortController.abort();
       this.sessionAbortControllers.delete(sessionId);
+    } else {
+      console.log(`${tag} No abort controller — session was not mid-provisioning`);
     }
 
     const session = this.sessions.get(sessionId);
+    const sessionStatus = session?.getSession().status;
 
     // Close the session (VNC disconnect, etc.) - if it was ever initialized
+    // Use a timeout so a hung VNC connection doesn't block the force-kill below
     if (session) {
+      console.log(`${tag} Closing session instance (status: ${sessionStatus}, VNC disconnect, 5s timeout)...`);
       try {
-        await session.close();
+        await Promise.race([
+          session.close(),
+          new Promise<void>((_, reject) =>
+            setTimeout(() => reject(new Error('Session close timed out')), 5000)
+          ),
+        ]);
+        console.log(`${tag} Session instance closed`);
       } catch (error) {
-        console.warn(`[Desktop] Error closing session instance: ${error}`);
+        console.warn(`${tag} Error closing session instance: ${error}`);
       }
+    } else {
+      console.log(`${tag} No session instance found (may have been removed already)`);
     }
 
-    // Stop the sandbox (kill processes, clean up)
-    await this.stopSandbox(sessionId);
+    // Only kill Windows Sandbox if session was active/busy (actually using the sandbox).
+    // Don't kill sandbox for error/closed sessions - another session might be using it.
+    const shouldKillSandbox = sessionStatus === 'active' || sessionStatus === 'busy';
+    if (shouldKillSandbox) {
+      console.log(`${tag} Stopping sandbox (session was ${sessionStatus})...`);
+      await this.stopSandbox(sessionId);
+    } else {
+      console.log(`${tag} Skipping sandbox kill (session status: ${sessionStatus}) - sandbox may be used by other sessions`);
+      // Still clean up the temp directory for this session
+      const tempDir = this.sessionTempDirs.get(sessionId);
+      if (tempDir) {
+        try {
+          await fsPromises.rm(tempDir, { recursive: true, force: true });
+          console.log(`${tag} Cleaned up temp directory: ${tempDir}`);
+        } catch (error) {
+          console.warn(`${tag} Failed to clean up temp directory: ${error}`);
+        }
+        this.sessionTempDirs.delete(sessionId);
+      }
+    }
 
     // Remove from sessions
     this.sessions.delete(sessionId);
 
-    // Broadcast closed event
+    // Broadcast closed event so the UI knows
     this.broadcast(createSessionClosedEvent(sessionId));
 
-    console.log(`[Desktop] Session ${sessionId} closed`);
+    console.log(`${tag} Session fully closed and cleaned up`);
   }
 
   /**
@@ -396,39 +903,44 @@ export class DesktopSessionManager {
       throw new Error('Windows Sandbox is only available on Windows');
     }
 
-    // Create temp directory for this session
-    const tempDir = path.join(os.tmpdir(), `olliebot-desktop-${sessionId}`);
+    // Resolve tmpdir to long path (os.tmpdir() returns 8.3 short names like JOE~1.CHI
+    // which Windows Sandbox MappedFolders cannot resolve)
+    const longTmpDir = fs.realpathSync.native(os.tmpdir());
+
+    // Create temp directory for this session: %TEMP%\olliebot-desktop\{sessionId}\
+    const parentDir = path.join(longTmpDir, DESKTOP_SESSIONS_PARENT);
+    const tempDir = path.join(parentDir, sessionId);
     await fsPromises.mkdir(tempDir, { recursive: true });
     this.sessionTempDirs.set(sessionId, tempDir);
 
     console.log(`[Desktop] Created temp directory: ${tempDir}`);
 
-    // Copy or generate the VNC setup script
-    const setupScriptPath = path.join(tempDir, 'setup-vnc.ps1');
-    await this.generateVNCSetupScript(setupScriptPath, config);
+    // Copy the VNC setup script from the project sandbox/ directory
+    const sourceScript = path.join(this.sandboxConfigPath, 'setup-vnc.ps1');
+    const destScript = path.join(tempDir, 'setup-vnc.ps1');
 
-    console.log(`[Desktop] Generated setup script: ${setupScriptPath}`);
+    if (fs.existsSync(sourceScript)) {
+      await fsPromises.copyFile(sourceScript, destScript);
+      console.log(`[Desktop] Copied setup script from: ${sourceScript}`);
+    } else {
+      // Fallback: generate a basic VNC setup script if source not found
+      console.warn(`[Desktop] Source script not found at ${sourceScript}, generating inline`);
+      await this.generateVNCSetupScript(destScript, config);
+    }
 
-    // Generate the .wsb config file
+    // Generate the .wsb config file (dynamic — uses the session's tempDir as HostFolder)
     const wsbPath = path.join(tempDir, 'sandbox.wsb');
     await this.generateWindowsSandboxConfig(wsbPath, tempDir, config);
 
     console.log(`[Desktop] Generated sandbox config: ${wsbPath}`);
-
-    // Verify files exist before launching
-    const wsbExists = fs.existsSync(wsbPath);
-    const scriptExists = fs.existsSync(setupScriptPath);
-    console.log(`[Desktop] Config file exists: ${wsbExists}, Setup script exists: ${scriptExists}`);
 
     // Log the .wsb content for debugging
     const wsbContent = await fsPromises.readFile(wsbPath, 'utf-8');
     console.log(`[Desktop] WSB config content:\n${wsbContent}`);
 
     // Launch Windows Sandbox with the .wsb config
-    // Use path.resolve to ensure absolute path with native backslashes
-    const resolvedWsbPath = path.resolve(wsbPath);
-    console.log(`[Desktop] Launching: WindowsSandbox.exe "${resolvedWsbPath}"`);
-    const sandboxProcess = spawn('WindowsSandbox.exe', [resolvedWsbPath], {
+    console.log(`[Desktop] Launching: WindowsSandbox.exe "${wsbPath}"`);
+    const sandboxProcess = spawn('WindowsSandbox.exe', [wsbPath], {
       detached: true,
       stdio: 'ignore',
     });
@@ -465,7 +977,7 @@ export class DesktopSessionManager {
 # Auto-generated for session
 
 $ErrorActionPreference = "Stop"
-$LogFile = "C:\\OllieBot\\setup.log"
+$LogFile = "${SANDBOX_MAPPED_DIR}\\setup.log"
 
 function Write-Log {
     param([string]$Message)
@@ -475,11 +987,11 @@ function Write-Log {
 }
 
 # Create log directory
-New-Item -ItemType Directory -Force -Path "C:\\OllieBot" | Out-Null
+New-Item -ItemType Directory -Force -Path "${SANDBOX_MAPPED_DIR}" | Out-Null
 Write-Log "Starting OllieBot Desktop Sandbox setup..."
 
 # Create working directory
-$WorkDir = "C:\\OllieBot\\temp"
+$WorkDir = "${SANDBOX_MAPPED_DIR}\\temp"
 New-Item -ItemType Directory -Force -Path $WorkDir | Out-Null
 
 # Configure firewall for VNC
@@ -568,7 +1080,7 @@ if ($vncService) {
 }
 
 # Create ready signal file
-$readyFile = "C:\\OllieBot\\ready.json"
+$readyFile = "${SANDBOX_MAPPED_DIR}\\ready.json"
 $readyData = @{
     status = "ready"
     vnc_port = ${vncPort}
@@ -614,7 +1126,7 @@ Write-Log "Password: ${vncPassword}"
   <MappedFolders>
     <MappedFolder>
       <HostFolder>${resolvedHostFolder}</HostFolder>
-      <SandboxFolder>C:\\OllieBot</SandboxFolder>
+      <SandboxFolder>${SANDBOX_MAPPED_DIR}</SandboxFolder>
       <ReadOnly>false</ReadOnly>
     </MappedFolder>
   </MappedFolders>
@@ -630,7 +1142,7 @@ Write-Log "Password: ${vncPassword}"
 
   <!-- Run setup script on logon -->
   <LogonCommand>
-    <Command>powershell.exe -ExecutionPolicy Bypass -File C:\\OllieBot\\setup-vnc.ps1</Command>
+    <Command>powershell.exe -ExecutionPolicy Bypass -File ${SANDBOX_MAPPED_DIR}\\setup-vnc.ps1</Command>
   </LogonCommand>
 </Configuration>
 `;
@@ -710,16 +1222,26 @@ Write-Log "Password: ${vncPassword}"
     try {
       switch (sandboxType) {
         case 'windows-sandbox':
-          // Windows Sandbox - try to close it gracefully
+          // Kill the spawned launcher process
           if (process) {
             try { process.kill(); } catch { /* already dead */ }
           }
-          // Also try to close via taskkill (more reliable)
+          // Force-kill all Windows Sandbox processes (taskkill is the reliable way)
+          for (const img of ['WindowsSandbox.exe', 'WindowsSandboxClient.exe']) {
+            try {
+              const { stdout } = await execAsync(`taskkill /IM ${img} /F`);
+              console.log(`[Desktop] taskkill ${img}: ${stdout.trim()}`);
+            } catch {
+              // Process wasn't running — that's fine
+            }
+          }
+          // Last resort: PowerShell Stop-Process (catches renamed / wrapped processes)
           try {
-            await execAsync('taskkill /IM WindowsSandbox.exe /F').catch(() => {});
-            await execAsync('taskkill /IM WindowsSandboxClient.exe /F').catch(() => {});
+            await execAsync(
+              'powershell -NoProfile -Command "Get-Process WindowsSandbox*,WindowsSandboxClient* -ErrorAction SilentlyContinue | Stop-Process -Force"'
+            );
           } catch {
-            // Ignore - sandbox may already be closed
+            // Ignore
           }
           break;
 
@@ -767,57 +1289,159 @@ Write-Log "Password: ${vncPassword}"
    */
   private async waitForVNC(host: string, port: number, timeoutMs: number, signal?: AbortSignal): Promise<void> {
     const startTime = Date.now();
+    let attempt = 0;
+    const net = await import('net');
+
+    // Helper: abort-aware sleep that doesn't leak listeners
+    const abortableSleep = (ms: number): Promise<void> => {
+      return new Promise<void>((resolve, reject) => {
+        if (signal?.aborted) return reject(new Error('Session creation aborted'));
+        const onAbort = () => { clearTimeout(timer); reject(new Error('Session creation aborted')); };
+        const timer = setTimeout(() => {
+          signal?.removeEventListener('abort', onAbort);
+          resolve();
+        }, ms);
+        signal?.addEventListener('abort', onAbort, { once: true });
+      });
+    };
 
     while (Date.now() - startTime < timeoutMs) {
       if (signal?.aborted) {
         throw new Error('Session creation aborted');
       }
 
+      attempt++;
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+
       try {
         // Try to connect to VNC port
-        const net = await import('net');
         await new Promise<void>((resolve, reject) => {
           const socket = net.createConnection(port, host);
-          socket.setTimeout(2000);
+          socket.setTimeout(3000);
+          let settled = false;
+
+          const settle = (fn: () => void) => {
+            if (!settled) { settled = true; fn(); }
+          };
 
           socket.on('connect', () => {
             socket.end();
-            resolve();
+            settle(() => resolve());
           });
 
-          socket.on('error', reject);
+          socket.on('error', (err) => {
+            socket.destroy();
+            settle(() => reject(err));
+          });
+
           socket.on('timeout', () => {
             socket.destroy();
-            reject(new Error('Timeout'));
+            settle(() => reject(new Error('Socket timeout')));
           });
 
           // Abort the socket if session is being closed
-          signal?.addEventListener('abort', () => {
+          const onAbort = () => {
             socket.destroy();
-            reject(new Error('Session creation aborted'));
-          }, { once: true });
+            settle(() => reject(new Error('Session creation aborted')));
+          };
+          signal?.addEventListener('abort', onAbort, { once: true });
+          // Clean up abort listener once socket settles
+          socket.on('close', () => { signal?.removeEventListener('abort', onAbort); });
         });
 
-        console.log(`[Desktop] VNC server available at ${host}:${port}`);
+        console.log(`[Desktop] VNC server available at ${host}:${port} (attempt ${attempt}, ${elapsed}s elapsed)`);
         return;
       } catch (err) {
         if (signal?.aborted) {
           throw new Error('Session creation aborted');
         }
-        // Not ready yet, wait and retry
-        await new Promise<void>((resolve, reject) => {
-          const timer = setTimeout(resolve, 2000);
-          signal?.addEventListener('abort', () => {
-            clearTimeout(timer);
-            reject(new Error('Session creation aborted'));
-          }, { once: true });
-        }).catch(() => {
+        // Node socket errors have .code (ECONNREFUSED, ETIMEDOUT, etc.) which is often more useful than .message
+        const errCode = (err as NodeJS.ErrnoException).code;
+        const errMsg = errCode || (err instanceof Error ? err.message : String(err)) || 'unknown error';
+        // Log every attempt so progress is visible; use shorter messages after the first few
+        if (attempt <= 5 || attempt % 5 === 0) {
+          console.log(`[Desktop] VNC probe #${attempt} to ${host}:${port} failed: ${errMsg} (${elapsed}s elapsed)`);
+        } else if (attempt === 6) {
+          console.log(`[Desktop] VNC probe #${attempt} failed: ${errMsg} (will log every 5th attempt from now)...`);
+        }
+
+        // Wait before retrying
+        try {
+          await abortableSleep(2000);
+        } catch {
           throw new Error('Session creation aborted');
-        });
+        }
       }
     }
 
-    throw new Error(`VNC server not available after ${timeoutMs}ms`);
+    const totalElapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+    throw new Error(`VNC server not available after ${attempt} attempts (${totalElapsed}s). Check that the sandbox is running and VNC is listening on ${host}:${port}`);
+  }
+
+  /**
+   * Discovers the sandbox's IP address by polling for connection.json
+   * written by setup-vnc.ps1 in the shared mapped folder.
+   *
+   * Windows Sandbox runs behind Hyper-V NAT so localhost won't work.
+   * The setup script inside the sandbox writes its 172.x.x.x IP to this file.
+   */
+  private async discoverSandboxIP(sessionId: string, timeoutMs: number, signal?: AbortSignal): Promise<string> {
+    const tempDir = this.sessionTempDirs.get(sessionId);
+    if (!tempDir) {
+      throw new Error('Session temp directory not found — cannot discover sandbox IP');
+    }
+
+    const connectionFile = path.join(tempDir, 'connection.json');
+    const startTime = Date.now();
+    let attempt = 0;
+
+    while (Date.now() - startTime < timeoutMs) {
+      if (signal?.aborted) {
+        throw new Error('Session creation aborted');
+      }
+
+      attempt++;
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+
+      try {
+        const raw = await fsPromises.readFile(connectionFile, 'utf-8');
+        // PowerShell Out-File -Encoding UTF8 writes a BOM (\uFEFF) that JSON.parse rejects
+        const content = raw.replace(/^\uFEFF/, '');
+        const data = JSON.parse(content);
+
+        if (data.ip) {
+          console.log(`[Desktop] Sandbox IP discovered from connection.json: ${data.ip} (attempt ${attempt}, ${elapsed}s elapsed)`);
+          return data.ip;
+        }
+
+        // File exists but no IP — sandbox script may not have detected it
+        console.warn(`[Desktop] connection.json found but ip is null/empty (attempt ${attempt}, ${elapsed}s). Retrying...`);
+      } catch (err) {
+        // File doesn't exist yet — sandbox is still setting up
+        if (attempt <= 3 || attempt % 10 === 0) {
+          const code = (err as NodeJS.ErrnoException).code;
+          console.log(`[Desktop] Waiting for connection.json (attempt ${attempt}, ${elapsed}s): ${code || err}`);
+        }
+      }
+
+      // Wait before retrying
+      await new Promise<void>((resolve, reject) => {
+        if (signal?.aborted) return reject(new Error('Session creation aborted'));
+        const onAbort = () => { clearTimeout(timer); reject(new Error('Session creation aborted')); };
+        const timer = setTimeout(() => {
+          signal?.removeEventListener('abort', onAbort);
+          resolve();
+        }, 2000);
+        signal?.addEventListener('abort', onAbort, { once: true });
+      }).catch(() => {
+        throw new Error('Session creation aborted');
+      });
+    }
+
+    throw new Error(
+      `Could not discover sandbox IP after ${((Date.now() - startTime) / 1000).toFixed(1)}s. ` +
+      `File not found: ${connectionFile}. Ensure setup-vnc.ps1 writes connection.json.`
+    );
   }
 
   // ===========================================================================
@@ -828,9 +1452,24 @@ Write-Log "Password: ${vncPassword}"
    * Sets up event handlers for a session.
    */
   private setupSessionEventHandlers(session: DesktopSessionInstance): void {
+    // Error handler — MUST be registered to prevent Node.js EventEmitter from
+    // crashing the process on unhandled 'error' events (e.g. rfb2 "write after end").
+    // The error is already logged by session.ts; here we just absorb it so the
+    // retry loop in _doCreateSession can handle it gracefully.
+    session.on('error', (error) => {
+      console.error(`[Desktop] Session ${session.id} error event: ${error.message}`);
+    });
+
     // Status changes
     session.on('status-changed', (status, error) => {
-      this.broadcast(createSessionUpdatedEvent(session.id, { status, error }));
+      // Include viewport when session becomes active (VNC just connected)
+      const updates: Partial<DesktopSession> = { status, error };
+      if (status === 'active') {
+        const sessionState = session.getSession();
+        updates.viewport = sessionState.viewport;
+        updates.vnc = sessionState.vnc;
+      }
+      this.broadcast(createSessionUpdatedEvent(session.id, updates));
     });
 
     // Screenshots

@@ -70,26 +70,40 @@ export class OpenAIComputerUseProvider implements IComputerUseProvider {
   }
 
   async getAction(params: GetActionParams): Promise<ComputerUseResponse> {
+    const tag = `[${this.providerName} CU]`;
+
     if (!this.isAvailable()) {
       throw new Error(`${this.providerName} API not configured`);
     }
 
-    const { screenshot, instruction, screenSize, previousResponseId, previousCallId } = params;
+    const { screenshot, screenshotMimeType, instruction, screenSize, previousResponseId, previousCallId } = params;
+    const mimeType = screenshotMimeType || 'image/jpeg';
 
     // Reset safety checks for new conversations
     if (!previousResponseId) {
       this.pendingSafetyChecks = undefined;
     }
 
+    console.log(`${tag} ========== getAction ==========`);
+    console.log(`${tag} Instruction: "${instruction}"`);
+    console.log(`${tag} Screen size: ${screenSize.width}x${screenSize.height}`);
+    console.log(`${tag} Screenshot: ${mimeType}, ${Math.round(screenshot.length / 1024)}KB base64`);
+    console.log(`${tag} Previous response ID: ${previousResponseId || '(none)'}`);
+    console.log(`${tag} Previous call ID: ${previousCallId || '(none)'}`);
+
     try {
       const requestBody = this.buildRequestBody(
         instruction,
         screenshot,
+        mimeType,
         screenSize,
         previousResponseId,
         previousCallId
       );
 
+      console.log(`${tag} Request: model=${requestBody.model}, type=${previousResponseId ? 'follow-up' : 'initial'}`);
+
+      const t0 = Date.now();
       const response = await fetch(this.endpoint, {
         method: 'POST',
         headers: {
@@ -98,25 +112,55 @@ export class OpenAIComputerUseProvider implements IComputerUseProvider {
         },
         body: JSON.stringify(requestBody),
       });
+      const latency = Date.now() - t0;
 
       if (!response.ok) {
         const errorText = await response.text();
-        console.error(`[${this.providerName} CU] API error:`, response.status, errorText);
+        console.error(`${tag} API error (${latency}ms):`, response.status, errorText);
         throw new Error(`${this.providerName} API error: ${response.status} - ${errorText}`);
       }
 
       const data = await response.json() as ResponsesAPIResponse;
+      console.log(`${tag} Response received (${latency}ms): id=${data.id}`);
+
       if (data.error) {
         const errorMessage = data.error.message || JSON.stringify(data.error);
-        console.error(`[${this.providerName} CU] API error body:`, data.error);
+        console.error(`${tag} API error body:`, data.error);
         throw new Error(`${this.providerName} API error: ${errorMessage}`);
       }
 
-      console.log(`[${this.providerName} CU] ${previousResponseId ? 'follow-up' : 'initial'} request -> response: ${data.id}`);
+      // Log raw output items
+      if (data.output) {
+        console.log(`${tag} Output items (${data.output.length}):`);
+        for (const item of data.output) {
+          console.log(`${tag}   - type: ${item.type}`);
+          if (item.type === 'computer_call') {
+            const cc = item as ComputerCallOutput;
+            console.log(`${tag}     call_id: ${cc.call_id}`);
+            console.log(`${tag}     action: ${JSON.stringify(cc.action)}`);
+            if (cc.pending_safety_checks?.length) {
+              console.log(`${tag}     pending_safety_checks: ${cc.pending_safety_checks.map(sc => sc.id).join(', ')}`);
+            }
+          } else if (item.type === 'message') {
+            const msg = item as MessageOutput;
+            const text = msg.content?.find(c => c.type === 'output_text')?.text;
+            console.log(`${tag}     message: ${text?.slice(0, 200) || '(empty)'}${text && text.length > 200 ? '...' : ''}`);
+          } else if (item.type === 'reasoning') {
+            const rsn = item as ReasoningOutput;
+            const summary = rsn.summary?.find(s => s.type === 'summary_text')?.text;
+            console.log(`${tag}     reasoning: ${summary?.slice(0, 200) || '(empty)'}${summary && summary.length > 200 ? '...' : ''}`);
+          }
+        }
+      } else {
+        console.log(`${tag} No output items in response`);
+      }
 
-      return this.parseResponse(data);
+      const result = this.parseResponse(data);
+      console.log(`${tag} Parsed result: isComplete=${result.isComplete}, action=${result.action?.type || '(none)'}`);
+
+      return result;
     } catch (error) {
-      console.error(`[${this.providerName} CU] Error getting action:`, error);
+      console.error(`${tag} Error getting action:`, error);
       throw error;
     }
   }
@@ -127,6 +171,7 @@ export class OpenAIComputerUseProvider implements IComputerUseProvider {
   private buildRequestBody(
     instruction: string,
     screenshot: string,
+    mimeType: string,
     screenSize: { width: number; height: number },
     previousResponseId?: string,
     previousCallId?: string
@@ -170,7 +215,7 @@ export class OpenAIComputerUseProvider implements IComputerUseProvider {
             ...(acknowledgedChecks?.length && { acknowledged_safety_checks: acknowledgedChecks }),
             output: {
               type: this.screenshotOutputType,
-              image_url: `data:image/png;base64,${screenshot}`,
+              image_url: `data:${mimeType};base64,${screenshot}`,
             },
           },
         ],
@@ -191,7 +236,7 @@ export class OpenAIComputerUseProvider implements IComputerUseProvider {
             },
             {
               type: 'input_image',
-              image_url: `data:image/png;base64,${screenshot}`,
+              image_url: `data:${mimeType};base64,${screenshot}`,
             },
           ],
         },
