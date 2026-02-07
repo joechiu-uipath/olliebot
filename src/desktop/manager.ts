@@ -663,7 +663,7 @@ export class DesktopSessionManager {
       console.log(`[Desktop] [${session.id.slice(0, 8)}] Step 4/4: Configuring Computer Use provider...`);
       if (config.computerUseProvider) {
         const provider = createComputerUseProvider(config.computerUseProvider as ComputerUseProvider);
-        if (provider && provider.isAvailable()) {
+        if (provider.isAvailable()) {
           session.setComputerUseProvider(provider);
           console.log(`[Desktop] [${session.id.slice(0, 8)}] Computer Use provider set: ${config.computerUseProvider}`);
         } else {
