@@ -604,13 +604,11 @@ export class DesktopSessionManager {
           // Stop the existing sandbox and launch a new one
           await this.stopAllWindowsSandboxes();
           await this.launchAndDiscoverSandbox(session, sandboxConfig, vncConfig, abortController, t0);
-          sandboxHost = vncConfig.host;
         }
       } else {
         // No sandbox running — launch a new one
         console.log(`${tag} Step 1/4: Launching sandbox...`);
         await this.launchAndDiscoverSandbox(session, sandboxConfig, vncConfig, abortController, t0);
-        sandboxHost = vncConfig.host;
       }
 
       // Check if aborted
