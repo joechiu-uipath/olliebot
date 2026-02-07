@@ -19,6 +19,7 @@ import type { DesktopSessionManager } from '../desktop/index.js';
 import type { TaskManager } from '../tasks/index.js';
 import { type RAGProjectService, createRAGProjectRoutes, type IndexingProgress } from '../rag-projects/index.js';
 import { getMessageEventService, setMessageEventServiceChannel } from '../services/message-event-service.js';
+import { getUserSettingsService } from '../settings/index.js';
 
 export interface ServerConfig {
   port: number;
@@ -431,6 +432,68 @@ export class AssistantServer {
         transport: server.transport || (server.command ? 'stdio' : 'http'),
         toolCount: tools.filter(t => t.serverId === server.id).length,
       })));
+    });
+
+    // Toggle MCP server enabled status
+    this.app.patch('/api/mcps/:id', async (req: Request, res: Response) => {
+      if (!this.mcpClient) {
+        res.status(404).json({ error: 'MCP client not configured' });
+        return;
+      }
+
+      const serverId = req.params.id as string;
+      const { enabled } = req.body;
+
+      if (typeof enabled !== 'boolean') {
+        res.status(400).json({ error: 'enabled field must be a boolean' });
+        return;
+      }
+
+      try {
+        const success = await this.mcpClient.setServerEnabled(serverId, enabled);
+        if (!success) {
+          res.status(404).json({ error: 'Server not found' });
+          return;
+        }
+
+        // Persist the setting to user settings
+        const settingsService = getUserSettingsService();
+        settingsService.setMcpEnabled(serverId, enabled);
+
+        // Return updated server info
+        const servers = this.mcpClient.getServers();
+        const server = servers.find(s => s.id === serverId);
+        const tools = this.mcpClient.getTools();
+
+        res.json({
+          id: server?.id,
+          name: server?.name,
+          enabled: server?.enabled,
+          transport: server?.transport || (server?.command ? 'stdio' : 'http'),
+          toolCount: tools.filter(t => t.serverId === serverId).length,
+        });
+      } catch (error) {
+        console.error('[API] Failed to toggle MCP server:', error);
+        res.status(500).json({ error: 'Failed to toggle MCP server' });
+      }
+    });
+
+    // Get user settings
+    this.app.get('/api/settings', (_req: Request, res: Response) => {
+      const settingsService = getUserSettingsService();
+      res.json(settingsService.getSettings());
+    });
+
+    // Update user settings
+    this.app.patch('/api/settings', (req: Request, res: Response) => {
+      try {
+        const settingsService = getUserSettingsService();
+        const updated = settingsService.updateSettings(req.body);
+        res.json(updated);
+      } catch (error) {
+        console.error('[API] Failed to update settings:', error);
+        res.status(500).json({ error: 'Failed to update settings' });
+      }
     });
 
     // Get skills metadata

@@ -251,7 +251,7 @@ export class SkillManager {
 
     return `## Available Skills
 
-Skills provide domain knowledge and workflows. Use read_skill tool with skill_id to activate.`;
+Skills provide domain knowledge and workflows. Use read_agent_skill tool with skill_id to activate.`;
   }
 
   /**

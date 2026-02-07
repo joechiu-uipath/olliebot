@@ -155,6 +155,11 @@ export abstract class AbstractAgent implements BaseAgent {
    * - 'user.*' = all user tools
    * - 'mcp.*' = all MCP tools
    * - '!delegate' = exclude specific tool (blacklist)
+   *
+   * Private tools:
+   * - Private tools are excluded from the '*' wildcard - they don't appear in the general tool list
+   * - Agents only get private tools if explicitly included in their canAccessTools patterns
+   * - This allows specialist agents to access private tools without supervisors needing '!' exclusions
    */
   protected getToolsForLLM(): LLMTool[] {
     if (!this.toolRunner) {
@@ -184,11 +189,19 @@ export abstract class AbstractAgent implements BaseAgent {
 
     // Filter tools: must match an inclusion AND not match any exclusion
     return tools.filter((tool) => {
+      const isPrivate = this.toolRunner!.isPrivateTool(tool.name);
+
       // Check exclusions first
       if (exclusions.some(pattern => matchesPattern(tool.name, pattern))) {
         return false;
       }
-      // Check inclusions
+
+      // Private tools are only included if explicitly named (not via '*' wildcard)
+      if (isPrivate) {
+        return inclusions.some(pattern => pattern !== '*' && matchesPattern(tool.name, pattern));
+      }
+
+      // Check inclusions for non-private tools
       return inclusions.some(pattern => matchesPattern(tool.name, pattern));
     });
   }

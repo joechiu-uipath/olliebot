@@ -10,12 +10,11 @@ export * from './take-screenshot.js';
 export * from './analyze-image.js';
 export * from './create-image.js';
 export * from './remember.js';
-export * from './read-skill.js';
-export * from './run-skill-script.js';
+export * from './read-agent-skill.js';
+export * from './run-agent-skill-script.js';
 export * from './http-client.js';
 export * from './delegate.js';
 export * from './query-rag-project.js';
 export * from './speak.js';
-export * from './read-frontend-code.js';
-export * from './modify-frontend-code.js';
-export * from './check-frontend-code.js';
+
+// Frontend code tools moved to src/self-coding/tools/

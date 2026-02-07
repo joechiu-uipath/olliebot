@@ -492,6 +492,58 @@ html, body {
   text-align: center;
 }
 
+/* MCP Toggle Switch */
+.mcp-toggle {
+  position: relative;
+  display: inline-block;
+  width: 28px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+.mcp-toggle input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.mcp-toggle-slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: var(--bg-tertiary);
+  transition: 0.2s;
+  border-radius: 16px;
+}
+
+.mcp-toggle-slider:before {
+  position: absolute;
+  content: "";
+  height: 12px;
+  width: 12px;
+  left: 2px;
+  bottom: 2px;
+  background-color: var(--text-secondary);
+  transition: 0.2s;
+  border-radius: 50%;
+}
+
+.mcp-toggle input:checked + .mcp-toggle-slider {
+  background-color: var(--accent);
+}
+
+.mcp-toggle input:checked + .mcp-toggle-slider:before {
+  transform: translateX(12px);
+  background-color: white;
+}
+
+.mcp-toggle:hover .mcp-toggle-slider {
+  opacity: 0.9;
+}
+
 /* Tools tree view */
 .tools-tree {
   display: flex;

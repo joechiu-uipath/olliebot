@@ -17,8 +17,8 @@ interface ReadSkillParams {
  * Per the Agent Skills spec, agents activate skills by reading SKILL.md files
  * and any referenced documents in the skill directory.
  */
-export class ReadSkillTool implements NativeTool {
-  name = 'read_skill';
+export class ReadAgentSkillTool implements NativeTool {
+  name = 'read_agent_skill';
   description = `Read a skill file to load its instructions. Provide the skill_id to read the main SKILL.md file.
 You can also read additional files within the skill directory like references or documentation.
 
@@ -102,7 +102,7 @@ Example usage:
       // Read the file
       const content = await readFile(targetPath, 'utf-8');
 
-      console.log(`[ReadSkillTool] Read skill file: ${targetPath} (${content.length} chars)`);
+      console.log(`[ReadAgentSkillTool] Read skill file: ${targetPath} (${content.length} chars)`);
 
       return {
         success: true,
@@ -115,7 +115,7 @@ Example usage:
         },
       };
     } catch (error) {
-      console.error('[ReadSkillTool] Error:', error);
+      console.error('[ReadAgentSkillTool] Error:', error);
       return {
         success: false,
         error: `Failed to read skill file: ${error instanceof Error ? error.message : String(error)}`,

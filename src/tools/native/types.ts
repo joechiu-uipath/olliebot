@@ -20,6 +20,13 @@ export interface NativeTool {
   readonly name: string;
   readonly description: string;
   readonly inputSchema: Record<string, unknown>;
+  /**
+   * When true, this tool is only available to supervisor agents.
+   * Private tools are automatically included in supervisor's tool list
+   * without explicit configuration, and excluded from other agents
+   * unless explicitly granted.
+   */
+  readonly private?: boolean;
 
   execute(params: Record<string, unknown>): Promise<NativeToolResult>;
 }

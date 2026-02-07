@@ -909,6 +909,43 @@ function App() {
     }
   };
 
+  // Toggle MCP enabled/disabled status
+  const handleToggleMcp = async (mcpId, currentEnabled) => {
+    const newEnabled = !currentEnabled;
+    try {
+      const res = await fetch(`/api/mcps/${mcpId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: newEnabled }),
+      });
+
+      if (res.ok) {
+        const updatedMcp = await res.json();
+        // Update local state
+        setMcps((prev) =>
+          prev.map((mcp) =>
+            mcp.id === mcpId ? { ...mcp, enabled: updatedMcp.enabled, toolCount: updatedMcp.toolCount } : mcp
+          )
+        );
+        // Also update tools if the MCP was enabled/disabled
+        // Refetch tools to reflect the change
+        try {
+          const toolsRes = await fetch('/api/tools');
+          if (toolsRes.ok) {
+            const toolsData = await toolsRes.json();
+            setTools(toolsData);
+          }
+        } catch (e) {
+          console.warn('Failed to refresh tools after MCP toggle:', e);
+        }
+      } else {
+        console.error('Failed to toggle MCP:', await res.text());
+      }
+    } catch (error) {
+      console.error('Error toggling MCP:', error);
+    }
+  };
+
   // Helper to check if a value is a data URL image
   const isDataUrlImage = (value) => {
     return typeof value === 'string' && value.startsWith('data:image/');
@@ -1810,6 +1847,14 @@ function App() {
                   ) : (
                     mcps.map((mcp) => (
                       <div key={mcp.id} className="accordion-item mcp-item">
+                        <label className="mcp-toggle" title={mcp.enabled ? 'Disable MCP' : 'Enable MCP'}>
+                          <input
+                            type="checkbox"
+                            checked={mcp.enabled}
+                            onChange={() => handleToggleMcp(mcp.id, mcp.enabled)}
+                          />
+                          <span className="mcp-toggle-slider"></span>
+                        </label>
                         <span className={`mcp-status ${mcp.enabled ? 'connected' : 'disconnected'}`}>●</span>
                         <span className="mcp-name">{mcp.name}</span>
                         {mcp.toolCount > 0 && (

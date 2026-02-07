@@ -205,7 +205,7 @@ const SPECIALIST_TEMPLATES: SpecialistTemplate[] = [
       description: 'Analyzes frontend modification requests, creates change plans, and delegates to workers',
     },
     canAccessTools: [
-      'read_skill', // To read skill instructions (e.g., frontend-modifier)
+      'read_agent_skill', // To read skill instructions (e.g., frontend-modifier)
       'read_frontend_code', // Read-only access to understand current state
       'delegate', // Can delegate to coding-worker
     ],
@@ -227,7 +227,7 @@ const SPECIALIST_TEMPLATES: SpecialistTemplate[] = [
       description: 'Executes individual code changes using the modify_frontend_code tool',
     },
     canAccessTools: [
-      'read_skill', // To read skill instructions if needed
+      'read_agent_skill', // To read skill instructions if needed
       'read_frontend_code', // To verify file state before/after changes
       'modify_frontend_code', // Write access for creating, editing, deleting files
     ],

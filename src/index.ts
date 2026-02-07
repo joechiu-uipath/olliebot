@@ -34,16 +34,18 @@ import {
   AnalyzeImageTool,
   CreateImageTool,
   RememberTool,
-  ReadSkillTool,
-  RunSkillScriptTool,
+  ReadAgentSkillTool,
+  RunAgentSkillScriptTool,
   HttpClientTool,
   DelegateTool,
   QueryRAGProjectTool,
   SpeakTool,
+} from './tools/index.js';
+import {
   ReadFrontendCodeTool,
   ModifyFrontendCodeTool,
   CheckFrontendCodeTool,
-} from './tools/index.js';
+} from './self-coding/index.js';
 import { TaskManager } from './tasks/index.js';
 import { MemoryService } from './memory/index.js';
 import { UserToolManager } from './tools/user/index.js';
@@ -61,6 +63,7 @@ import {
   DesktopActionTool,
   DesktopScreenshotTool,
 } from './desktop/index.js';
+import { getUserSettingsService } from './settings/index.js';
 
 /**
  * Parse MCP server configurations from various formats.
@@ -279,9 +282,18 @@ async function main(): Promise<void> {
   console.log('[Init] Initializing MCP client...');
   const mcpClient = new MCPClient();
 
+  // Load user settings to check for disabled MCPs
+  const userSettings = getUserSettingsService();
+  const disabledMcps = userSettings.getDisabledMcps();
+
   const mcpServers = parseMCPServers(CONFIG.mcpServers);
   for (const serverConfig of mcpServers) {
     try {
+      // Check if this MCP is disabled in user settings
+      if (disabledMcps.includes(serverConfig.id)) {
+        serverConfig.enabled = false;
+        console.log(`[Init] MCP server ${serverConfig.id} is disabled by user settings`);
+      }
       await mcpClient.registerServer(serverConfig);
     } catch (error) {
       console.warn(`[Init] Failed to register MCP server ${serverConfig.id}:`, error);
@@ -394,8 +406,8 @@ async function main(): Promise<void> {
   }
 
   // Skill tools (for Agent Skills spec)
-  toolRunner.registerNativeTool(new ReadSkillTool(skillManager));
-  toolRunner.registerNativeTool(new RunSkillScriptTool(skillManager));
+  toolRunner.registerNativeTool(new ReadAgentSkillTool(skillManager));
+  toolRunner.registerNativeTool(new RunAgentSkillScriptTool(skillManager));
 
   // Self-modifying code tools (for frontend code modification)
   toolRunner.registerNativeTool(new ReadFrontendCodeTool());

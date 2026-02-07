@@ -386,6 +386,24 @@ export class ToolRunner {
   }
 
   /**
+   * Check if a native tool is marked as private
+   * Private tools are only available to supervisor agents unless explicitly granted
+   */
+  isPrivateTool(toolName: string): boolean {
+    const tool = this.nativeTools.get(toolName);
+    return tool?.private === true;
+  }
+
+  /**
+   * Get list of private tool names
+   */
+  getPrivateToolNames(): string[] {
+    return Array.from(this.nativeTools.entries())
+      .filter(([_, tool]) => tool.private === true)
+      .map(([name]) => name);
+  }
+
+  /**
    * Create a tool request from LLM tool_use block
    * @param callerId - ID of the agent making this request (for event filtering)
    */
