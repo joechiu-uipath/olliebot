@@ -31,6 +31,9 @@ const SUPERVISOR_ICON = '🐙';
 const SUPERVISOR_NAME = 'OllieBot';
 const DEFAULT_AGENT_ICON = '🤖';
 
+// Display limits
+const DELEGATION_MISSION_MAX_LENGTH = 500;
+
 // Module-level flag to prevent double-fetching in React Strict Mode
 // (Strict Mode unmounts/remounts component, so refs don't persist)
 let appInitialLoadDone = false;
@@ -1376,13 +1379,19 @@ function App() {
 
     if (msg.role === 'delegation') {
       // Compact delegation display
+      const mission = msg.mission || '';
+      const truncatedMission = mission.length > DELEGATION_MISSION_MAX_LENGTH
+        ? mission.slice(0, DELEGATION_MISSION_MAX_LENGTH) + '...'
+        : mission;
       return (
         <div className="delegation-event">
           <span className="delegation-icon">🎯</span>
           <span className="delegation-agent">
             {msg.agentEmoji} {msg.agentName}
           </span>
-          <span className="delegation-mission">{msg.mission}</span>
+          <span className="delegation-mission" title={mission}>
+            {truncatedMission}
+          </span>
         </div>
       );
     }
