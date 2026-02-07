@@ -300,7 +300,6 @@ The session will launch a sandboxed desktop environment and connect via VNC for 
           vnc: session.vnc,
           viewport: session.viewport,
           createdAt: session.createdAt,
-          lastScreenshotAt: session.lastScreenshotAt,
           error: session.error,
         },
       },

@@ -33,19 +33,38 @@ export class TakeScreenshotTool implements NativeTool {
         // macOS
         await execAsync(`screencapture -x "${tempPath}"`);
       } else if (platform === 'win32') {
-        // Windows - use PowerShell
+        // Windows - use PowerShell with script file to avoid escaping issues
+        // Must set DPI awareness to capture full resolution on scaled displays
+        const psScriptPath = join(tmpdir(), `screenshot-script-${uuid()}.ps1`);
         const psScript = `
-          Add-Type -AssemblyName System.Windows.Forms
-          Add-Type -AssemblyName System.Drawing
-          $screen = [System.Windows.Forms.Screen]::PrimaryScreen
-          $bitmap = New-Object System.Drawing.Bitmap($screen.Bounds.Width, $screen.Bounds.Height)
-          $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
-          $graphics.CopyFromScreen($screen.Bounds.Location, [System.Drawing.Point]::Empty, $screen.Bounds.Size)
-          $bitmap.Save("${tempPath.replace(/\\/g, '\\\\')}")
-          $graphics.Dispose()
-          $bitmap.Dispose()
-        `;
-        await execAsync(`powershell -Command "${psScript.replace(/\n/g, '; ')}"`);
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+
+# Enable DPI awareness to get actual screen resolution (not scaled)
+Add-Type @"
+using System;
+using System.Runtime.InteropServices;
+public class DpiAwareness {
+    [DllImport("user32.dll")]
+    public static extern bool SetProcessDPIAware();
+}
+"@
+[DpiAwareness]::SetProcessDPIAware() | Out-Null
+
+$screen = [System.Windows.Forms.Screen]::PrimaryScreen
+$bitmap = New-Object System.Drawing.Bitmap($screen.Bounds.Width, $screen.Bounds.Height)
+$graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+$graphics.CopyFromScreen($screen.Bounds.Location, [System.Drawing.Point]::Empty, $screen.Bounds.Size)
+$bitmap.Save('${tempPath}')
+$graphics.Dispose()
+$bitmap.Dispose()
+`;
+        await writeFile(psScriptPath, psScript, 'utf8');
+        try {
+          await execAsync(`powershell -ExecutionPolicy Bypass -File "${psScriptPath}"`);
+        } finally {
+          await unlink(psScriptPath).catch(() => {});
+        }
       } else {
         // Linux - try multiple screenshot tools
         try {

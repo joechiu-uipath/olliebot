@@ -86,15 +86,16 @@ export class MessageEventService {
       }
 
       // Truncate result for broadcast (UI display) - only for finished events
-      // Exception: don't truncate audio data (needed for on-demand playback)
+      // Exception: don't truncate audio data or image data URLs (needed for display)
       let resultForBroadcast: unknown = undefined;
       if (event.type === 'tool_execution_finished' && event.result !== undefined) {
         try {
           const fullResult = JSON.stringify(event.result);
           const result = event.result as Record<string, unknown>;
           const hasAudioData = result && typeof result === 'object' && 'audio' in result && typeof result.audio === 'string';
+          const hasImageData = fullResult.includes('data:image/');
           const limit = 10000;
-          resultForBroadcast = hasAudioData || fullResult.length <= limit
+          resultForBroadcast = hasAudioData || hasImageData || fullResult.length <= limit
             ? fullResult
             : fullResult.substring(0, limit) + '...(truncated)';
         } catch {
