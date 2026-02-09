@@ -14,10 +14,10 @@
 import type { NativeTool, NativeToolResult } from './types.js';
 
 /** Hard ceiling – never collect more than this regardless of user input. */
-const ABSOLUTE_MAX_URLS = 10_000;
+const ABSOLUTE_MAX_URLS = 1_000;
 
 /** Default max URLs when the caller does not specify one. */
-const DEFAULT_MAX_URLS = 10_000;
+const DEFAULT_MAX_URLS = 1_000;
 
 /** Per-request timeout in ms. */
 const REQUEST_TIMEOUT_MS = 15_000;
@@ -47,7 +47,7 @@ export class WebsiteCrawlerTool implements NativeTool {
   readonly name = 'website_crawler';
   readonly description =
     'Crawl a website starting from a given URL, collecting all unique same-domain URLs found via links. ' +
-    'Returns a de-duplicated list of discovered URLs. Stops at a configurable maximum (default 10,000). ' +
+    'Returns a de-duplicated list of discovered URLs. Stops at a configurable maximum (default 1,000). ' +
     'The full URL list is displayed to the user; only a summary is sent to the assistant.';
 
   readonly inputSchema = {
