@@ -19,7 +19,7 @@ import type {
   ToolSource,
   LLMTool,
 } from './types.js';
-import type { NativeTool } from './native/types.js';
+import type { NativeTool, ToolExecutionContext } from './native/types.js';
 import type { MCPClient } from '../mcp/client.js';
 import { initializeCitationServiceSync } from '../citations/service.js';
 import { getDefaultExtractors } from '../citations/extractors.js';
@@ -219,10 +219,25 @@ export class ToolRunner {
       callerId: request.callerId,
     });
 
+    // Build execution context with a progress callback that emits tool_progress events
+    const context: ToolExecutionContext = {
+      onProgress: (progress) => {
+        this.emitEvent({
+          type: 'tool_progress',
+          requestId: request.id,
+          toolName: request.toolName,
+          source: request.source,
+          progress,
+          timestamp: new Date(),
+          callerId: request.callerId,
+        });
+      },
+    };
+
     let result: ToolResult;
 
     try {
-      const invokeResult = await this.invokeToolBySource(request);
+      const invokeResult = await this.invokeToolBySource(request, context);
       const endTime = new Date();
 
       result = {
@@ -335,7 +350,7 @@ export class ToolRunner {
   /**
    * Route tool execution to appropriate handler based on source
    */
-  private async invokeToolBySource(request: ToolRequest): Promise<InvokeToolResult> {
+  private async invokeToolBySource(request: ToolRequest, context?: ToolExecutionContext): Promise<InvokeToolResult> {
     const { toolName, source, parameters } = request;
 
     switch (source) {
@@ -345,7 +360,7 @@ export class ToolRunner {
         if (!tool) {
           throw new Error(`Native tool not found: ${toolName}`);
         }
-        const result = await tool.execute(parameters);
+        const result = await tool.execute(parameters, context);
         if (!result.success) {
           throw new Error(result.error || 'Tool execution failed');
         }
@@ -363,7 +378,7 @@ export class ToolRunner {
         if (!tool) {
           throw new Error(`User tool not found: ${userName}`);
         }
-        const result = await tool.execute(parameters);
+        const result = await tool.execute(parameters, context);
         if (!result.success) {
           throw new Error(result.error || 'Tool execution failed');
         }

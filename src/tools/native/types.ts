@@ -37,6 +37,22 @@ export interface NativeToolResult {
   displayOnlySummary?: string;
 }
 
+/**
+ * Context passed to a tool during execution, providing optional callbacks
+ * for communicating with the runtime (e.g. progress updates).
+ */
+export interface ToolExecutionContext {
+  /**
+   * Report progress during a long-running operation.
+   * The runtime forwards this to the UI via the tool event broadcast system.
+   */
+  onProgress?: (progress: {
+    current: number;
+    total?: number;
+    message?: string;
+  }) => void;
+}
+
 export interface NativeTool {
   readonly name: string;
   readonly description: string;
@@ -49,5 +65,5 @@ export interface NativeTool {
    */
   readonly private?: boolean;
 
-  execute(params: Record<string, unknown>): Promise<NativeToolResult>;
+  execute(params: Record<string, unknown>, context?: ToolExecutionContext): Promise<NativeToolResult>;
 }

@@ -109,6 +109,25 @@ export class MessageEventService {
   ): void {
     // Broadcast to UI
     if (this.channel) {
+      // Progress events: broadcast immediately, no persistence needed
+      if (event.type === 'tool_progress') {
+        this.channel.broadcast({
+          type: 'tool_progress',
+          requestId: event.requestId,
+          toolName: event.toolName,
+          source: event.source,
+          progress: event.progress,
+          conversationId: conversationId || undefined,
+          turnId: turnId || undefined,
+          timestamp: event.timestamp.toISOString(),
+          agentId: agentInfo.id,
+          agentName: agentInfo.name,
+          agentEmoji: agentInfo.emoji,
+          agentType: agentInfo.type,
+        });
+        return; // Progress events are broadcast-only, not persisted
+      }
+
       // Check if result contains audio data - if so, broadcast play_audio event
       // Audio can be in result.audio (legacy) or result.output.audio (nested from native tools)
       if (event.type === 'tool_execution_finished' && event.result !== undefined) {

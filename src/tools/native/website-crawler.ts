@@ -11,7 +11,7 @@
  * summary is sent to the LLM to conserve context tokens.
  */
 
-import type { NativeTool, NativeToolResult } from './types.js';
+import type { NativeTool, NativeToolResult, ToolExecutionContext } from './types.js';
 
 /** Hard ceiling – never collect more than this regardless of user input. */
 const ABSOLUTE_MAX_URLS = 1_000;
@@ -67,7 +67,7 @@ export class WebsiteCrawlerTool implements NativeTool {
     required: ['url'],
   };
 
-  async execute(params: Record<string, unknown>): Promise<NativeToolResult> {
+  async execute(params: Record<string, unknown>, context?: ToolExecutionContext): Promise<NativeToolResult> {
     const url = String(params.url || '').trim();
     const maxUrls = Math.min(
       Math.max(Number(params.maxUrls) || DEFAULT_MAX_URLS, 1),
@@ -130,6 +130,13 @@ export class WebsiteCrawlerTool implements NativeTool {
       });
 
       await Promise.all(batchPromises);
+
+      // Report progress after each batch
+      context?.onProgress?.({
+        current: discovered.size,
+        total: maxUrls,
+        message: `Discovered ${discovered.size} URL(s), fetched ${pagesProcessed} pages (${queue.length} queued)`,
+      });
 
       // Small delay between batches to avoid hammering the server
       if (queue.length > 0 && discovered.size < maxUrls) {

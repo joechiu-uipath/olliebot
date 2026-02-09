@@ -81,8 +81,27 @@ export interface ToolExecutionFinishedEvent {
   callerId?: string;
 }
 
+// Event: Tool progress update (emitted during long-running tool execution)
+export interface ToolProgressEvent {
+  type: 'tool_progress';
+  requestId: string;
+  toolName: string;
+  source: ToolSource;
+  progress: {
+    /** Current count / step number */
+    current: number;
+    /** Total expected (if known) */
+    total?: number;
+    /** Human-readable progress message */
+    message?: string;
+  };
+  timestamp: Date;
+  // ID of the agent that initiated this request (for event filtering)
+  callerId?: string;
+}
+
 // Union of all tool events
-export type ToolEvent = ToolRequestedEvent | ToolExecutionFinishedEvent;
+export type ToolEvent = ToolRequestedEvent | ToolExecutionFinishedEvent | ToolProgressEvent;
 
 // Event callback type
 export type ToolEventCallback = (event: ToolEvent) => void;
