@@ -40,6 +40,8 @@ import {
   DelegateTool,
   QueryRAGProjectTool,
   SpeakTool,
+  GeneratePythonTool,
+  RunPythonTool,
 } from './tools/index.js';
 import {
   ReadFrontendCodeTool,
@@ -384,6 +386,11 @@ async function main(): Promise<void> {
 
   // Memory tool (always available)
   toolRunner.registerNativeTool(new RememberTool(memoryService));
+
+  // Python tools (code generation and execution with Pyodide)
+  toolRunner.registerNativeTool(new GeneratePythonTool({ llmService }));
+  toolRunner.registerNativeTool(new RunPythonTool());
+  console.log('[Init] Python tools enabled (generate_python + run_python with Plotly support)');
 
   // Speak tool (TTS - requires API key based on provider)
   const voiceApiKey = CONFIG.voiceProvider === 'azure_openai'
