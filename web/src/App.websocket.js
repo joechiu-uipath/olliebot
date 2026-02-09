@@ -21,7 +21,7 @@ export function createMessageHandler(deps) {
     getNavigate,
     // State setters
     setMessages,
-    setTotalMessageCount,
+
     setIsResponsePending,
     setIsConnected,
     setConversations,
@@ -177,7 +177,7 @@ export function createMessageHandler(deps) {
     const messageId = data.id || `msg-${Date.now()}`;
     setMessages((prev) => {
       if (prev.some((m) => m.id === messageId)) return prev;
-      setTotalMessageCount((c) => c + 1);
+
       return [
         ...prev,
         {
@@ -197,7 +197,6 @@ export function createMessageHandler(deps) {
   function handleStreamStart(data) {
     if (!isForCurrentConversation(data.conversationId)) return;
 
-    setTotalMessageCount((c) => c + 1);
     setMessages((prev) => {
       const lastUserMsg = [...prev].reverse().find(m => m.role === 'user');
       return [
@@ -249,7 +248,7 @@ export function createMessageHandler(deps) {
     const errorId = data.id || `err-${Date.now()}`;
     setMessages((prev) => {
       if (prev.some((m) => m.id === errorId)) return prev;
-      setTotalMessageCount((c) => c + 1);
+
       return [
         ...prev,
         {
@@ -270,7 +269,7 @@ export function createMessageHandler(deps) {
     const toolId = `tool-${data.requestId}`;
     setMessages((prev) => {
       if (prev.some((m) => m.id === toolId)) return prev;
-      setTotalMessageCount((c) => c + 1);
+
       return [
         ...prev,
         {
@@ -321,7 +320,7 @@ export function createMessageHandler(deps) {
     const delegationId = `delegation-${data.agentId}`;
     setMessages((prev) => {
       if (prev.some((m) => m.id === delegationId)) return prev;
-      setTotalMessageCount((c) => c + 1);
+
       return [
         ...prev,
         {
@@ -341,7 +340,7 @@ export function createMessageHandler(deps) {
     const taskRunId = `task-run-${data.taskId}-${Date.now()}`;
     setMessages((prev) => {
       if (prev.some((m) => m.taskId === data.taskId && m.role === 'task_run')) return prev;
-      setTotalMessageCount((c) => c + 1);
+
       return [
         ...prev,
         {

@@ -117,14 +117,12 @@ function App() {
   const renameInputRef = useRef(null);
 
   // Auto-scroll state
-  const [isUserScrolled, setIsUserScrolled] = useState(false);
   const [showScrollButton, setShowScrollButton] = useState(false);
 
   // Pagination state for virtualization
   const [hasMoreOlder, setHasMoreOlder] = useState(true);
   const [isLoadingOlder, setIsLoadingOlder] = useState(false);
   const [oldestCursor, setOldestCursor] = useState(null);
-  const [totalMessageCount, setTotalMessageCount] = useState(0); // Total messages for reference
   const [firstItemIndex, setFirstItemIndex] = useState(VIRTUOSO_START_INDEX);
 
   // Expanded tool events
@@ -202,7 +200,6 @@ function App() {
     getNavigate: () => navigateRef.current,
     // State setters (stable by React guarantee)
     setMessages,
-    setTotalMessageCount,
     setIsResponsePending,
     setIsConnected,
     setConversations,
@@ -279,12 +276,10 @@ function App() {
     if (feedData && feedData.items) {
       const pagination = feedData.pagination || {};
       const items = transformMessages(feedData.items);
-      const total = pagination.totalCount || items.length;
       setMessages(items);
       // Initialize pagination state
       setHasMoreOlder(pagination.hasOlder || false);
       setOldestCursor(pagination.oldestCursor || null);
-      setTotalMessageCount(total);
       // Reset to starting high index for prepending
       setFirstItemIndex(VIRTUOSO_START_INDEX);
     } else {
@@ -292,7 +287,6 @@ function App() {
       setMessages([]);
       setHasMoreOlder(false);
       setOldestCursor(null);
-      setTotalMessageCount(0);
       setFirstItemIndex(0);
     }
 
@@ -431,7 +425,6 @@ function App() {
 
   // Scroll to bottom handler for Virtuoso
   const scrollToBottom = useCallback(() => {
-    setIsUserScrolled(false);
     setShowScrollButton(false);
     virtuosoRef.current?.scrollToIndex({
       index: messages.length - 1,
@@ -491,30 +484,9 @@ function App() {
   // Handle Virtuoso atBottomStateChange
   const handleAtBottomStateChange = useCallback((atBottom) => {
     setShowScrollButton(!atBottom);
-    if (atBottom) {
-      setIsUserScrolled(false);
-    }
   }, []);
 
-  // Check actual scroll position after conversation switch
-  // Virtuoso's atBottomStateChange uses item-based detection which can be wrong for tall items
-  useEffect(() => {
-    if (!currentConversationId || messages.length === 0) return;
 
-    // Wait for DOM to settle after messages render
-    const timeoutId = setTimeout(() => {
-      const scroller = document.querySelector('.virtuoso-scroller');
-      if (!scroller) return;
-
-      const scrollBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
-      // If we're more than 100px from bottom, show the scroll button
-      if (scrollBottom > 100) {
-        setShowScrollButton(true);
-      }
-    }, 100);
-
-    return () => clearTimeout(timeoutId);
-  }, [currentConversationId, messages.length]);
 
   // Helper to insert a new conversation after well-known ones
   const insertConversation = (prev, newConv) => {
@@ -570,12 +542,10 @@ function App() {
 
     // Clear local messages and reset pagination
     setMessages([]);
-    setIsUserScrolled(false);
     setShowScrollButton(false);
     setIsResponsePending(false);
     setHasMoreOlder(false);
     setOldestCursor(null);
-    setFirstItemIndex(VIRTUOSO_START_INDEX);
   };
 
   // Delete conversation (soft delete)
@@ -759,7 +729,6 @@ function App() {
 
     // Mark that we're navigating to prevent URL sync effect from re-triggering
     isNavigatingRef.current = true;
-    setIsUserScrolled(false);
     setShowScrollButton(false);
 
     // Navigate to the conversation URL
@@ -824,9 +793,6 @@ function App() {
 
     if (!inputText.trim() && currentAttachments.length === 0) return;
 
-    // Re-enable auto-scroll when sending a message (Virtuoso's followOutput will handle it)
-    setIsUserScrolled(false);
-
     // Process attachments to base64
     const processedAttachments = await Promise.all(
       currentAttachments.map(async (file) => {
@@ -857,7 +823,6 @@ function App() {
       messageType: currentMessageType,
       agentCommand: currentAgentCommand,
     };
-    setTotalMessageCount((c) => c + 1);
     setMessages((prev) => [...prev, userMessage]);
 
     // Send via WebSocket with conversation ID, attachments, reasoning effort, message type, and agent command
