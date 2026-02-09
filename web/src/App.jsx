@@ -34,6 +34,14 @@ const DEFAULT_AGENT_ICON = '🤖';
 // Display limits
 const DELEGATION_MISSION_MAX_LENGTH = 500;
 
+// API constants
+const MESSAGE_PAGE_SIZE = 20;
+
+// Virtuoso reverse-scroll: start index high so prepending older messages
+// (which decrements this) never reaches zero. The exact value doesn't matter
+// as long as it exceeds the maximum number of messages a conversation can have.
+const VIRTUOSO_START_INDEX = 100000;
+
 // Module-level flag to prevent double-fetching in React Strict Mode
 // (Strict Mode unmounts/remounts component, so refs don't persist)
 let appInitialLoadDone = false;
@@ -117,7 +125,7 @@ function App() {
   const [isLoadingOlder, setIsLoadingOlder] = useState(false);
   const [oldestCursor, setOldestCursor] = useState(null);
   const [totalMessageCount, setTotalMessageCount] = useState(0); // Total messages for reference
-  const [firstItemIndex, setFirstItemIndex] = useState(100000); // Start high for prepending
+  const [firstItemIndex, setFirstItemIndex] = useState(VIRTUOSO_START_INDEX);
 
   // Expanded tool events
   const [expandedTools, setExpandedTools] = useState(new Set());
@@ -278,7 +286,7 @@ function App() {
       setOldestCursor(pagination.oldestCursor || null);
       setTotalMessageCount(total);
       // Reset to starting high index for prepending
-      setFirstItemIndex(100000);
+      setFirstItemIndex(VIRTUOSO_START_INDEX);
     } else {
       // Fallback for backwards compatibility
       setMessages([]);
@@ -392,7 +400,7 @@ function App() {
         // Load conversation messages with pagination
         const apiConvId = encodeURIComponent(convId);
         const fetchId = ++messageFetchCounter.current;
-        fetch(`/api/conversations/${apiConvId}/messages?limit=20&includeTotal=true`)
+        fetch(`/api/conversations/${apiConvId}/messages?limit=${MESSAGE_PAGE_SIZE}&includeTotal=true`)
           .then(res => res.ok ? res.json() : { items: [], pagination: {} })
           .then(data => {
             // Only update if this is still the latest fetch
@@ -401,7 +409,7 @@ function App() {
             setMessages(transformMessages(data.items || []));
             setHasMoreOlder(pagination.hasOlder || false);
             setOldestCursor(pagination.oldestCursor || null);
-            setFirstItemIndex(100000);
+            setFirstItemIndex(VIRTUOSO_START_INDEX);
           })
           .catch(() => {
             if (fetchId !== messageFetchCounter.current) return;
@@ -567,7 +575,7 @@ function App() {
     setIsResponsePending(false);
     setHasMoreOlder(false);
     setOldestCursor(null);
-    setFirstItemIndex(100000);
+    setFirstItemIndex(VIRTUOSO_START_INDEX);
   };
 
   // Delete conversation (soft delete)
@@ -601,7 +609,7 @@ function App() {
         // Load messages for new current conversation with pagination
         const apiConvId = encodeURIComponent(nextConv.id);
         const fetchId = ++messageFetchCounter.current;
-        fetch(`/api/conversations/${apiConvId}/messages?limit=20&includeTotal=true`)
+        fetch(`/api/conversations/${apiConvId}/messages?limit=${MESSAGE_PAGE_SIZE}&includeTotal=true`)
           .then(res => res.ok ? res.json() : null)
           .then(data => {
             // Only update if this is still the latest fetch
@@ -611,7 +619,7 @@ function App() {
               setMessages(transformMessages(data.items || []));
               setHasMoreOlder(pagination.hasOlder || false);
               setOldestCursor(pagination.oldestCursor || null);
-              setFirstItemIndex(100000);
+              setFirstItemIndex(VIRTUOSO_START_INDEX);
             }
           });
       } else {
@@ -619,7 +627,7 @@ function App() {
         setMessages([]);
         setHasMoreOlder(false);
         setOldestCursor(null);
-        setFirstItemIndex(100000);
+        setFirstItemIndex(VIRTUOSO_START_INDEX);
         navigate('/chat/feed');
       }
     }
@@ -648,7 +656,7 @@ function App() {
       setMessages([]);
       setHasMoreOlder(false);
       setOldestCursor(null);
-      setFirstItemIndex(100000);
+      setFirstItemIndex(VIRTUOSO_START_INDEX);
     }
   };
 
@@ -762,7 +770,7 @@ function App() {
     const apiConvId = encodeURIComponent(convId);
     // Increment fetch counter to invalidate any in-flight fetches
     const fetchId = ++messageFetchCounter.current;
-    fetch(`/api/conversations/${apiConvId}/messages?limit=20&includeTotal=true`)
+    fetch(`/api/conversations/${apiConvId}/messages?limit=${MESSAGE_PAGE_SIZE}&includeTotal=true`)
       .then(res => res.ok ? res.json() : { items: [], pagination: {} })
       .then(data => {
         // Only update if this is still the latest fetch
@@ -771,7 +779,7 @@ function App() {
         setMessages(transformMessages(data.items || []));
         setHasMoreOlder(pagination.hasOlder || false);
         setOldestCursor(pagination.oldestCursor || null);
-        setFirstItemIndex(100000);
+        setFirstItemIndex(VIRTUOSO_START_INDEX);
       })
       .catch(() => {
         if (fetchId !== messageFetchCounter.current) return;
@@ -1990,6 +1998,7 @@ function App() {
             </div>
           ) : (
             <Virtuoso
+              key={currentConversationId}
               ref={virtuosoRef}
               data={messages}
               firstItemIndex={firstItemIndex}
