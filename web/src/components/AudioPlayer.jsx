@@ -10,22 +10,28 @@ export function AudioPlayer({ audioDataUrl, audioBase64, mimeType }) {
 
   const handlePlay = async () => {
     setIsPlaying(true);
-    // Extract base64 and mimeType from dataUrl if provided
-    let base64 = audioBase64;
-    let mime = mimeType;
-    if (audioDataUrl) {
-      // Handle MIME types with parameters like "audio/pcm;rate=24000"
-      // Format: data:<mime>[;param=value]*;base64,<data>
-      const match = audioDataUrl.match(/^data:([^;,]+(?:;[^;,]+)*);base64,(.+)$/);
-      if (match) {
-        mime = match[1];  // Full MIME with params, e.g., "audio/pcm;rate=24000"
-        base64 = match[2];
+    try {
+      // Extract base64 and mimeType from dataUrl if provided
+      let base64 = audioBase64;
+      let mime = mimeType;
+      if (audioDataUrl) {
+        // Handle MIME types with parameters like "audio/pcm;rate=24000"
+        // Format: data:<mime>[;param=value]*;base64,<data>
+        const match = audioDataUrl.match(/^data:([^;,]+(?:;[^;,]+)*);base64,(.+)$/);
+        if (match) {
+          mime = match[1];  // Full MIME with params, e.g., "audio/pcm;rate=24000"
+          base64 = match[2];
+        }
       }
+      if (base64) {
+        await playAudioData(base64, mime);
+      }
+    } catch (error) {
+      // Log playback errors so they can be diagnosed, but always reset isPlaying
+      console.error('Failed to play audio data:', error);
+    } finally {
+      setIsPlaying(false);
     }
-    if (base64) {
-      await playAudioData(base64, mime);
-    }
-    setIsPlaying(false);
   };
 
   return (
