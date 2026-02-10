@@ -375,11 +375,10 @@ sys.stderr = _stderr_capture
 
       // Execute the user code
       let executionError: string | null = null;
-      let executionResult: unknown = null;
 
       try {
         // Wrap code in try-finally to ensure streams are restored
-        executionResult = await this.pyodide.runPythonAsync(code);
+        await this.pyodide.runPythonAsync(code);
       } catch (err) {
         executionError = err instanceof Error ? err.message : String(err);
       }
