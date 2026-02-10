@@ -11,6 +11,7 @@
 
 import { loadPyodide } from 'pyodide';
 import type { PyodideInterface } from 'pyodide';
+import { Mutex } from 'async-mutex';
 import type { NativeTool, NativeToolResult } from './types.js';
 
 // Dynamic import for monty (ES module)
@@ -87,6 +88,7 @@ export class RunPythonTool implements NativeTool {
 
   private pyodide: PyodideInterface | null = null;
   private initPromise: Promise<void> | null = null;
+  private pyodideMutex = new Mutex(); // Serialize Pyodide execution
 
   constructor() {}
 
@@ -307,13 +309,16 @@ await micropip.install('plotly')
 
   /**
    * Execute Python code using Pyodide (full Python runtime)
+   * Uses mutex to serialize execution since Pyodide instance is shared.
    */
   private async executeWithPyodide(
     code: string,
     packages: string[],
     outputFiles: string[]
   ): Promise<NativeToolResult> {
-    try {
+    // Use runExclusive to serialize Pyodide access (auto-releases on completion)
+    return this.pyodideMutex.runExclusive(async () => {
+      try {
       // Ensure Pyodide is loaded
       await this.ensurePyodideLoaded();
 
@@ -431,11 +436,12 @@ del _stdout_capture, _stderr_capture, _original_stdout, _original_stderr
         error: errorOutput,
         files: extractedFiles.length > 0 ? extractedFiles : undefined,
       };
-    } catch (error) {
-      return {
-        success: false,
-        error: `Failed to execute Python code: ${error instanceof Error ? error.message : String(error)}`,
-      };
-    }
+      } catch (error) {
+        return {
+          success: false,
+          error: `Failed to execute Python code: ${error instanceof Error ? error.message : String(error)}`,
+        };
+      }
+    }); // runExclusive auto-releases mutex
   }
 }
