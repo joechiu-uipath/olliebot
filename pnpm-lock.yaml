@@ -17,12 +17,18 @@ importers:
       '@lancedb/lancedb':
         specifier: ^0.8.0
         version: 0.8.0(apache-arrow@17.0.0)
+      '@pydantic/monty':
+        specifier: ^0.0.4
+        version: 0.0.4
       '@types/multer':
         specifier: ^2.0.0
         version: 2.0.0
       alasql:
         specifier: ^4.4.0
         version: 4.17.0(react-native@0.83.1(@babel/core@7.28.6)(@types/react@19.2.10)(react@19.2.4))
+      async-mutex:
+        specifier: ^0.5.0
+        version: 0.5.0
       chokidar:
         specifier: ^4.0.1
         version: 4.0.3
@@ -389,8 +395,14 @@ packages:
     resolution: {integrity: sha512-ooWCrlZP11i8GImSjTHYHLkvFDP48nS4+204nGb1RiX/WXYHmJA2III9/e2DWVabCESdW7hBAEzHRqUn9OUVvQ==}
     engines: {node: '>=0.1.90'}
 
+  '@emnapi/core@1.8.1':
+    resolution: {integrity: sha512-AvT9QFpxK0Zd8J0jopedNm+w/2fIzvtPKPjqyw9jwvBaReTTqPBk9Hixaz7KbjimP+QNz605/XnjFcDAL2pqBg==}
+
   '@emnapi/runtime@1.8.1':
     resolution: {integrity: sha512-mehfKSMWjjNol8659Z8KxEMrdSJDDot5SXMq00dM8BN4o+CLNXQ0xH2V7EchNHV4RmbZLmmPdEaXZc5H2FXmDg==}
+
+  '@emnapi/wasi-threads@1.1.0':
+    resolution: {integrity: sha512-WI0DdZ8xFSbgMjR1sFsKABJ/C5OnRrjT06JXbZKexJGrDuPTzZdDYfFlsgcCXCyf+suG5QU2e/y1Wo2V/OapLQ==}
 
   '@esbuild/aix-ppc64@0.21.5':
     resolution: {integrity: sha512-1SDgH6ZSPTlggy1yI6+Dbkiz8xzpHJEVAlF/AM1tHPLsf5STom9rwtjE4hKAF20FfXXNTFqEYXyJNWh1GiZedQ==}
@@ -1080,6 +1092,42 @@ packages:
     resolution: {integrity: sha512-Yhlar6v9WQgUp/He7BdgzOz8lqMQ8sU+jkCq7Wx8Myc5YFJLbEe7lgui/V7G1qB1DJykHSGwreceSaD60Y0PUQ==}
     hasBin: true
 
+  '@napi-rs/wasm-runtime@1.1.1':
+    resolution: {integrity: sha512-p64ah1M1ld8xjWv3qbvFwHiFVWrq1yFvV4f7w+mzaqiR4IlSgkqhcRdHwsGgomwzBH51sRY4NEowLxnaBjcW/A==}
+
+  '@pydantic/monty-darwin-arm64@0.0.4':
+    resolution: {integrity: sha512-hBCDU4/cGE2eK1Lm1yrXiD6IYVd+1P8x5PrtdujiAp4IIDhhjKK0MUoihAr8iHWo0qp/5c041b8FoE9gzalkZw==}
+    engines: {node: '>= 6.14.2 < 7 || >= 8.11.2 < 9 || >= 9.11.0 < 10 || >= 10.0.0'}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@pydantic/monty-darwin-x64@0.0.4':
+    resolution: {integrity: sha512-ZckNOIFzniCZfP4dSL/VkvLzlmD5gM6yNfYKqgqOxoo8ltyWYCyk8PyHTd6Ha7uM1/CUL0ATKaZn5jY2BRH+fQ==}
+    engines: {node: '>= 6.14.2 < 7 || >= 8.11.2 < 9 || >= 9.11.0 < 10 || >= 10.0.0'}
+    cpu: [x64]
+    os: [darwin]
+
+  '@pydantic/monty-linux-x64-gnu@0.0.4':
+    resolution: {integrity: sha512-/D2U9SQ2oaiO+lOqR5VYWIjsXjUpFH+omVcxlSVZeUOY4YzF0wRPQbxdoaEwvMJo2NzgRgTMA3Os2Vz/c1PrgQ==}
+    engines: {node: '>= 6.14.2 < 7 || >= 8.11.2 < 9 || >= 9.11.0 < 10 || >= 10.0.0'}
+    cpu: [x64]
+    os: [linux]
+
+  '@pydantic/monty-wasm32-wasi@0.0.4':
+    resolution: {integrity: sha512-kZ25ER/AbJDY96/edYYAg1Qg/TAmP770oZOV2RlImG/Jd2zpd5w3kURYJTkt6pO60vddvxMJaa5cIdnWeoWX3A==}
+    engines: {node: '>=14.0.0'}
+    cpu: [wasm32]
+
+  '@pydantic/monty-win32-x64-msvc@0.0.4':
+    resolution: {integrity: sha512-NM8L/jn3nTUTIgaq+FV5poK/pzjsz0Bk5VScAx6CSCBuCacE5xS2tIX8AqzSAzT87Vg1gmomI+ZFjmglTh5JhA==}
+    engines: {node: '>= 6.14.2 < 7 || >= 8.11.2 < 9 || >= 9.11.0 < 10 || >= 10.0.0'}
+    cpu: [x64]
+    os: [win32]
+
+  '@pydantic/monty@0.0.4':
+    resolution: {integrity: sha512-aDAPL2ySH+n5HIxQzu6ZreOsqyuW09ZKEeHkRDQ0SGUjEYoYPrws2D0vLkn7zvbbKEdnbAHkoi9pLgV+WHLqRg==}
+    engines: {node: '>= 6.14.2 < 7 || >= 8.11.2 < 9 || >= 9.11.0 < 10 || >= 10.0.0'}
+
   '@react-native/assets-registry@0.83.1':
     resolution: {integrity: sha512-AT7/T6UwQqO39bt/4UL5EXvidmrddXrt0yJa7ENXndAv+8yBzMsZn6fyiax6+ERMt9GLzAECikv3lj22cn2wJA==}
     engines: {node: '>= 20.19.4'}
@@ -1282,6 +1330,9 @@ packages:
 
   '@swc/helpers@0.5.18':
     resolution: {integrity: sha512-TXTnIcNJQEKwThMMqBXsZ4VGAza6bvN4pa41Rkqoio6QBKMvo+5lexeTMScGCIxtzgQJzElcvIltani+adC5PQ==}
+
+  '@tybys/wasm-util@0.10.1':
+    resolution: {integrity: sha512-9tTaPJLSiejZKx+Bmog4uSubteqTvFrVrURwkmHixBo0G4seD0zUxp98E1DzUBJxLQ3NPwXrGKDiVjwx/DpPsg==}
 
   '@types/babel__core@7.20.5':
     resolution: {integrity: sha512-qoQprZvz5wQFJwMDqeseRXWv3rqMvhgpbXFfVyWhbx9X47POIA6i/+dXefEmZKoAgOaTdaIgNSMqMIU61yRyzA==}
@@ -1566,6 +1617,9 @@ packages:
   assertion-error@2.0.1:
     resolution: {integrity: sha512-Izi8RQcffqCeNVgFigKli1ssklIbpHnCYc6AknXGYoB6grJqyeby7jv12JUQgmTAnIDnbck1uxksT4dzN3PWBA==}
     engines: {node: '>=12'}
+
+  async-mutex@0.5.0:
+    resolution: {integrity: sha512-1A94B18jkJ3DYq284ohPxoXbfTA5HsQ7/Mf4DEhcyLx3Bz27Rh59iScbB6EPiP+B+joue6YCxcMXSbFC1tZKwA==}
 
   asynckit@0.4.0:
     resolution: {integrity: sha512-Oei9OH4tRh0YqU3GxhX79dM/mwVgvbZJaSNaRk+bshkj0S5cfHcgYakreBjrHwatXKbz+IoIdYLxrKim2MjW0Q==}
@@ -4099,7 +4153,18 @@ snapshots:
   '@colors/colors@1.5.0':
     optional: true
 
+  '@emnapi/core@1.8.1':
+    dependencies:
+      '@emnapi/wasi-threads': 1.1.0
+      tslib: 2.8.1
+    optional: true
+
   '@emnapi/runtime@1.8.1':
+    dependencies:
+      tslib: 2.8.1
+    optional: true
+
+  '@emnapi/wasi-threads@1.1.0':
     dependencies:
       tslib: 2.8.1
     optional: true
@@ -4640,6 +4705,38 @@ snapshots:
       - supports-color
     optional: true
 
+  '@napi-rs/wasm-runtime@1.1.1':
+    dependencies:
+      '@emnapi/core': 1.8.1
+      '@emnapi/runtime': 1.8.1
+      '@tybys/wasm-util': 0.10.1
+    optional: true
+
+  '@pydantic/monty-darwin-arm64@0.0.4':
+    optional: true
+
+  '@pydantic/monty-darwin-x64@0.0.4':
+    optional: true
+
+  '@pydantic/monty-linux-x64-gnu@0.0.4':
+    optional: true
+
+  '@pydantic/monty-wasm32-wasi@0.0.4':
+    dependencies:
+      '@napi-rs/wasm-runtime': 1.1.1
+    optional: true
+
+  '@pydantic/monty-win32-x64-msvc@0.0.4':
+    optional: true
+
+  '@pydantic/monty@0.0.4':
+    optionalDependencies:
+      '@pydantic/monty-darwin-arm64': 0.0.4
+      '@pydantic/monty-darwin-x64': 0.0.4
+      '@pydantic/monty-linux-x64-gnu': 0.0.4
+      '@pydantic/monty-wasm32-wasi': 0.0.4
+      '@pydantic/monty-win32-x64-msvc': 0.0.4
+
   '@react-native/assets-registry@0.83.1':
     optional: true
 
@@ -4814,6 +4911,11 @@ snapshots:
   '@swc/helpers@0.5.18':
     dependencies:
       tslib: 2.8.1
+
+  '@tybys/wasm-util@0.10.1':
+    dependencies:
+      tslib: 2.8.1
+    optional: true
 
   '@types/babel__core@7.20.5':
     dependencies:
@@ -5149,6 +5251,10 @@ snapshots:
     optional: true
 
   assertion-error@2.0.1: {}
+
+  async-mutex@0.5.0:
+    dependencies:
+      tslib: 2.8.1
 
   asynckit@0.4.0: {}
 
