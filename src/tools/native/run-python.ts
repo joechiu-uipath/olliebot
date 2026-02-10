@@ -1,13 +1,36 @@
 /**
  * Run Python Native Tool
  *
- * Executes Python code using Pyodide (Python runtime in Node.js).
- * Supports standard library, numpy, pandas, matplotlib, plotly, and more.
+ * Executes Python code using an embedded Python runtime.
+ * Supports two engines:
+ * - pyodide: Full Python runtime with numpy, pandas, matplotlib, plotly support
+ * - monty: Fast, sandboxed Python interpreter (subset of Python, no external packages)
+ *
+ * Set PYTHON_ENGINE env var to 'monty' or 'pyodide' (default: 'pyodide')
  */
 
 import { loadPyodide } from 'pyodide';
 import type { PyodideInterface } from 'pyodide';
 import type { NativeTool, NativeToolResult } from './types.js';
+
+// Dynamic import for monty (ES module)
+type MontyModule = typeof import('@pydantic/monty');
+let montyModule: MontyModule | null = null;
+
+async function getMontyModule(): Promise<MontyModule> {
+  if (!montyModule) {
+    montyModule = await import('@pydantic/monty');
+  }
+  return montyModule;
+}
+
+// Get Python engine from environment
+type PythonEngine = 'pyodide' | 'monty';
+function getPythonEngine(): PythonEngine {
+  const engine = process.env.PYTHON_ENGINE?.toLowerCase();
+  if (engine === 'monty') return 'monty';
+  return 'pyodide'; // default
+}
 
 // Common output file extensions to auto-detect
 const OUTPUT_FILE_EXTENSIONS = ['.png', '.jpg', '.jpeg', '.svg', '.pdf', '.csv', '.json', '.html'];
@@ -26,8 +49,15 @@ const MEDIA_TYPE_MAP: Record<string, string> = {
 
 export class RunPythonTool implements NativeTool {
   readonly name = 'run_python';
-  readonly description =
-    'Execute Python code using an embedded Python runtime - Pyodide. Supports standard library, numpy, pandas, matplotlib, plotly, and other scientific packages. Returns stdout, stderr, and returned values. Can generate plots and visualizations (images are auto-detected and returned). Note: Do not attempt to display generated images in your response - the user can preview them in the tool result UI. LIMITATION: No network access - requests, urllib, and HTTP calls will fail. For data that requires fetching from APIs, either: (1) use web_search or web_fetch tools first to get the data, then pass it as a literal/embedded value in the Python code, or (2) generate sample/mock data for demonstration purposes.';
+
+  get description(): string {
+    const engine = getPythonEngine();
+    if (engine === 'monty') {
+      return 'Execute Python code using Monty - a fast, sandboxed Python interpreter. Runs a SUBSET of Python with microsecond startup times. HARD LIMITATIONS: (1) No "with" statements (context managers). (2) No "class" definitions. (3) No "match" statements. (4) No external packages - only builtins. (5) Limited stdlib (only sys, typing, asyncio). (6) No filesystem/network. (7) print() not captured - use output() function instead. Best for: simple calculations, list/dict operations, basic algorithms. For full Python with packages, file I/O, or advanced features, switch to pyodide engine.';
+    }
+    return 'Execute Python code using Pyodide - full Python runtime in Node.js. Supports standard library, numpy, pandas, matplotlib, plotly, and other scientific packages. Returns stdout, stderr, and returned values. Can generate plots and visualizations (images are auto-detected and returned). Note: Do not attempt to display generated images in your response - the user can preview them in the tool result UI. LIMITATION: No network access - requests, urllib, and HTTP calls will fail. For data that requires fetching from APIs, either: (1) use web_search or web_fetch tools first to get the data, then pass it as a literal/embedded value in the Python code, or (2) generate sample/mock data for demonstration purposes.';
+  }
+
   readonly inputSchema = {
     type: 'object',
     properties: {
@@ -41,7 +71,7 @@ export class RunPythonTool implements NativeTool {
           type: 'string',
         },
         description:
-          'Optional list of additional Python packages to load (e.g., ["numpy", "pandas", "matplotlib", "plotly"]). Common packages are pre-loaded.',
+          'Optional list of additional Python packages to load (e.g., ["numpy", "pandas", "matplotlib", "plotly"]). Common packages are pre-loaded. NOTE: Only supported with pyodide engine; ignored with monty.',
       },
       outputFiles: {
         type: 'array',
@@ -49,7 +79,7 @@ export class RunPythonTool implements NativeTool {
           type: 'string',
         },
         description:
-          'Optional list of specific file paths to extract. If not provided, common output files (*.png, *.jpg, *.svg, *.pdf, *.csv, *.json, *.html) are auto-detected and returned as base64.',
+          'Optional list of specific file paths to extract. If not provided, common output files (*.png, *.jpg, *.svg, *.pdf, *.csv, *.json, *.html) are auto-detected and returned as base64. NOTE: Only supported with pyodide engine; monty has no filesystem.',
       },
     },
     required: ['code'],
@@ -151,6 +181,9 @@ await micropip.install('plotly')
     return idx >= 0 ? filename.slice(idx).toLowerCase() : '';
   }
 
+  /**
+   * Main execute method - dispatches to the appropriate engine
+   */
   async execute(params: Record<string, unknown>): Promise<NativeToolResult> {
     const code = String(params.code || '');
     const packages = Array.isArray(params.packages)
@@ -167,6 +200,119 @@ await micropip.install('plotly')
       };
     }
 
+    const engine = getPythonEngine();
+
+    if (engine === 'monty') {
+      return this.executeWithMonty(code);
+    } else {
+      return this.executeWithPyodide(code, packages, outputFiles);
+    }
+  }
+
+  /**
+   * Execute Python code using Monty (fast, sandboxed interpreter)
+   *
+   * Note: Monty has a built-in print() that can't be overridden.
+   * We provide an output() function for explicit output capture.
+   */
+  private async executeWithMonty(code: string): Promise<NativeToolResult> {
+    try {
+      const { Monty, MontyRuntimeError, MontySyntaxError, runMontyAsync } = await getMontyModule();
+
+      const start = performance.now();
+
+      // Capture output using custom external function
+      // Note: print() is a monty builtin that can't be overridden
+      const outputLines: string[] = [];
+
+      // Create Monty instance with 'output' as external function
+      const monty = new Monty(code, {
+        externalFunctions: ['output'],
+      });
+
+      let result: unknown = null;
+      let executionError: string | null = null;
+
+      try {
+        // Run with output() captured via external function
+        result = await runMontyAsync(monty, {
+          externalFunctions: {
+            output: (...args: unknown[]) => {
+              // Filter out the kwargs object that monty passes as the last argument
+              // (it's always an empty {} for regular calls)
+              const filteredArgs = args.filter(arg => {
+                // Skip empty kwargs objects
+                if (typeof arg === 'object' && arg !== null && !Array.isArray(arg)) {
+                  const keys = Object.keys(arg as object);
+                  return keys.length > 0; // Only keep non-empty objects
+                }
+                return true;
+              });
+
+              // Similar to print(): join args with space
+              const line = filteredArgs.map(arg => {
+                if (Array.isArray(arg)) {
+                  return JSON.stringify(arg);
+                }
+                if (typeof arg === 'object' && arg !== null) {
+                  return JSON.stringify(arg);
+                }
+                return String(arg);
+              }).join(' ');
+              outputLines.push(line);
+              return null; // output() returns None
+            },
+          },
+        });
+      } catch (err) {
+        if (err instanceof MontyRuntimeError) {
+          executionError = err.display('traceback');
+        } else if (err instanceof MontySyntaxError) {
+          executionError = err.display('type-msg');
+        } else {
+          executionError = err instanceof Error ? err.message : String(err);
+        }
+      }
+
+      const elapsed = performance.now() - start;
+
+      // Build output from captured output() calls
+      let output = outputLines.join('\n');
+
+      // Add return value if present and meaningful
+      if (result !== undefined && result !== null) {
+        const resultStr = typeof result === 'object' ? JSON.stringify(result) : String(result);
+        // Only show result if it's not None/null
+        if (resultStr !== 'null' && resultStr !== 'None') {
+          output = output ? `${output}\n=> ${resultStr}` : `=> ${resultStr}`;
+        }
+      }
+
+      if (!output && !executionError) {
+        output = `Code executed successfully in ${elapsed.toFixed(2)}ms (monty engine)`;
+      }
+
+      return {
+        success: !executionError,
+        output: output || undefined,
+        error: executionError || undefined,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        error: `Failed to execute Python code with Monty: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+  }
+
+  /**
+   * Execute Python code using Pyodide (full Python runtime)
+   */
+  private async executeWithPyodide(
+    code: string,
+    packages: string[],
+    outputFiles: string[]
+  ): Promise<NativeToolResult> {
     try {
       // Ensure Pyodide is loaded
       await this.ensurePyodideLoaded();

@@ -26,6 +26,7 @@
     "@anthropic-ai/sdk": "^0.30.0",
     "@inquirer/prompts": "^7.0.0",
     "@lancedb/lancedb": "^0.8.0",
+    "@pydantic/monty": "^0.0.4",
     "@types/multer": "^2.0.0",
     "alasql": "^4.4.0",
     "chokidar": "^4.0.1",
