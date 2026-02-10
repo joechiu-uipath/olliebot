@@ -136,12 +136,8 @@ await micropip.install('plotly')
       const fs = this.pyodide.FS;
       const fullPath = filePath.startsWith('/') ? filePath : `/home/pyodide/${filePath}`;
       const data = fs.readFile(fullPath);
-      // Convert Uint8Array to base64
-      let binary = '';
-      for (let i = 0; i < data.length; i++) {
-        binary += String.fromCharCode(data[i]);
-      }
-      return Buffer.from(binary, 'binary').toString('base64');
+      // Convert Uint8Array to base64 without building an intermediate string
+      return Buffer.from(data).toString('base64');
     } catch {
       return null;
     }
