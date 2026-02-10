@@ -73,15 +73,7 @@ export class RunPythonTool implements NativeTool {
         },
         description:
           'Optional list of additional Python packages to load (e.g., ["numpy", "pandas", "matplotlib", "plotly"]). Common packages are pre-loaded. NOTE: Only supported with pyodide engine; ignored with monty.',
-      },
-      outputFiles: {
-        type: 'array',
-        items: {
-          type: 'string',
-        },
-        description:
-          'Optional list of specific file paths to extract. If not provided, common output files (*.png, *.jpg, *.svg, *.pdf, *.csv, *.json, *.html) are auto-detected and returned as base64. NOTE: Only supported with pyodide engine; monty has no filesystem.',
-      },
+      }
     },
     required: ['code'],
   };
@@ -184,15 +176,37 @@ await micropip.install('plotly')
   }
 
   /**
+   * Clean up output files from previous runs to ensure isolation
+   */
+  private cleanupOutputFiles(): void {
+    if (!this.pyodide) return;
+
+    try {
+      const files = this.listFiles();
+      const fs = this.pyodide.FS;
+
+      for (const file of files) {
+        const ext = this.getExtension(file);
+        if (OUTPUT_FILE_EXTENSIONS.includes(ext)) {
+          try {
+            fs.unlink(`/home/pyodide/${file}`);
+          } catch {
+            // Ignore errors - file may not exist
+          }
+        }
+      }
+    } catch {
+      // Ignore cleanup errors
+    }
+  }
+
+  /**
    * Main execute method - dispatches to the appropriate engine
    */
   async execute(params: Record<string, unknown>): Promise<NativeToolResult> {
     const code = String(params.code || '');
     const packages = Array.isArray(params.packages)
       ? (params.packages as string[])
-      : [];
-    const outputFiles = Array.isArray(params.outputFiles)
-      ? (params.outputFiles as string[])
       : [];
 
     if (!code.trim()) {
@@ -207,7 +221,7 @@ await micropip.install('plotly')
     if (engine === 'monty') {
       return this.executeWithMonty(code);
     } else {
-      return this.executeWithPyodide(code, packages, outputFiles);
+      return this.executeWithPyodide(code, packages);
     }
   }
 
@@ -313,8 +327,7 @@ await micropip.install('plotly')
    */
   private async executeWithPyodide(
     code: string,
-    packages: string[],
-    outputFiles: string[]
+    packages: string[]
   ): Promise<NativeToolResult> {
     // Use runExclusive to serialize Pyodide access (auto-releases on completion)
     return this.pyodideMutex.runExclusive(async () => {
@@ -343,6 +356,9 @@ await micropip.install('plotly')
           }
         }
       }
+
+      // Clean up output files from previous runs to ensure isolation
+      this.cleanupOutputFiles();
 
       // Set up stdout/stderr capture using Pyodide's globals
       this.pyodide.runPython(`
@@ -391,16 +407,11 @@ del _stdout_capture, _stderr_capture, _original_stdout, _original_stderr
       }> = [];
 
       if (!executionError) {
-        // Determine which files to extract
-        let filesToExtract = outputFiles;
-
-        // If no files specified, auto-detect common output files
-        if (filesToExtract.length === 0) {
-          const allFiles = this.listFiles();
-          filesToExtract = allFiles.filter((name) =>
-            OUTPUT_FILE_EXTENSIONS.includes(this.getExtension(name))
-          );
-        }
+        // Auto-detect common output files
+        const allFiles = this.listFiles();
+        const filesToExtract = allFiles.filter((name) =>
+          OUTPUT_FILE_EXTENSIONS.includes(this.getExtension(name))
+        );
 
         // Extract each file
         for (const filePath of filesToExtract) {
@@ -408,12 +419,11 @@ del _stdout_capture, _stderr_capture, _original_stdout, _original_stderr
           if (base64) {
             const ext = this.getExtension(filePath);
             const mediaType = MEDIA_TYPE_MAP[ext] || 'application/octet-stream';
-            // Build full data URL with MIME type for inline display and truncation exemption
             const dataUrl = `data:${mediaType};base64,${base64}`;
             extractedFiles.push({
               name: filePath,
               dataUrl,
-              size: Math.round((base64.length * 3) / 4), // Approximate decoded size
+              size: Math.round((base64.length * 3) / 4),
               mediaType,
             });
           }
