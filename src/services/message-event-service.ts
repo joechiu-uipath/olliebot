@@ -58,6 +58,42 @@ export class MessageEventService {
   }
 
   /**
+   * Check if a result contains media content (images, audio, etc.) that should not be truncated.
+   * Detects:
+   * - Data URLs (data:*;base64,) for images, audio, or any other media type
+   * - Legacy audio fields (result.audio or result.output.audio)
+   */
+  private hasMediaContent(result: unknown): boolean {
+    if (!result || typeof result !== 'object') {
+      return false;
+    }
+
+    try {
+      const jsonStr = JSON.stringify(result);
+      // Check for any data URL (covers images, audio, video, etc.)
+      if (jsonStr.includes('data:') && jsonStr.includes(';base64,')) {
+        return true;
+      }
+    } catch {
+      // If stringification fails, fall through to legacy checks
+    }
+
+    // Legacy audio detection (for backwards compatibility)
+    const resultObj = result as Record<string, unknown>;
+    if ('audio' in resultObj && typeof resultObj.audio === 'string') {
+      return true;
+    }
+    if (resultObj.output && typeof resultObj.output === 'object') {
+      const output = resultObj.output as Record<string, unknown>;
+      if ('audio' in output && typeof output.audio === 'string') {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  /**
    * Emit a tool event - broadcasts to UI AND persists to database.
    * Only persists 'tool_execution_finished' events to avoid duplicates.
    */
@@ -71,33 +107,60 @@ export class MessageEventService {
     // Broadcast to UI
     if (this.webChannel && typeof this.webChannel.broadcast === 'function') {
       // Check if result contains audio data - if so, broadcast play_audio event
+      // Audio can be in result.audio (legacy) or result.output.audio (nested from native tools)
       if (event.type === 'tool_execution_finished' && event.result !== undefined) {
         const result = event.result as Record<string, unknown>;
-        if (result && typeof result === 'object' && 'audio' in result && typeof result.audio === 'string') {
+        let audioData: string | undefined;
+        let mimeType: string | undefined;
+        let voice: unknown;
+        let model: unknown;
+
+        if (result && typeof result === 'object') {
+          if ('audio' in result && typeof result.audio === 'string') {
+            // Legacy: audio at top level
+            audioData = result.audio;
+            mimeType = result.mimeType as string | undefined;
+            voice = result.voice;
+            model = result.model;
+          } else if (result.output && typeof result.output === 'object') {
+            // Nested: audio in output (from native tool wrapper)
+            const output = result.output as Record<string, unknown>;
+            if ('audio' in output && typeof output.audio === 'string') {
+              audioData = output.audio;
+              mimeType = output.mimeType as string | undefined;
+              voice = output.voice;
+              model = output.model;
+            }
+          }
+        }
+
+        if (audioData) {
           // Broadcast play_audio event for immediate playback
           this.webChannel.broadcast({
             type: 'play_audio',
-            audio: result.audio,
-            mimeType: result.mimeType || 'audio/pcm;rate=24000',
-            voice: result.voice,
-            model: result.model,
+            audio: audioData,
+            mimeType: mimeType || 'audio/pcm;rate=24000',
+            voice,
+            model,
           });
         }
       }
 
-      // Truncate result for broadcast (UI display) - only for finished events
-      // Exception: don't truncate audio data or image data URLs (needed for display)
+      // For broadcast: pass result object directly (not pre-stringified)
+      // The WebSocket layer will JSON.stringify the entire message
+      // For large results without media, we truncate to avoid memory issues
       let resultForBroadcast: unknown = undefined;
       if (event.type === 'tool_execution_finished' && event.result !== undefined) {
         try {
           const fullResult = JSON.stringify(event.result);
-          const result = event.result as Record<string, unknown>;
-          const hasAudioData = result && typeof result === 'object' && 'audio' in result && typeof result.audio === 'string';
-          const hasImageData = fullResult.includes('data:image/');
           const limit = 10000;
-          resultForBroadcast = hasAudioData || hasImageData || fullResult.length <= limit
-            ? fullResult
-            : fullResult.substring(0, limit) + '...(truncated)';
+          // For media content or small results, pass object directly
+          // For large non-media results, truncate
+          if (this.hasMediaContent(event.result) || fullResult.length <= limit) {
+            resultForBroadcast = event.result; // Pass object directly
+          } else {
+            resultForBroadcast = fullResult.substring(0, limit) + '...(truncated)';
+          }
         } catch {
           resultForBroadcast = String(event.result);
         }
@@ -140,22 +203,24 @@ export class MessageEventService {
         return;
       }
 
-      // Safely stringify result for storage
-      let resultStr: string | undefined;
+      // Store result as object (not pre-stringified) for consistency with broadcast
+      // The DB layer handles JSON serialization of metadata
+      let resultForStorage: unknown = undefined;
       if (event.result !== undefined) {
         try {
           const fullResult = JSON.stringify(event.result);
-          // Don't truncate image data URLs or audio data
-          const hasImageData = fullResult.includes('data:image/');
-          const hasAudioData = typeof event.result === 'object' && event.result !== null &&
-            'audio' in event.result && typeof (event.result as Record<string, unknown>).audio === 'string';
-          const limit = (hasImageData || hasAudioData) ? 5000000 : 10000;
-          resultStr =
-            fullResult.length > limit
-              ? fullResult.substring(0, limit) + '...(truncated)'
-              : fullResult;
+          // Media content gets a much higher limit (5MB) to preserve images, audio, etc.
+          // Non-media content is limited to 10KB to avoid database bloat
+          const limit = this.hasMediaContent(event.result) ? 5000000 : 10000;
+          // For media content or small results, store object directly
+          // For large non-media results, store truncated string
+          if (fullResult.length <= limit) {
+            resultForStorage = event.result; // Store object directly
+          } else {
+            resultForStorage = fullResult.substring(0, limit) + '...(truncated)';
+          }
         } catch {
-          resultStr = String(event.result);
+          resultForStorage = String(event.result);
         }
       }
 
@@ -173,7 +238,7 @@ export class MessageEventService {
           durationMs: event.durationMs as number,
           error: event.error as string | undefined,
           parameters: event.parameters as Record<string, unknown> | undefined,
-          result: resultStr,
+          result: resultForStorage,
           agentId: agentInfo.id,
           agentName: agentInfo.name,
           agentEmoji: agentInfo.emoji,

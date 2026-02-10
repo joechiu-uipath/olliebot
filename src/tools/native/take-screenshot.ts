@@ -16,7 +16,7 @@ const execAsync = promisify(exec);
 
 export class TakeScreenshotTool implements NativeTool {
   readonly name = 'take_screenshot';
-  readonly description = 'Capture a screenshot of the current screen. Returns the screenshot as a base64-encoded data URL.';
+  readonly description = 'Capture a screenshot of the current screen. Returns the screenshot as a base64-encoded data URL. Note: Do not attempt to display the image in your response - the user can preview it in the tool result UI.';
   readonly inputSchema = {
     type: 'object',
     properties: {},
@@ -80,7 +80,8 @@ $bitmap.Dispose()
 
       // Read screenshot as base64
       const imageBuffer = await readFile(tempPath);
-      const dataUrl = `data:image/png;base64,${imageBuffer.toString('base64')}`;
+      const base64 = imageBuffer.toString('base64');
+      const dataUrl = `data:image/png;base64,${base64}`;
 
       // Clean up temp file
       await unlink(tempPath).catch(() => {});
@@ -88,10 +89,15 @@ $bitmap.Dispose()
       return {
         success: true,
         output: {
-          dataUrl,
           format: 'png',
           capturedAt: new Date().toISOString(),
         },
+        files: [{
+          name: 'screenshot.png',
+          dataUrl,
+          size: imageBuffer.length,
+          mediaType: 'image/png',
+        }],
       };
     } catch (error) {
       // Clean up temp file if it exists

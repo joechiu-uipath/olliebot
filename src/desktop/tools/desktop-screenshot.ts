@@ -12,7 +12,8 @@ export class DesktopScreenshotTool implements NativeTool {
   readonly description = `Capture a screenshot from a desktop session.
 
 Returns the current screenshot of the sandboxed desktop environment.
-The screenshot is useful for understanding the current state of the desktop before executing actions.`;
+The screenshot is useful for understanding the current state of the desktop before executing actions.
+Note: Do not attempt to display the image in your response - the user can preview it in the tool result UI.`;
 
   readonly inputSchema = {
     type: 'object',
@@ -45,6 +46,7 @@ The screenshot is useful for understanding the current state of the desktop befo
 
     try {
       const screenshot = await this.desktopManager.captureScreenshot(sessionId);
+      const dataUrl = `data:image/png;base64,${screenshot}`;
 
       return {
         success: true,
@@ -54,12 +56,13 @@ The screenshot is useful for understanding the current state of the desktop befo
           viewport: session.viewport,
           timestamp: new Date().toISOString(),
         },
-        // Include screenshot as base64 image for model to analyze
-        image: {
-          type: 'base64',
-          media_type: 'image/png',
-          data: screenshot,
-        },
+        // Include screenshot as file with dataUrl for inline display
+        files: [{
+          name: 'screenshot.png',
+          dataUrl,
+          size: Math.round((screenshot.length * 3) / 4),
+          mediaType: 'image/png',
+        }],
       };
     } catch (error) {
       return {

@@ -12,6 +12,7 @@ import { PDFViewerModal } from './components/PDFViewerModal';
 import { ChatInput } from './components/ChatInput';
 import { AudioPlayer } from './components/AudioPlayer';
 import { MessageContent } from './components/MessageContent';
+import { CodeBlock } from './components/CodeBlock';
 
 // Extracted eval mode (fully self-contained)
 import { useEvalMode, EvalSidebarContent, EvalMainContent } from './App.Eval';
@@ -961,10 +962,70 @@ function App() {
   };
 
   // Helper to check if result contains audio data (tool-agnostic)
+  // Audio can be in obj.audio (legacy) or obj.output.audio (nested from native tools)
   const isAudioResult = (obj) => {
     if (!obj || typeof obj !== 'object') return false;
     // Check for audio field with base64 data (long string)
-    return obj.audio && typeof obj.audio === 'string' && obj.audio.length > 100;
+    if (obj.audio && typeof obj.audio === 'string' && obj.audio.length > 100) {
+      return true;
+    }
+    // Check nested output.audio structure
+    if (obj.output && typeof obj.output === 'object' && obj.output.audio && typeof obj.output.audio === 'string' && obj.output.audio.length > 100) {
+      return true;
+    }
+    return false;
+  };
+
+  // Helper to extract audio data from result (handles both legacy and nested structures)
+  const getAudioData = (obj) => {
+    if (obj.audio && typeof obj.audio === 'string') {
+      return { audio: obj.audio, mimeType: obj.mimeType };
+    }
+    if (obj.output && typeof obj.output === 'object' && obj.output.audio) {
+      return { audio: obj.output.audio, mimeType: obj.output.mimeType };
+    }
+    return null;
+  };
+
+  // Helper to render output that might contain markdown code blocks
+  const renderOutput = (output) => {
+    if (typeof output !== 'string') {
+      // Object output - render as property list
+      const entries = Object.entries(output).filter(([key]) =>
+        !['audio', 'mimeType', 'files'].includes(key)
+      );
+      if (entries.length === 0) return null;
+      return (
+        <div className="tool-result-properties">
+          {entries.map(([key, value]) => (
+            <div key={key} className="tool-result-property">
+              <span className="tool-result-key">{key}:</span>{' '}
+              <span className="tool-result-value">
+                {typeof value === 'string' ? value : JSON.stringify(value)}
+              </span>
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    // Normalize escaped newlines (literal \n) to actual newlines
+    let normalizedOutput = output;
+    if (output.includes('\\n')) {
+      normalizedOutput = output.replace(/\\n/g, '\n');
+    }
+
+    // Check for markdown code blocks (```language ... ```)
+    const codeBlockRegex = /^```(\w+)?\n([\s\S]*?)\n```$/;
+    const match = normalizedOutput.match(codeBlockRegex);
+    if (match) {
+      const language = match[1] || 'text';
+      const code = match[2];
+      return <CodeBlock language={language}>{code}</CodeBlock>;
+    }
+
+    // Plain text output (use normalized version so newlines display properly)
+    return <pre className="tool-details-content" style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{normalizedOutput}</pre>;
   };
 
   // Render tool result with special handling for images and audio
@@ -985,8 +1046,8 @@ function App() {
 
       // Try to parse as JSON (result might be stringified, possibly double-stringified)
       let trimmed = result.trim();
-      // Handle double-stringified JSON (starts with " and contains escaped quotes)
-      if (trimmed.startsWith('"') && trimmed.includes('\\"')) {
+      // Handle double-stringified JSON (starts and ends with ")
+      if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
         let unwrapped = null;
         try {
           unwrapped = JSON.parse(trimmed);
@@ -1010,24 +1071,69 @@ function App() {
         }
         parsedResult = parsed;
       } else {
-        return <pre className="tool-details-content">{result}</pre>;
+        // Not JSON - check if it's a code block or plain text
+        return renderOutput(trimmed);
       }
     }
 
     // If parsedResult is an object, check for special content types
     if (typeof parsedResult === 'object' && parsedResult !== null) {
+      // Check for files array with dataUrl (from tools like run_python, speak, create_image)
+      if (parsedResult.files && Array.isArray(parsedResult.files) && parsedResult.files.length > 0) {
+        // Categorize files by type
+        const imageFiles = parsedResult.files.filter(f => f.dataUrl && f.dataUrl.startsWith('data:image/'));
+        const audioFiles = parsedResult.files.filter(f => f.dataUrl && f.dataUrl.startsWith('data:audio/'));
+        const hasMediaFiles = imageFiles.length > 0 || audioFiles.length > 0;
+
+        if (hasMediaFiles) {
+          return (
+            <div className="tool-result-with-media">
+              {/* Render images */}
+              {imageFiles.map((file, idx) => (
+                <div key={`img-${idx}`} className="tool-result-image">
+                  {imageFiles.length > 1 && <div className="tool-result-image-label">{file.name}:</div>}
+                  <img src={file.dataUrl} alt={file.name} style={{ maxWidth: '100%', maxHeight: '400px', borderRadius: '4px' }} />
+                </div>
+              ))}
+              {/* Render audio players */}
+              {audioFiles.map((file, idx) => (
+                <div key={`audio-${idx}`} className="tool-result-audio">
+                  {audioFiles.length > 1 && <div className="tool-result-audio-label">{file.name}:</div>}
+                  <AudioPlayer
+                    audioDataUrl={file.dataUrl}
+                    mimeType={file.mediaType}
+                  />
+                </div>
+              ))}
+              {/* Render output with syntax highlighting support */}
+              {parsedResult.output && (
+                <div className="tool-result-output" style={{ marginTop: '0.5rem' }}>
+                  {renderOutput(parsedResult.output)}
+                </div>
+              )}
+            </div>
+          );
+        }
+      }
+
       // Check for audio result (any tool returning audio data)
       if (isAudioResult(parsedResult)) {
-        // Get non-audio properties to display alongside player
+        const audioData = getAudioData(parsedResult);
+        // Get non-audio properties to display alongside player (exclude audio, output with audio, mimeType)
         const nonAudioEntries = Object.entries(parsedResult).filter(
-          ([key]) => key !== 'audio'
+          ([key, value]) => {
+            if (key === 'audio' || key === 'mimeType') return false;
+            // If output contains audio, skip it (audio player handles it)
+            if (key === 'output' && typeof value === 'object' && value && 'audio' in value) return false;
+            return true;
+          }
         );
 
         return (
           <div className="tool-result-with-audio">
             <AudioPlayer
-              audioBase64={parsedResult.audio}
-              mimeType={parsedResult.mimeType || 'audio/pcm;rate=24000'}
+              audioBase64={audioData.audio}
+              mimeType={audioData.mimeType || 'audio/pcm;rate=24000'}
             />
             {nonAudioEntries.length > 0 && (
               <div className="tool-result-properties">
@@ -1075,6 +1181,21 @@ function App() {
                 </span>
               </div>
             ))}
+          </div>
+        );
+      }
+
+      // Check for output property (from tools like generate_python, run_python without files)
+      if (parsedResult.output !== undefined) {
+        return (
+          <div className="tool-result-with-output">
+            {renderOutput(parsedResult.output)}
+            {/* Show error if present */}
+            {parsedResult.error && (
+              <div className="tool-result-error" style={{ marginTop: '0.5rem', color: '#ff6b6b' }}>
+                <pre className="tool-details-content" style={{ margin: 0 }}>{parsedResult.error}</pre>
+              </div>
+            )}
           </div>
         );
       }

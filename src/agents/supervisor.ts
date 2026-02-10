@@ -906,15 +906,46 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
 
   // Set the current conversation ID (used when running tasks in a specific conversation)
   setConversationId(conversationId: string | null): void {
+    // Only reload if actually switching conversations
+    if (conversationId === this.currentConversationId) {
+      return;
+    }
+
     this.currentConversationId = conversationId;
+
+    // Clear and reload conversation history from database
     if (conversationId) {
-      // Reset message count for this conversation if we haven't tracked it
-      if (!this.conversationMessageCount.has(conversationId)) {
-        // Get current message count from database
-        const db = getDb();
-        const messages = db.messages.findByConversationId(conversationId);
-        this.conversationMessageCount.set(conversationId, messages.length);
-      }
+      const db = getDb();
+      const dbMessages = db.messages.findByConversationId(conversationId);
+
+      // Convert DB messages to Message format for in-memory history
+      // Filter out 'tool' role messages - these are UI display events, not LLM conversation turns.
+      // Tool results during a conversation are handled inline and not persisted as separate messages.
+      // Also filter out delegation messages which are UI-only.
+      this.conversationHistory = dbMessages
+        .filter((m) => {
+          // Skip tool events (UI display only)
+          if (m.role === 'tool') return false;
+          // Skip delegation events (UI display only)
+          if (m.metadata?.type === 'delegation') return false;
+          // Skip task_run markers (UI display only)
+          if (m.metadata?.type === 'task_run') return false;
+          return true;
+        })
+        .map((m) => ({
+          id: m.id,
+          channel: m.channel,
+          role: m.role as Message['role'],
+          content: m.content,
+          createdAt: new Date(m.createdAt),
+          metadata: m.metadata,
+        }));
+
+      // Update message count
+      this.conversationMessageCount.set(conversationId, dbMessages.length);
+    } else {
+      // New/no conversation - clear history
+      this.conversationHistory = [];
     }
   }
 
