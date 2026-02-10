@@ -71,33 +71,68 @@ export class MessageEventService {
     // Broadcast to UI
     if (this.webChannel && typeof this.webChannel.broadcast === 'function') {
       // Check if result contains audio data - if so, broadcast play_audio event
+      // Audio can be in result.audio (legacy) or result.output.audio (nested from native tools)
       if (event.type === 'tool_execution_finished' && event.result !== undefined) {
         const result = event.result as Record<string, unknown>;
-        if (result && typeof result === 'object' && 'audio' in result && typeof result.audio === 'string') {
+        let audioData: string | undefined;
+        let mimeType: string | undefined;
+        let voice: unknown;
+        let model: unknown;
+
+        if (result && typeof result === 'object') {
+          if ('audio' in result && typeof result.audio === 'string') {
+            // Legacy: audio at top level
+            audioData = result.audio;
+            mimeType = result.mimeType as string | undefined;
+            voice = result.voice;
+            model = result.model;
+          } else if (result.output && typeof result.output === 'object') {
+            // Nested: audio in output (from native tool wrapper)
+            const output = result.output as Record<string, unknown>;
+            if ('audio' in output && typeof output.audio === 'string') {
+              audioData = output.audio;
+              mimeType = output.mimeType as string | undefined;
+              voice = output.voice;
+              model = output.model;
+            }
+          }
+        }
+
+        if (audioData) {
           // Broadcast play_audio event for immediate playback
           this.webChannel.broadcast({
             type: 'play_audio',
-            audio: result.audio,
-            mimeType: result.mimeType || 'audio/pcm;rate=24000',
-            voice: result.voice,
-            model: result.model,
+            audio: audioData,
+            mimeType: mimeType || 'audio/pcm;rate=24000',
+            voice,
+            model,
           });
         }
       }
 
-      // Truncate result for broadcast (UI display) - only for finished events
-      // Exception: don't truncate audio data or image data URLs (needed for display)
+      // For broadcast: pass result object directly (not pre-stringified)
+      // The WebSocket layer will JSON.stringify the entire message
+      // For large results without media, we truncate to avoid memory issues
       let resultForBroadcast: unknown = undefined;
       if (event.type === 'tool_execution_finished' && event.result !== undefined) {
         try {
           const fullResult = JSON.stringify(event.result);
           const result = event.result as Record<string, unknown>;
-          const hasAudioData = result && typeof result === 'object' && 'audio' in result && typeof result.audio === 'string';
+          // Check for audio in result.audio or result.output.audio (nested structure from native tools)
+          const hasAudioData = result && typeof result === 'object' && (
+            ('audio' in result && typeof result.audio === 'string') ||
+            (result.output && typeof result.output === 'object' && 'audio' in (result.output as Record<string, unknown>) && typeof (result.output as Record<string, unknown>).audio === 'string')
+          );
+          // Check for data:image/ URLs (from files[].dataUrl or direct image data)
           const hasImageData = fullResult.includes('data:image/');
           const limit = 10000;
-          resultForBroadcast = hasAudioData || hasImageData || fullResult.length <= limit
-            ? fullResult
-            : fullResult.substring(0, limit) + '...(truncated)';
+          // For media content (audio/images) or small results, pass object directly
+          // For large non-media results, truncate
+          if (hasAudioData || hasImageData || fullResult.length <= limit) {
+            resultForBroadcast = event.result; // Pass object directly
+          } else {
+            resultForBroadcast = fullResult.substring(0, limit) + '...(truncated)';
+          }
         } catch {
           resultForBroadcast = String(event.result);
         }
@@ -140,22 +175,30 @@ export class MessageEventService {
         return;
       }
 
-      // Safely stringify result for storage
-      let resultStr: string | undefined;
+      // Store result as object (not pre-stringified) for consistency with broadcast
+      // The DB layer handles JSON serialization of metadata
+      let resultForStorage: unknown = undefined;
       if (event.result !== undefined) {
         try {
           const fullResult = JSON.stringify(event.result);
           // Don't truncate image data URLs or audio data
           const hasImageData = fullResult.includes('data:image/');
-          const hasAudioData = typeof event.result === 'object' && event.result !== null &&
-            'audio' in event.result && typeof (event.result as Record<string, unknown>).audio === 'string';
+          // Check for audio in result.audio or result.output.audio (nested structure from native tools)
+          const result = event.result as Record<string, unknown>;
+          const hasAudioData = typeof result === 'object' && result !== null && (
+            ('audio' in result && typeof result.audio === 'string') ||
+            (result.output && typeof result.output === 'object' && 'audio' in (result.output as Record<string, unknown>) && typeof (result.output as Record<string, unknown>).audio === 'string')
+          );
           const limit = (hasImageData || hasAudioData) ? 5000000 : 10000;
-          resultStr =
-            fullResult.length > limit
-              ? fullResult.substring(0, limit) + '...(truncated)'
-              : fullResult;
+          // For media content or small results, store object directly
+          // For large non-media results, store truncated string
+          if (hasImageData || hasAudioData || fullResult.length <= limit) {
+            resultForStorage = event.result; // Store object directly
+          } else {
+            resultForStorage = fullResult.substring(0, limit) + '...(truncated)';
+          }
         } catch {
-          resultStr = String(event.result);
+          resultForStorage = String(event.result);
         }
       }
 
@@ -173,7 +216,7 @@ export class MessageEventService {
           durationMs: event.durationMs as number,
           error: event.error as string | undefined,
           parameters: event.parameters as Record<string, unknown> | undefined,
-          result: resultStr,
+          result: resultForStorage,
           agentId: agentInfo.id,
           agentName: agentInfo.name,
           agentEmoji: agentInfo.emoji,

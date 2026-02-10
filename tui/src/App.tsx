@@ -163,52 +163,58 @@ export function App() {
     }
   }, [currentConversationId]);
 
+  // Load all data from API (called on initial mount and websocket reconnect)
+  const loadData = useCallback(async () => {
+    try {
+      // Load conversations
+      const convRes = await fetch(`${API_URL}/api/conversations`);
+      if (convRes.ok) {
+        const convData = await convRes.json() as Array<Record<string, unknown>>;
+        setConversations(convData.map((c) => ({
+          id: c.id as string,
+          title: c.title as string,
+          updatedAt: (c.updatedAt || c.updated_at) as string | undefined,
+          isWellKnown: (c.isWellKnown || false) as boolean,
+          icon: c.icon as string | undefined,
+        })));
+        // Default to Feed conversation if none selected
+        setCurrentConversationId(prev => {
+          if (prev) return prev; // Keep current selection on reconnect
+          const feed = convData.find((c) => c.id === 'feed');
+          return feed ? feed.id as string : null;
+        });
+      }
+
+      // Load tasks
+      const tasksRes = await fetch(`${API_URL}/api/tasks`);
+      if (tasksRes.ok) setTasks(await tasksRes.json() as ScheduledTask[]);
+
+      // Load tools
+      const toolsRes = await fetch(`${API_URL}/api/tools`);
+      if (toolsRes.ok) setTools(await toolsRes.json() as ToolsData);
+
+      // Load MCPs
+      const mcpsRes = await fetch(`${API_URL}/api/mcps`);
+      if (mcpsRes.ok) setMcpServers(await mcpsRes.json() as McpServer[]);
+
+      // Load skills
+      const skillsRes = await fetch(`${API_URL}/api/skills`);
+      if (skillsRes.ok) setSkills(await skillsRes.json() as Skill[]);
+    } catch {
+      // API might not be available yet
+    }
+  }, []);
+
   const { isConnected, sendMessage } = useWebSocket({
     url: WS_URL,
     onMessage: handleWsMessage,
+    onOpen: loadData, // Reload data on every connect/reconnect
   });
 
-  // Load initial data
+  // Load initial data on mount
   useEffect(() => {
-    const loadData = async () => {
-      try {
-        // Load conversations
-        const convRes = await fetch(`${API_URL}/api/conversations`);
-        if (convRes.ok) {
-          const convData = await convRes.json() as Array<Record<string, unknown>>;
-          setConversations(convData.map((c) => ({
-            id: c.id as string,
-            title: c.title as string,
-            updatedAt: (c.updatedAt || c.updated_at) as string | undefined,
-            isWellKnown: (c.isWellKnown || false) as boolean,
-            icon: c.icon as string | undefined,
-          })));
-          // Default to Feed conversation
-          const feed = convData.find((c) => c.id === 'feed');
-          if (feed) setCurrentConversationId(feed.id as string);
-        }
-
-        // Load tasks
-        const tasksRes = await fetch(`${API_URL}/api/tasks`);
-        if (tasksRes.ok) setTasks(await tasksRes.json() as ScheduledTask[]);
-
-        // Load tools
-        const toolsRes = await fetch(`${API_URL}/api/tools`);
-        if (toolsRes.ok) setTools(await toolsRes.json() as ToolsData);
-
-        // Load MCPs
-        const mcpsRes = await fetch(`${API_URL}/api/mcps`);
-        if (mcpsRes.ok) setMcpServers(await mcpsRes.json() as McpServer[]);
-
-        // Load skills
-        const skillsRes = await fetch(`${API_URL}/api/skills`);
-        if (skillsRes.ok) setSkills(await skillsRes.json() as Skill[]);
-      } catch {
-        // API might not be available yet
-      }
-    };
     loadData();
-  }, []);
+  }, [loadData]);
 
   // Load messages when conversation changes
   useEffect(() => {

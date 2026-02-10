@@ -331,6 +331,13 @@ export class ToolRunner {
         if (!result.success) {
           throw new Error(result.error || 'Tool execution failed');
         }
+        // Include files in the returned output if present (for images, charts, etc.)
+        if (result.files && result.files.length > 0) {
+          return {
+            output: result.output,
+            files: result.files,
+          };
+        }
         return result.output;
       }
 
@@ -343,6 +350,13 @@ export class ToolRunner {
         const result = await tool.execute(parameters);
         if (!result.success) {
           throw new Error(result.error || 'Tool execution failed');
+        }
+        // Include files in the returned output if present
+        if (result.files && result.files.length > 0) {
+          return {
+            output: result.output,
+            files: result.files,
+          };
         }
         return result.output;
       }

@@ -24,7 +24,7 @@ interface RequestConfig {
 
 export class CreateImageTool implements NativeTool {
   readonly name = 'create_image';
-  readonly description = 'Generate an image from a text description. Returns the generated image as a base64 data URL.';
+  readonly description = 'Generate an image from a text description. Returns the generated image as a base64 data URL. Note: Do not attempt to display the image in your response - the user can preview it in the tool result UI.';
   readonly inputSchema = {
     type: 'object',
     properties: {
@@ -162,15 +162,21 @@ export class CreateImageTool implements NativeTool {
       throw new Error('No image data in response');
     }
 
+    const dataUrl = `data:image/png;base64,${imageData}`;
     return {
       success: true,
       output: {
-        dataUrl: `data:image/png;base64,${imageData}`,
         prompt: description,
         revisedPrompt: data.data?.[0]?.revised_prompt,
         provider: this.provider,
         model: this.model,
       },
+      files: [{
+        name: 'generated-image.png',
+        dataUrl,
+        size: Math.round((imageData.length * 3) / 4),
+        mediaType: 'image/png',
+      }],
     };
   }
 
@@ -238,15 +244,21 @@ export class CreateImageTool implements NativeTool {
       throw new Error('No image data in response');
     }
 
+    const dataUrl = `data:image/png;base64,${imageData}`;
     return {
       success: true,
       output: {
-        dataUrl: `data:image/png;base64,${imageData}`,
         prompt: description,
         revisedPrompt: data.data?.[0]?.revised_prompt,
         provider: this.provider,
         model: this.model,
       },
+      files: [{
+        name: 'generated-image.png',
+        dataUrl,
+        size: Math.round((imageData.length * 3) / 4),
+        mediaType: 'image/png',
+      }],
     };
   }
 }

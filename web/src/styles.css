@@ -2436,6 +2436,31 @@ html, body {
   color: var(--text-primary);
 }
 
+/* Tool Result with Media (images, audio) */
+.tool-result-with-media {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+/* Tool Result with Output (code blocks, text) */
+.tool-result-with-output {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.tool-result-output {
+  margin-top: 0.25rem;
+}
+
+.tool-result-error {
+  padding: 0.5rem;
+  background: rgba(255, 107, 107, 0.1);
+  border-radius: 4px;
+  border: 1px solid rgba(255, 107, 107, 0.3);
+}
+
 /* Collapsible Agent Message (e.g., research-worker) */
 .collapsible-agent-message {
   max-width: 90%;

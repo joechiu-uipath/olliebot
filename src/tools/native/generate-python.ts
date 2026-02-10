@@ -14,7 +14,7 @@ export interface GeneratePythonConfig {
 export class GeneratePythonTool implements NativeTool {
   readonly name = 'generate_python';
   readonly description =
-    'Generate Python code based on a natural language description. Returns syntactically correct Python code that can be executed.';
+    'Generate Python code based on a natural language description. Returns syntactically correct Python code that can be executed. IMPORTANT: Do not repeat or recite the generated code in your response - the user can view the code directly in the tool result UI.';
   readonly inputSchema = {
     type: 'object',
     properties: {
@@ -77,16 +77,17 @@ Rules:
 
       const code = response.content.trim();
 
-      // Remove markdown code blocks if present
+      // Remove markdown code blocks if LLM included them
       const cleanedCode = code
         .replace(/^```python\s*\n?/i, '')
         .replace(/^```\s*\n?/, '')
         .replace(/\n?```\s*$/g, '')
         .trim();
 
+      // Wrap in ```python for syntax highlighting in UI
       return {
         success: true,
-        output: cleanedCode,
+        output: `\`\`\`python\n${cleanedCode}\n\`\`\``,
       };
     } catch (error) {
       return {

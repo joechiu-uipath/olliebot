@@ -51,11 +51,16 @@ export function createMessageHandler(deps) {
    * Helper to check if message belongs to current conversation
    */
   const isForCurrentConversation = (msgConversationId) => {
-    // If no conversationId specified, assume it's for current conversation
-    if (!msgConversationId) return true;
-    // If no current conversation, accept all messages
     const currentId = getCurrentConversationId();
-    if (!currentId) return true;
+    // If no conversationId specified in the message, only show in Feed
+    // (prevents background task events from appearing in user conversations)
+    if (!msgConversationId) {
+      return currentId === 'feed';
+    }
+    // If no current conversation selected, only show Feed messages
+    if (!currentId) {
+      return msgConversationId === 'feed';
+    }
     // Otherwise, check if it matches
     return msgConversationId === currentId;
   };
@@ -337,6 +342,8 @@ export function createMessageHandler(deps) {
   }
 
   function handleTaskRun(data) {
+    if (!isForCurrentConversation(data.conversationId)) return;
+
     const taskRunId = `task-run-${data.taskId}-${Date.now()}`;
     setMessages((prev) => {
       if (prev.some((m) => m.taskId === data.taskId && m.role === 'task_run')) return prev;
