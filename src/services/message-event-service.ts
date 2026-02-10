@@ -58,6 +58,42 @@ export class MessageEventService {
   }
 
   /**
+   * Check if a result contains media content (images, audio, etc.) that should not be truncated.
+   * Detects:
+   * - Data URLs (data:*;base64,) for images, audio, or any other media type
+   * - Legacy audio fields (result.audio or result.output.audio)
+   */
+  private hasMediaContent(result: unknown): boolean {
+    if (!result || typeof result !== 'object') {
+      return false;
+    }
+
+    try {
+      const jsonStr = JSON.stringify(result);
+      // Check for any data URL (covers images, audio, video, etc.)
+      if (jsonStr.includes('data:') && jsonStr.includes(';base64,')) {
+        return true;
+      }
+    } catch {
+      // If stringification fails, fall through to legacy checks
+    }
+
+    // Legacy audio detection (for backwards compatibility)
+    const resultObj = result as Record<string, unknown>;
+    if ('audio' in resultObj && typeof resultObj.audio === 'string') {
+      return true;
+    }
+    if (resultObj.output && typeof resultObj.output === 'object') {
+      const output = resultObj.output as Record<string, unknown>;
+      if ('audio' in output && typeof output.audio === 'string') {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  /**
    * Emit a tool event - broadcasts to UI AND persists to database.
    * Only persists 'tool_execution_finished' events to avoid duplicates.
    */
@@ -117,18 +153,10 @@ export class MessageEventService {
       if (event.type === 'tool_execution_finished' && event.result !== undefined) {
         try {
           const fullResult = JSON.stringify(event.result);
-          const result = event.result as Record<string, unknown>;
-          // Check for audio in result.audio or result.output.audio (nested structure from native tools)
-          const hasAudioData = result && typeof result === 'object' && (
-            ('audio' in result && typeof result.audio === 'string') ||
-            (result.output && typeof result.output === 'object' && 'audio' in (result.output as Record<string, unknown>) && typeof (result.output as Record<string, unknown>).audio === 'string')
-          );
-          // Check for data:image/ URLs (from files[].dataUrl or direct image data)
-          const hasImageData = fullResult.includes('data:image/');
           const limit = 10000;
-          // For media content (audio/images) or small results, pass object directly
+          // For media content or small results, pass object directly
           // For large non-media results, truncate
-          if (hasAudioData || hasImageData || fullResult.length <= limit) {
+          if (this.hasMediaContent(event.result) || fullResult.length <= limit) {
             resultForBroadcast = event.result; // Pass object directly
           } else {
             resultForBroadcast = fullResult.substring(0, limit) + '...(truncated)';
@@ -181,18 +209,12 @@ export class MessageEventService {
       if (event.result !== undefined) {
         try {
           const fullResult = JSON.stringify(event.result);
-          // Don't truncate image data URLs or audio data
-          const hasImageData = fullResult.includes('data:image/');
-          // Check for audio in result.audio or result.output.audio (nested structure from native tools)
-          const result = event.result as Record<string, unknown>;
-          const hasAudioData = typeof result === 'object' && result !== null && (
-            ('audio' in result && typeof result.audio === 'string') ||
-            (result.output && typeof result.output === 'object' && 'audio' in (result.output as Record<string, unknown>) && typeof (result.output as Record<string, unknown>).audio === 'string')
-          );
-          const limit = (hasImageData || hasAudioData) ? 5000000 : 10000;
+          // Media content gets a much higher limit (5MB) to preserve images, audio, etc.
+          // Non-media content is limited to 10KB to avoid database bloat
+          const limit = this.hasMediaContent(event.result) ? 5000000 : 10000;
           // For media content or small results, store object directly
           // For large non-media results, store truncated string
-          if (hasImageData || hasAudioData || fullResult.length <= limit) {
+          if (fullResult.length <= limit) {
             resultForStorage = event.result; // Store object directly
           } else {
             resultForStorage = fullResult.substring(0, limit) + '...(truncated)';
