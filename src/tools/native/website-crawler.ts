@@ -299,8 +299,8 @@ export class WebsiteCrawlerTool implements NativeTool {
       await page.waitForTimeout(1000);
 
       // Extract all href values from the live DOM
-      const hrefs: string[] = await page.$$eval('a[href]', (anchors) =>
-        anchors.map((a) => a.getAttribute('href')).filter((h): h is string => !!h)
+      const hrefs: string[] = await page.$$eval('a[href]', (anchors: Element[]) =>
+        anchors.map((a: Element) => a.getAttribute('href')).filter((h: string | null): h is string => !!h)
       );
 
       const links: string[] = [];
