@@ -344,11 +344,30 @@ export class WebsiteCrawlerTool implements NativeTool {
   }
 
   /**
-   * Produce a canonical URL string: strip hash/fragment, normalise host.
+   * Produce a canonical URL string: strip hash/fragment, normalise host,
+   * remove default ports, and normalize trailing slashes.
    */
   private canonicalise(url: URL): string {
     const u = new URL(url.href);
+
+    // Strip fragment/hash
     u.hash = '';
+
+    // Lowercase hostname for case-insensitive comparison
+    u.hostname = u.hostname.toLowerCase();
+
+    // Remove default ports (80 for http, 443 for https)
+    if ((u.protocol === 'http:' && u.port === '80') ||
+        (u.protocol === 'https:' && u.port === '443')) {
+      u.port = '';
+    }
+
+    // Normalize trailing slash: add one if pathname is empty or just '/'
+    // For paths with actual content, preserve as-is (don't enforce trailing slash)
+    if (u.pathname === '' || u.pathname === '/') {
+      u.pathname = '/';
+    }
+
     return u.href;
   }
 
