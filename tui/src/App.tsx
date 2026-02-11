@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { Box, Text, useInput, useApp, useStdout } from 'ink';
 import { useWebSocket } from './hooks/useWebSocket.js';
 import { Sidebar } from './components/Sidebar.js';
@@ -42,6 +42,10 @@ export function App() {
     mcps: false,
     skills: false,
   });
+
+  // Progress debounce state (refs to avoid re-creating the callback)
+  const progressTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const pendingProgress = useRef<Record<string, { current: number; total?: number; message?: string }>>({});
 
   // Handle WebSocket messages
   const handleWsMessage = useCallback((data: WsMessage) => {
@@ -157,15 +161,44 @@ export function App() {
       const msg = data as WsMessage & { requestId: string; success: boolean; durationMs: number; error?: string; result?: unknown; conversationId?: string };
       if (msg.conversationId && msg.conversationId !== currentConversationId) return;
 
+      const toolId = `tool-${msg.requestId}`;
+      // Clear any pending progress debounce
+      if (progressTimers.current[toolId]) {
+        clearTimeout(progressTimers.current[toolId]);
+        delete progressTimers.current[toolId];
+        delete pendingProgress.current[toolId];
+      }
       setMessages(prev => prev.map(m =>
-        m.id === `tool-${msg.requestId}` ? {
+        m.id === toolId ? {
           ...m,
           status: msg.success ? 'completed' : 'failed',
           durationMs: msg.durationMs,
           error: msg.error,
           result: msg.result,
+          progress: undefined,
         } : m
       ));
+    } else if (data.type === 'tool_progress') {
+      const msg = data as WsMessage & { requestId: string; progress: { current: number; total?: number; message?: string }; conversationId?: string };
+      if (msg.conversationId && msg.conversationId !== currentConversationId) return;
+
+      const toolId = `tool-${msg.requestId}`;
+      pendingProgress.current[toolId] = msg.progress;
+
+      if (progressTimers.current[toolId]) return;
+
+      progressTimers.current[toolId] = setTimeout(() => {
+        const progress = pendingProgress.current[toolId];
+        delete progressTimers.current[toolId];
+        delete pendingProgress.current[toolId];
+        if (!progress) return;
+
+        setMessages(prev => prev.map(m =>
+          m.id === toolId && m.status === 'running'
+            ? { ...m, progress }
+            : m
+        ));
+      }, 500);
     } else if (data.type === 'delegation') {
       const msg = data as WsMessage & { agentId: string; agentName: string; agentEmoji: string; agentType: string; mission: string; conversationId?: string };
       if (msg.conversationId && msg.conversationId !== currentConversationId) return;

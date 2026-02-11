@@ -2217,10 +2217,51 @@ html, body {
   to { transform: rotate(360deg); }
 }
 
+/* Tool Progress Bar (inline) */
+.tool-progress {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-left: 0.5rem;
+  font-size: 0.75rem;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.tool-progress-bar {
+  flex-shrink: 0;
+  display: inline-block;
+  width: 80px;
+  height: 4px;
+  background: var(--border-color);
+  border-radius: 2px;
+  overflow: hidden;
+  vertical-align: middle;
+}
+
+.tool-progress-fill {
+  display: block;
+  height: 100%;
+  background: #2196f3;
+  border-radius: 2px;
+  transition: width 0.3s ease;
+}
+
+.tool-progress-message {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-secondary);
+  opacity: 0.8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .tool-event .tool-name {
   font-weight: 600;
   color: var(--text-primary);
-  flex-shrink: 0;
+  flex: 0 0 auto;
   font-size: 0.8125rem;
 }
 

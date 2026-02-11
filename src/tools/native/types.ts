@@ -16,6 +16,35 @@ export interface NativeToolResult {
     size: number;
     mediaType?: string;
   }>;
+  /**
+   * When true, the tool's output is displayed to the user via the UI event
+   * broadcast but is NOT fed back to the LLM as a tool_result content block.
+   * Instead, a minimal acknowledgment string is sent to the LLM.
+   * Use this for tools that produce large display-oriented output (e.g. URL
+   * lists, tables, logs) that the LLM does not need to reason over.
+   */
+  displayOnly?: boolean;
+  /**
+   * Short summary sent to the LLM in place of the full output when
+   * displayOnly is true. If omitted, a generic acknowledgment is used.
+   */
+  displayOnlySummary?: string;
+}
+
+/**
+ * Context passed to a tool during execution, providing optional callbacks
+ * for communicating with the runtime (e.g. progress updates).
+ */
+export interface ToolExecutionContext {
+  /**
+   * Report progress during a long-running operation.
+   * The runtime forwards this to the UI via the tool event broadcast system.
+   */
+  onProgress?: (progress: {
+    current: number;
+    total?: number;
+    message?: string;
+  }) => void;
 }
 
 export interface NativeTool {
@@ -30,5 +59,11 @@ export interface NativeTool {
    */
   readonly private?: boolean;
 
-  execute(params: Record<string, unknown>): Promise<NativeToolResult>;
+  /**
+   * Execute the tool with the provided parameters.
+   * @param params - The input parameters for the tool, validated against inputSchema
+   * @param context - Optional execution context providing callbacks for progress updates
+   * @returns A promise resolving to the tool execution result
+   */
+  execute(params: Record<string, unknown>, context?: ToolExecutionContext): Promise<NativeToolResult>;
 }
