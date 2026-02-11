@@ -2217,29 +2217,31 @@ html, body {
   to { transform: rotate(360deg); }
 }
 
-/* Tool Progress Bar */
+/* Tool Progress Bar (inline) */
 .tool-progress {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.25rem 0.75rem 0.4rem;
-  background: var(--bg-secondary);
-  border: 1px solid #2196f3;
-  border-top: none;
-  border-radius: 0 0 0.5rem 0.5rem;
+  gap: 0.4rem;
+  margin-left: 0.5rem;
   font-size: 0.75rem;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .tool-progress-bar {
   flex-shrink: 0;
-  width: 120px;
+  display: inline-block;
+  width: 80px;
   height: 4px;
   background: var(--border-color);
   border-radius: 2px;
   overflow: hidden;
+  vertical-align: middle;
 }
 
 .tool-progress-fill {
+  display: block;
   height: 100%;
   background: #2196f3;
   border-radius: 2px;
@@ -2250,7 +2252,7 @@ html, body {
   flex: 1;
   min-width: 0;
   color: var(--text-secondary);
-  opacity: 0.7;
+  opacity: 0.8;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2259,7 +2261,7 @@ html, body {
 .tool-event .tool-name {
   font-weight: 600;
   color: var(--text-primary);
-  flex-shrink: 0;
+  flex: 0 0 auto;
   font-size: 0.8125rem;
 }
 
@@ -2301,8 +2303,7 @@ html, body {
   transition: border-radius 0.2s;
 }
 
-.tool-event-wrapper.expanded .tool-event,
-.tool-event-wrapper .tool-event:has(+ .tool-progress) {
+.tool-event-wrapper.expanded .tool-event {
   border-bottom-left-radius: 0;
   border-bottom-right-radius: 0;
 }

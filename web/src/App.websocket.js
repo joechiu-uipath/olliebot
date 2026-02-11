@@ -63,6 +63,7 @@ export function createMessageHandler(deps) {
     'error',
     'tool_requested',
     'tool_execution_finished',
+    'tool_progress',
     'delegation',
     'task_run',
   ]);
@@ -365,17 +366,8 @@ export function createMessageHandler(deps) {
     }
   }
 
-  const progressDebounceTimers = {};
-  const pendingProgress = {};
-
   function handleToolFinished(data) {
     const toolId = `tool-${data.requestId}`;
-    // Clear any pending progress debounce
-    if (progressDebounceTimers[toolId]) {
-      clearTimeout(progressDebounceTimers[toolId]);
-      delete progressDebounceTimers[toolId];
-      delete pendingProgress[toolId];
-    }
     setMessages((prev) =>
       prev.map((m) =>
         m.id === toolId
@@ -395,24 +387,16 @@ export function createMessageHandler(deps) {
 
   function handleToolProgress(data) {
     const toolId = `tool-${data.requestId}`;
-    pendingProgress[toolId] = data.progress;
+    const progress = data.progress;
 
-    if (progressDebounceTimers[toolId]) return;
-
-    progressDebounceTimers[toolId] = setTimeout(() => {
-      const progress = pendingProgress[toolId];
-      delete progressDebounceTimers[toolId];
-      delete pendingProgress[toolId];
-      if (!progress) return;
-
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === toolId && m.status === 'running'
-            ? { ...m, progress }
-            : m
-        )
-      );
-    }, 500);
+    // Update immediately (debouncing caused issues when tool_finished arrived quickly)
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.id === toolId && m.status === 'running'
+          ? { ...m, progress }
+          : m
+      )
+    );
   }
 
   function handleDelegation(data) {

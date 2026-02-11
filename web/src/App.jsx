@@ -1450,6 +1450,19 @@ function App() {
             {msg.parameters?.task && (
               <span className="tool-mission">{msg.parameters.task}</span>
             )}
+            {msg.status === 'running' && msg.progress && (
+              <span className="tool-progress">
+                <span className="tool-progress-bar">
+                  <span
+                    className="tool-progress-fill"
+                    style={{ width: msg.progress.total ? `${Math.min(100, (msg.progress.current / msg.progress.total) * 100)}%` : '0%' }}
+                  />
+                </span>
+                {msg.progress.message && (
+                  <span className="tool-progress-message">{msg.progress.message}</span>
+                )}
+              </span>
+            )}
             {msg.durationMs !== undefined && (
               <span className="tool-duration">{msg.durationMs}ms</span>
             )}
@@ -1457,19 +1470,6 @@ function App() {
               {expandedTools.has(msg.id) ? '▼' : '▶'}
             </span>
           </div>
-          {msg.status === 'running' && msg.progress && (
-            <div className="tool-progress">
-              <div className="tool-progress-bar">
-                <div
-                  className="tool-progress-fill"
-                  style={{ width: msg.progress.total ? `${Math.min(100, (msg.progress.current / msg.progress.total) * 100)}%` : '0%' }}
-                />
-              </div>
-              {msg.progress.message && (
-                <span className="tool-progress-message">{msg.progress.message}</span>
-              )}
-            </div>
-          )}
           {expandedTools.has(msg.id) && (
             <div className="tool-details">
               {(msg.agentName || msg.agentEmoji) && (
