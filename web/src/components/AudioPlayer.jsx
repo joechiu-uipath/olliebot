@@ -26,10 +26,9 @@ export function AudioPlayer({ audioDataUrl, audioBase64, mimeType }) {
       if (base64) {
         await playAudioData(base64, mime);
       }
+      setIsPlaying(false);
     } catch (error) {
-      // Log playback errors so they can be diagnosed, but always reset isPlaying
       console.error('Failed to play audio data:', error);
-    } finally {
       setIsPlaying(false);
     }
   };

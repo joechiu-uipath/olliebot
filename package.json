@@ -8,6 +8,7 @@
     "tui"
   ],
   "scripts": {
+    "dev": "concurrently -n server,web -c blue,green \"pnpm run dev:server\" \"pnpm run dev:web\"",
     "dev:server": "nodemon --watch src --watch .env -e ts,json --exec \"tsx --inspect src/index.ts\"",
     "dev:server-proxy": "cross-env HTTP_PROXY=http://127.0.0.1:8888 HTTPS_PROXY=http://127.0.0.1:8888 NODE_TLS_REJECT_UNAUTHORIZED=0 nodemon --watch src --watch .env -e ts,json --exec \"tsx --inspect src/index.ts\"",
     "dev:console": "tsx src/index.ts console",
