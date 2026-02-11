@@ -98,7 +98,6 @@ export class WebSocketChannel implements Channel {
       const message: Message = {
         // Use client-provided messageId if available (for deduplication), otherwise generate one
         id: msg.messageId || uuid(),
-        channel: this.id,
         role: 'user',
         content: msg.content || '',
         attachments: msg.attachments,

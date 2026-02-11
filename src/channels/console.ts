@@ -1,6 +1,5 @@
 import { select, search } from '@inquirer/prompts';
 import { v4 as uuid } from 'uuid';
-import * as readline from 'readline';
 import type { Channel, Message, SendOptions, StreamStartOptions, StreamEndOptions } from './types.js';
 import { SUPERVISOR_ICON, SUPERVISOR_NAME } from '../constants.js';
 
@@ -72,15 +71,12 @@ export class ConsoleChannel implements Channel {
   readonly name = 'console';
 
   private messageHandler: ((message: Message) => Promise<void>) | null = null;
-  private actionHandler: ((action: string, data: unknown) => Promise<void>) | null = null;
   private connected = false;
-  private inputLoop: Promise<void> | null = null;
   private shouldStop = false;
   private activeStreams: Map<string, { agentName?: string; agentEmoji?: string }> = new Map();
   private conversationProvider: ConversationProvider | null = null;
   private systemProvider: SystemProvider | null = null;
   private slashCommands: SlashCommand[] = [];
-  private rl: readline.Interface | null = null;
 
   constructor(id: string = 'console-default') {
     this.id = id;
@@ -155,7 +151,8 @@ export class ConsoleChannel implements Channel {
   }
 
   private startInputLoop(): void {
-    this.inputLoop = this.runInputLoop();
+    // Fire and forget - the loop runs until shouldStop is set
+    void this.runInputLoop();
   }
 
   private getPromptPrefix(): string {
@@ -202,7 +199,6 @@ export class ConsoleChannel implements Channel {
         if (userInput.trim() && this.messageHandler) {
           const message: Message = {
             id: uuid(),
-            channel: this.id,
             role: 'user',
             content: userInput,
             createdAt: new Date(),
@@ -729,8 +725,9 @@ export class ConsoleChannel implements Channel {
     this.messageHandler = handler;
   }
 
-  onAction(handler: (action: string, data: unknown) => Promise<void>): void {
-    this.actionHandler = handler;
+  // No-op for console - actions come from UI buttons which console doesn't have
+  onAction(_handler: (action: string, data: unknown) => Promise<void>): void {
+    // Console has no action buttons, nothing to handle
   }
 
   isConnected(): boolean {
@@ -740,9 +737,6 @@ export class ConsoleChannel implements Channel {
   async close(): Promise<void> {
     this.shouldStop = true;
     this.connected = false;
-    if (this.rl) {
-      this.rl.close();
-    }
   }
 
   // No-op for console channel - no connected clients to broadcast to

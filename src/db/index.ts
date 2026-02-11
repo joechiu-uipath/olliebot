@@ -16,7 +16,6 @@ import { dirname } from 'path';
 export interface Conversation {
   id: string;
   title: string;
-  channel: string;
   createdAt: string;
   updatedAt: string;
   deletedAt: string | null;
@@ -26,7 +25,6 @@ export interface Conversation {
 export interface Message {
   id: string;
   conversationId: string;
-  channel: string;
   role: 'user' | 'assistant' | 'system' | 'tool';
   content: string;
   metadata: Record<string, unknown>;
@@ -99,7 +97,7 @@ interface DatabaseData {
 export interface ConversationRepository {
   findById(id: string): Conversation | undefined;
   findAll(options?: { limit?: number; includeDeleted?: boolean }): Conversation[];
-  findRecent(channel: string, withinMs: number): Conversation | undefined;
+  findRecent(withinMs: number): Conversation | undefined;
   create(conversation: Conversation): void;
   update(id: string, updates: Partial<Omit<Conversation, 'id'>>): void;
   softDelete(id: string): void;
@@ -342,11 +340,11 @@ class Database {
         return alasql(`SELECT * FROM conversations WHERE deletedAt IS NULL ORDER BY updatedAt DESC LIMIT ${limit}`) as Conversation[];
       },
 
-      findRecent: (channel: string, withinMs: number): Conversation | undefined => {
+      findRecent: (withinMs: number): Conversation | undefined => {
         const cutoff = new Date(Date.now() - withinMs).toISOString();
         const results = alasql(
-          'SELECT * FROM conversations WHERE channel = ? AND updatedAt > ? AND deletedAt IS NULL ORDER BY updatedAt DESC LIMIT 1',
-          [channel, cutoff]
+          'SELECT * FROM conversations WHERE updatedAt > ? AND deletedAt IS NULL ORDER BY updatedAt DESC LIMIT 1',
+          [cutoff]
         ) as Conversation[];
         return results[0];
       },

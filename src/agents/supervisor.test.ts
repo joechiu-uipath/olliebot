@@ -167,8 +167,7 @@ describe('SupervisorAgentImpl', () => {
     it('skips already-processing messages', async () => {
       const message: Message = {
         id: 'msg-1',
-        channel: 'web',
-        role: 'user',
+                role: 'user',
         content: 'Hello',
         createdAt: new Date(),
       };
@@ -192,8 +191,7 @@ describe('SupervisorAgentImpl', () => {
     it('routes command trigger to worker without LLM call', async () => {
       const message: Message = {
         id: 'msg-1',
-        channel: 'web',
-        role: 'user',
+                role: 'user',
         content: 'Tell me about AI',
         createdAt: new Date(),
         metadata: {
@@ -215,8 +213,7 @@ describe('SupervisorAgentImpl', () => {
     it('ignores unknown command triggers', async () => {
       const message: Message = {
         id: 'msg-1',
-        channel: 'web',
-        role: 'user',
+                role: 'user',
         content: 'Hello',
         createdAt: new Date(),
         metadata: {
@@ -238,8 +235,7 @@ describe('SupervisorAgentImpl', () => {
     it('creates new conversation when none exists', async () => {
       const message: Message = {
         id: 'msg-1',
-        channel: 'web',
-        role: 'user',
+                role: 'user',
         content: 'Hello world',
         createdAt: new Date(),
       };
@@ -250,8 +246,7 @@ describe('SupervisorAgentImpl', () => {
 
       expect(mockConversationsCreate).toHaveBeenCalledWith(
         expect.objectContaining({
-          channel: 'web',
-          title: expect.any(String),
+                    title: expect.any(String),
         })
       );
     });
@@ -260,13 +255,11 @@ describe('SupervisorAgentImpl', () => {
       mockConversationsFindRecent.mockReturnValueOnce({
         id: 'existing-conv',
         title: 'Previous Chat',
-        channel: 'web',
-      });
+              });
 
       const message: Message = {
         id: 'msg-1',
-        channel: 'web',
-        role: 'user',
+                role: 'user',
         content: 'Continue our chat',
         createdAt: new Date(),
       };
@@ -302,8 +295,8 @@ describe('SupervisorAgentImpl', () => {
 
     it('setConversationId loads history from database', () => {
       mockMessagesFindByConversationId.mockReturnValueOnce([
-        { id: 'msg-1', role: 'user', content: 'Hello', channel: 'web', createdAt: '2024-01-01' },
-        { id: 'msg-2', role: 'assistant', content: 'Hi!', channel: 'web', createdAt: '2024-01-01' },
+        { id: 'msg-1', role: 'user', content: 'Hello', createdAt: '2024-01-01' },
+        { id: 'msg-2', role: 'assistant', content: 'Hi!', createdAt: '2024-01-01' },
       ]);
 
       supervisor.setConversationId('new-conv');
@@ -314,10 +307,10 @@ describe('SupervisorAgentImpl', () => {
 
     it('setConversationId filters out tool and delegation messages', () => {
       mockMessagesFindByConversationId.mockReturnValueOnce([
-        { id: 'msg-1', role: 'user', content: 'Hello', channel: 'web', createdAt: '2024-01-01' },
-        { id: 'msg-2', role: 'tool', content: '', channel: 'web', createdAt: '2024-01-01' },
-        { id: 'msg-3', role: 'system', content: '', channel: 'web', createdAt: '2024-01-01', metadata: { type: 'delegation' } },
-        { id: 'msg-4', role: 'assistant', content: 'Hi!', channel: 'web', createdAt: '2024-01-01' },
+        { id: 'msg-1', role: 'user', content: 'Hello', createdAt: '2024-01-01' },
+        { id: 'msg-2', role: 'tool', content: '', createdAt: '2024-01-01' },
+        { id: 'msg-3', role: 'system', content: '', createdAt: '2024-01-01', metadata: { type: 'delegation' } },
+        { id: 'msg-4', role: 'assistant', content: 'Hi!', createdAt: '2024-01-01' },
       ]);
 
       supervisor.setConversationId('new-conv');
@@ -333,8 +326,7 @@ describe('SupervisorAgentImpl', () => {
     it('creates new conversation for user messages from feed', async () => {
       const message: Message = {
         id: 'msg-1',
-        channel: 'web',
-        role: 'user',
+                role: 'user',
         content: 'Hello from feed',
         createdAt: new Date(),
         metadata: { conversationId: 'feed' },
@@ -351,8 +343,7 @@ describe('SupervisorAgentImpl', () => {
     it('uses feed conversation for scheduled tasks', async () => {
       const message: Message = {
         id: 'msg-1',
-        channel: 'web',
-        role: 'user',
+                role: 'user',
         content: 'Scheduled task',
         createdAt: new Date(),
         metadata: {
@@ -374,8 +365,7 @@ describe('SupervisorAgentImpl', () => {
     it('saves user message to database', async () => {
       const message: Message = {
         id: 'msg-1',
-        channel: 'web',
-        role: 'user',
+                role: 'user',
         content: 'Test message',
         createdAt: new Date(),
       };

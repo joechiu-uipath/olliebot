@@ -138,13 +138,12 @@ describe('WorkerAgent', () => {
       worker.conversationId = 'conv-123';
       worker.turnId = 'turn-1';
 
-      (worker as any).saveAssistantMessage('web', 'Test content');
+      (worker as any).saveAssistantMessage('Test content');
 
       expect(mockMessagesCreate).toHaveBeenCalledWith(
         expect.objectContaining({
           conversationId: 'conv-123',
-          channel: 'web',
-          role: 'assistant',
+                    role: 'assistant',
           content: 'Test content',
           turnId: 'turn-1',
           metadata: expect.objectContaining({
@@ -161,7 +160,7 @@ describe('WorkerAgent', () => {
       worker.conversationId = null;
       const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-      (worker as any).saveAssistantMessage('web', 'Test content');
+      (worker as any).saveAssistantMessage('Test content');
 
       expect(consoleSpy).toHaveBeenCalledWith(
         expect.stringContaining('conversationId is null, cannot save assistant message')
@@ -180,7 +179,7 @@ describe('WorkerAgent', () => {
         ],
       };
 
-      (worker as any).saveAssistantMessage('web', 'Content with citations', citations);
+      (worker as any).saveAssistantMessage('Content with citations', citations);
 
       expect(mockMessagesCreate).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -311,8 +310,7 @@ describe('WorkerAgent', () => {
 
       const message: Message = {
         id: 'msg-1',
-        channel: 'web',
-        role: 'user',
+                role: 'user',
         content: 'Test',
         createdAt: new Date(),
       };
@@ -337,8 +335,7 @@ describe('WorkerAgent', () => {
 
       const message: Message = {
         id: 'msg-1',
-        channel: 'web',
-        role: 'user',
+                role: 'user',
         content: 'Do task',
         createdAt: new Date(),
       };
@@ -363,8 +360,7 @@ describe('WorkerAgent', () => {
 
       const message: Message = {
         id: 'msg-1',
-        channel: 'web',
-        role: 'user',
+                role: 'user',
         content: 'Do task',
         createdAt: new Date(),
       };
@@ -390,8 +386,7 @@ describe('WorkerAgent', () => {
 
       const message: Message = {
         id: 'msg-1',
-        channel: 'web',
-        role: 'user',
+                role: 'user',
         content: 'Do task',
         createdAt: new Date(),
       };
@@ -416,8 +411,7 @@ describe('WorkerAgent', () => {
 
       const message: Message = {
         id: 'msg-1',
-        channel: 'web',
-        role: 'user',
+                role: 'user',
         content: 'Do task',
         createdAt: new Date(),
       };

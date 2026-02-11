@@ -7,7 +7,7 @@
  *
  * Usage:
  *   const service = new MessageEventService(webChannel);
- *   service.emitToolEvent(event, conversationId, channelId, agentInfo);
+ *   service.emitToolEvent(event, conversationId, agentInfo);
  *   service.emitDelegationEvent(...);
  *   service.emitTaskRunEvent(...);
  *   service.emitErrorEvent(...);
@@ -104,12 +104,11 @@ export class MessageEventService {
   emitToolEvent(
     event: ToolEvent,
     conversationId: string | null,
-    channelId: string,
     agentInfo: AgentInfo,
     turnId?: string
   ): void {
     // Broadcast to UI
-    if (this.channel && typeof this.channel.broadcast === 'function') {
+    if (this.channel) {
       // Check if result contains audio data - if so, broadcast play_audio event
       // Audio can be in result.audio (legacy) or result.output.audio (nested from native tools)
       if (event.type === 'tool_execution_finished' && event.result !== undefined) {
@@ -231,7 +230,6 @@ export class MessageEventService {
       db.messages.create({
         id: messageId,
         conversationId,
-        channel: channelId,
         role: 'tool',
         content: '',
         metadata: {
@@ -263,13 +261,12 @@ export class MessageEventService {
   emitDelegationEvent(
     data: DelegationEventData,
     conversationId: string | null,
-    channelId: string,
     turnId?: string
   ): void {
     const timestamp = new Date().toISOString();
 
     // Broadcast to UI
-    if (this.channel && typeof this.channel.broadcast === 'function') {
+    if (this.channel) {
       this.channel.broadcast({
         type: 'delegation',
         agentId: data.agentId,
@@ -307,7 +304,6 @@ export class MessageEventService {
       db.messages.create({
         id: messageId,
         conversationId,
-        channel: channelId,
         role: 'system',
         content: '',
         metadata: {
@@ -336,8 +332,7 @@ export class MessageEventService {
    */
   emitTaskRunEvent(
     data: TaskRunEventData,
-    conversationId: string | null,
-    channelId: string
+    conversationId: string | null
   ): string {
     const timestamp = new Date().toISOString();
     const messageId = `task-run-${data.taskId}`;
@@ -346,7 +341,7 @@ export class MessageEventService {
     const turnId = messageId;
 
     // Broadcast to UI
-    if (this.channel && typeof this.channel.broadcast === 'function') {
+    if (this.channel) {
       this.channel.broadcast({
         type: 'task_run',
         taskId: data.taskId,
@@ -378,7 +373,6 @@ export class MessageEventService {
       db.messages.create({
         id: messageId,
         conversationId,
-        channel: channelId,
         role: 'system',
         content: '',
         metadata: {
@@ -402,14 +396,13 @@ export class MessageEventService {
    */
   emitErrorEvent(
     data: ErrorEventData,
-    conversationId: string | null,
-    channelId: string
+    conversationId: string | null
   ): void {
     const timestamp = new Date().toISOString();
     const messageId = `error-${uuid()}`;
 
     // Broadcast to UI
-    if (this.channel && typeof this.channel.broadcast === 'function') {
+    if (this.channel) {
       this.channel.broadcast({
         type: 'error',
         id: messageId,
@@ -434,7 +427,6 @@ export class MessageEventService {
       db.messages.create({
         id: messageId,
         conversationId,
-        channel: channelId,
         role: 'system',
         content: '',
         metadata: {

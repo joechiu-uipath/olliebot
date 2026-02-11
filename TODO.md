@@ -1,6 +1,4 @@
 
-Investigate - tool result => storage & display test
-
 Investigate - decoupled sendToChannel() and saveAssistantMessage()
 
             await this.sendToChannel(channel, response, { markdown: true });

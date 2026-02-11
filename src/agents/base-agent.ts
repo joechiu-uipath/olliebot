@@ -26,7 +26,7 @@ export abstract class AbstractAgent implements BaseAgent {
 
   protected _state: AgentState;
   protected llmService: LLMService;
-  protected channels: Map<string, Channel> = new Map();
+  protected channel: Channel | null = null;
   protected conversationHistory: Message[] = [];
   protected agentRegistry: AgentRegistry | null = null;
   protected toolRunner: ToolRunner | null = null;
@@ -206,7 +206,7 @@ export abstract class AbstractAgent implements BaseAgent {
   }
 
   registerChannel(channel: Channel): void {
-    this.channels.set(channel.id, channel);
+    this.channel = channel;
   }
 
   async init(): Promise<void> {
@@ -228,7 +228,6 @@ export abstract class AbstractAgent implements BaseAgent {
     // Create agent-attributed message
     const agentMessage: AgentMessage = {
       id: uuid(),
-      channel: channel.id,
       role: 'assistant',
       content,
       agentId: this.identity.id,

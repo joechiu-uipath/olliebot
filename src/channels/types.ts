@@ -9,7 +9,6 @@ export interface MessageAttachment {
 
 export interface Message {
   id: string;
-  channel: string;
   role: 'user' | 'assistant' | 'system';
   content: string;
   attachments?: MessageAttachment[];

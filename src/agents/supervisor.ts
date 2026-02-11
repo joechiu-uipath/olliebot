@@ -27,7 +27,6 @@ import { SUPERVISOR_ICON, SUPERVISOR_NAME } from '../constants.js';
 export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAgent {
   private subAgents: Map<string, WorkerAgent> = new Map();
   private tasks: Map<string, TaskAssignment> = new Map();
-  private messageChannelMap: Map<string, string> = new Map(); // messageId -> channelId
   private currentConversationId: string | null = null;
   private currentTurnId: string | null = null; // ID of the originating message for this turn
   private conversationMessageCount: Map<string, number> = new Map(); // Track message counts for auto-naming
@@ -123,18 +122,15 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
     // For user messages, the message ID is the turnId
     this.currentTurnId = (message.metadata?.turnId as string) || message.id;
 
-    // Store channel mapping for response routing
-    this.messageChannelMap.set(message.id, message.channel);
-
     // Save message to history
     this.conversationHistory.push(message);
     this.saveMessage(message);
 
-    const channel = this.channels.get(message.channel);
-    if (!channel) {
-      console.error(`[${this.identity.name}] Channel not found: ${message.channel}`);
+    if (!this.channel) {
+      console.error(`[${this.identity.name}] No channel registered`);
       return;
     }
+    const channel = this.channel;
 
     try {
       // Check for agent command in metadata first (from UI badge selection)
@@ -189,7 +185,7 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
             await this.handleDelegation(delegationMatch[1], message, channel);
           } else {
             await this.sendToChannel(channel, response, { markdown: true });
-            this.saveAssistantMessage(message.channel, response, message.metadata?.reasoningMode as string | undefined);
+            this.saveAssistantMessage( response, message.metadata?.reasoningMode as string | undefined);
           }
         }
       }
@@ -230,7 +226,7 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
         messageEventService.setChannel(channel as Channel);
 
         // Use centralized service that broadcasts AND persists
-        messageEventService.emitToolEvent(event, this.currentConversationId, message.channel, {
+        messageEventService.emitToolEvent(event, this.currentConversationId, {
           id: this.identity.id,
           name: this.identity.name,
           emoji: this.identity.emoji,
@@ -371,7 +367,7 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
               // Save any response content before delegation
               const reasoningMode = message.metadata?.reasoningMode as string | undefined;
               if (fullResponse.trim()) {
-                this.saveAssistantMessage(message.channel, fullResponse.trim(), reasoningMode);
+                this.saveAssistantMessage( fullResponse.trim(), reasoningMode);
               }
 
               // Delegation logging handled by handleDelegationFromTool
@@ -439,7 +435,7 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
       // Save the response (delegation is now handled via tool use, not markdown blocks)
       const reasoningMode = message.metadata?.reasoningMode as string | undefined;
       if (fullResponse.trim()) {
-        this.saveAssistantMessage(message.channel, fullResponse, reasoningMode, citationData);
+        this.saveAssistantMessage( fullResponse, reasoningMode, citationData);
       }
     } catch (error) {
       this.endStreamWithCitations(channel, streamId, this.currentConversationId || undefined, undefined);
@@ -493,7 +489,7 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
         agent.conversationId = this.currentConversationId;
       } else {
         // Ensure we have a conversation before delegating
-        const convId = this.ensureConversation(originalMessage.channel, originalMessage.content);
+        const convId = this.ensureConversation(originalMessage.content);
         agent.conversationId = convId;
       }
       agent.turnId = this.currentTurnId;
@@ -511,7 +507,6 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
           rationale,
         },
         this.currentConversationId,
-        originalMessage.channel,
         this.currentTurnId || undefined
       );
 
@@ -529,7 +524,6 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
         ...this.conversationHistory.slice(-10),
         {
           id: uuid(),
-          channel: originalMessage.channel,
           role: 'system',
           content: 'Delegation failed. Please respond directly to the user.',
           createdAt: new Date(),
@@ -577,7 +571,7 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
         agent.conversationId = this.currentConversationId;
       } else {
         // Ensure we have a conversation before delegating
-        const convId = this.ensureConversation(originalMessage.channel, originalMessage.content);
+        const convId = this.ensureConversation(originalMessage.content);
         agent.conversationId = convId;
       }
       agent.turnId = this.currentTurnId;
@@ -595,7 +589,6 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
           rationale,
         },
         this.currentConversationId,
-        originalMessage.channel,
         this.currentTurnId || undefined
       );
 
@@ -613,7 +606,6 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
         ...this.conversationHistory.slice(-10),
         {
           id: uuid(),
-          channel: originalMessage.channel,
           role: 'system',
           content: 'Delegation failed. Please respond directly to the user.',
           createdAt: new Date(),
@@ -770,11 +762,10 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
       }
       case 'request_help': {
         // Sub-agent requesting help
-        const payload = comm.payload as { question: string; channelId: string };
-        const channel = this.channels.get(payload.channelId);
-        if (channel) {
+        const payload = comm.payload as { question: string };
+        if (this.channel) {
           await this.sendToChannel(
-            channel,
+            this.channel,
             `📢 Agent ${comm.fromAgent} needs assistance: ${payload.question}`,
             { markdown: true }
           );
@@ -788,7 +779,7 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
     }
   }
 
-  private ensureConversation(channel: string, firstMessageContent?: string | unknown[]): string {
+  private ensureConversation(firstMessageContent?: string | unknown[]): string {
     const db = getDb();
 
     // Helper to generate title from message content
@@ -815,9 +806,8 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
             updatedAt: new Date().toISOString(),
           });
           // Notify frontend about the title update
-          const ch = this.channels.get(channel);
-          if (ch) {
-            ch.broadcast({
+          if (this.channel) {
+            this.channel.broadcast({
               type: 'conversation_updated',
               conversation: { id: this.currentConversationId, title: newTitle, updatedAt: new Date().toISOString() },
             });
@@ -830,7 +820,7 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
     }
 
     // Check for recent conversation (within last hour)
-    const recentConversation = db.conversations.findRecent(channel, 60 * 60 * 1000);
+    const recentConversation = db.conversations.findRecent(60 * 60 * 1000);
 
     if (recentConversation) {
       this.currentConversationId = recentConversation.id;
@@ -843,9 +833,8 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
             updatedAt: new Date().toISOString(),
           });
           // Notify frontend about the title update
-          const ch = this.channels.get(channel);
-          if (ch) {
-            ch.broadcast({
+          if (this.channel) {
+            this.channel.broadcast({
               type: 'conversation_updated',
               conversation: { id: this.currentConversationId, title: newTitle, updatedAt: new Date().toISOString() },
             });
@@ -867,7 +856,6 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
     db.conversations.create({
       id,
       title,
-      channel,
       createdAt: now,
       updatedAt: now,
       deletedAt: null,
@@ -876,14 +864,12 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
     this.currentConversationId = id;
 
     // Notify frontend about the new conversation
-    const ch = this.channels.get(channel);
-    if (ch) {
-      ch.broadcast({
+    if (this.channel) {
+      this.channel.broadcast({
         type: 'conversation_created',
         conversation: {
           id,
           title,
-          channel,
           createdAt: now,
           updatedAt: now,
         },
@@ -929,7 +915,6 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
         })
         .map((m) => ({
           id: m.id,
-          channel: m.channel,
           role: m.role as Message['role'],
           content: m.content,
           createdAt: new Date(m.createdAt),
@@ -952,7 +937,7 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
   private saveMessage(message: Message): void {
     try {
       const db = getDb();
-      const conversationId = this.ensureConversation(message.channel, message.role === 'user' ? message.content : undefined);
+      const conversationId = this.ensureConversation(message.role === 'user' ? message.content : undefined);
 
       // Include attachment info in metadata (without base64 data)
       const metadata = {
@@ -967,7 +952,6 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
       db.messages.create({
         id: message.id,
         conversationId,
-        channel: message.channel,
         role: message.role,
         content: message.content,
         metadata,
@@ -976,13 +960,13 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
       });
 
       // Track message count for auto-naming
-      this.incrementMessageCount(conversationId, message.channel);
+      this.incrementMessageCount(conversationId);
     } catch (error) {
       console.error(`[${this.identity.name}] Failed to save message:`, error);
     }
   }
 
-  private saveAssistantMessage(channelId: string, content: string, reasoningMode?: string, citations?: StoredCitationData): void {
+  private saveAssistantMessage(content: string, reasoningMode?: string, citations?: StoredCitationData): void {
     const metadata: Record<string, unknown> = {
       agentId: this.identity.id,
       agentName: this.identity.name,
@@ -996,7 +980,6 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
 
     const message: Message = {
       id: uuid(),
-      channel: channelId,
       role: 'assistant',
       content,
       metadata,
@@ -1010,7 +993,7 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
    * Auto-generate a conversation title based on the first few messages
    * Skips conversations that have been manually named by the user
    */
-  private async autoNameConversation(conversationId: string, channelId: string): Promise<void> {
+  private async autoNameConversation(conversationId: string): Promise<void> {
     try {
       const db = getDb();
 
@@ -1048,9 +1031,8 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
         db.conversations.update(conversationId, { title, updatedAt: now });
 
         // Notify frontend about the updated title
-        const ch = this.channels.get(channelId);
-        if (ch) {
-          ch.broadcast({
+        if (this.channel) {
+          this.channel.broadcast({
             type: 'conversation_updated',
             conversation: {
               id: conversationId,
@@ -1067,14 +1049,14 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
     }
   }
 
-  private incrementMessageCount(conversationId: string, channelId: string): void {
+  private incrementMessageCount(conversationId: string): void {
     const count = (this.conversationMessageCount.get(conversationId) || 0) + 1;
     this.conversationMessageCount.set(conversationId, count);
 
     // Auto-name after exactly 3 messages
     if (count === 3) {
       // Run async without blocking
-      this.autoNameConversation(conversationId, channelId).catch((err) => {
+      this.autoNameConversation(conversationId).catch((err) => {
         console.error(`[${this.identity.name}] Auto-naming error:`, err);
       });
     }

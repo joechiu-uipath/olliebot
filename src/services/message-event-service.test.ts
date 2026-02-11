@@ -65,7 +65,7 @@ describe('MessageEventService', () => {
     };
 
     it('broadcasts tool event to clients', () => {
-      service.emitToolEvent(baseEvent, 'conv-123', 'web', agentInfo);
+      service.emitToolEvent(baseEvent, 'conv-123', agentInfo);
 
       expect(mockBroadcast).toHaveBeenCalledTimes(1);
       expect(mockBroadcast).toHaveBeenCalledWith(
@@ -80,14 +80,13 @@ describe('MessageEventService', () => {
     });
 
     it('persists tool_execution_finished events to database', () => {
-      service.emitToolEvent(baseEvent, 'conv-123', 'web', agentInfo);
+      service.emitToolEvent(baseEvent, 'conv-123', agentInfo);
 
       expect(mockMessagesCreate).toHaveBeenCalledTimes(1);
       expect(mockMessagesCreate).toHaveBeenCalledWith(
         expect.objectContaining({
           id: 'tool-req-123',
           conversationId: 'conv-123',
-          channel: 'web',
           role: 'tool',
           metadata: expect.objectContaining({
             type: 'tool_event',
@@ -105,7 +104,7 @@ describe('MessageEventService', () => {
         type: 'tool_requested',
       };
 
-      service.emitToolEvent(startEvent, 'conv-123', 'web', agentInfo);
+      service.emitToolEvent(startEvent, 'conv-123', agentInfo);
 
       expect(mockBroadcast).toHaveBeenCalledTimes(1); // Still broadcasts
       expect(mockMessagesCreate).not.toHaveBeenCalled(); // But doesn't persist
@@ -114,7 +113,7 @@ describe('MessageEventService', () => {
     it('logs error when conversationId is null for finished events', () => {
       const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-      service.emitToolEvent(baseEvent, null, 'web', agentInfo);
+      service.emitToolEvent(baseEvent, null, agentInfo);
 
       expect(consoleSpy).toHaveBeenCalledWith(
         expect.stringContaining('Cannot save tool event: conversationId is null')
@@ -127,7 +126,7 @@ describe('MessageEventService', () => {
     it('skips duplicate events (already exists in DB)', () => {
       mockMessagesFindById.mockReturnValueOnce({ id: 'tool-req-123' });
 
-      service.emitToolEvent(baseEvent, 'conv-123', 'web', agentInfo);
+      service.emitToolEvent(baseEvent, 'conv-123', agentInfo);
 
       expect(mockMessagesCreate).not.toHaveBeenCalled();
     });
@@ -142,7 +141,7 @@ describe('MessageEventService', () => {
         },
       };
 
-      service.emitToolEvent(audioEvent, 'conv-123', 'web', agentInfo);
+      service.emitToolEvent(audioEvent, 'conv-123', agentInfo);
 
       // Should broadcast play_audio first, then the tool event
       expect(mockBroadcast).toHaveBeenCalledTimes(2);
@@ -160,7 +159,7 @@ describe('MessageEventService', () => {
         result: largeResult,
       };
 
-      service.emitToolEvent(largeEvent, 'conv-123', 'web', agentInfo);
+      service.emitToolEvent(largeEvent, 'conv-123', agentInfo);
 
       const broadcastCall = mockBroadcast.mock.calls[0][0];
       expect(broadcastCall.result).toContain('...(truncated)');
@@ -176,7 +175,7 @@ describe('MessageEventService', () => {
         result: mediaResult,
       };
 
-      service.emitToolEvent(mediaEvent, 'conv-123', 'web', agentInfo);
+      service.emitToolEvent(mediaEvent, 'conv-123', agentInfo);
 
       const broadcastCall = mockBroadcast.mock.calls[0][0];
       // Media content should be passed as object, not truncated string
@@ -197,7 +196,7 @@ describe('MessageEventService', () => {
     };
 
     it('broadcasts delegation event to clients', () => {
-      service.emitDelegationEvent(delegationData, 'conv-123', 'web');
+      service.emitDelegationEvent(delegationData, 'conv-123');
 
       expect(mockBroadcast).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -211,7 +210,7 @@ describe('MessageEventService', () => {
     });
 
     it('persists delegation event to database', () => {
-      service.emitDelegationEvent(delegationData, 'conv-123', 'web');
+      service.emitDelegationEvent(delegationData, 'conv-123');
 
       expect(mockMessagesCreate).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -230,7 +229,7 @@ describe('MessageEventService', () => {
     it('logs error when conversationId is null', () => {
       const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-      service.emitDelegationEvent(delegationData, null, 'web');
+      service.emitDelegationEvent(delegationData, null);
 
       expect(consoleSpy).toHaveBeenCalledWith(
         expect.stringContaining('Cannot save delegation event: conversationId is null')
@@ -249,7 +248,7 @@ describe('MessageEventService', () => {
     };
 
     it('broadcasts task_run event and returns turnId', () => {
-      const turnId = service.emitTaskRunEvent(taskData, 'conv-123', 'web');
+      const turnId = service.emitTaskRunEvent(taskData, 'conv-123');
 
       expect(turnId).toBe('task-run-task-456');
       expect(mockBroadcast).toHaveBeenCalledWith(
@@ -263,7 +262,7 @@ describe('MessageEventService', () => {
     });
 
     it('persists task_run event to database', () => {
-      service.emitTaskRunEvent(taskData, 'conv-123', 'web');
+      service.emitTaskRunEvent(taskData, 'conv-123');
 
       expect(mockMessagesCreate).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -281,7 +280,7 @@ describe('MessageEventService', () => {
     it('returns turnId even when conversationId is null (for UI)', () => {
       const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-      const turnId = service.emitTaskRunEvent(taskData, null, 'web');
+      const turnId = service.emitTaskRunEvent(taskData, null);
 
       expect(turnId).toBe('task-run-task-456');
       consoleSpy.mockRestore();
@@ -295,7 +294,7 @@ describe('MessageEventService', () => {
     };
 
     it('broadcasts error event to clients', () => {
-      service.emitErrorEvent(errorData, 'conv-123', 'web');
+      service.emitErrorEvent(errorData, 'conv-123');
 
       expect(mockBroadcast).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -308,7 +307,7 @@ describe('MessageEventService', () => {
     });
 
     it('persists error event to database', () => {
-      service.emitErrorEvent(errorData, 'conv-123', 'web');
+      service.emitErrorEvent(errorData, 'conv-123');
 
       expect(mockMessagesCreate).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -339,7 +338,7 @@ describe('MessageEventService', () => {
         parameters: {},
       };
 
-      serviceWithoutChannel.emitToolEvent(event, 'conv-1', 'web', {
+      serviceWithoutChannel.emitToolEvent(event, 'conv-1', {
         id: 'a1',
         name: 'Agent',
         emoji: '🤖',

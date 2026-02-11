@@ -42,7 +42,6 @@ export interface WellKnownConversationMeta {
   id: WellKnownConversationId;
   title: string;
   icon: string;
-  channel: string;
   description: string;
 }
 
@@ -51,7 +50,6 @@ const WELL_KNOWN_META: WellKnownConversationMeta[] = [
     id: WellKnownConversations.FEED,
     title: 'Feed',
     icon: '⚡',
-    channel: 'web-main',
     description: 'Background task execution feed',
   },
 ];
@@ -89,7 +87,6 @@ export function ensureWellKnownConversations(): void {
       db.conversations.create({
         id: meta.id,
         title: meta.title,
-        channel: meta.channel,
         createdAt: now,
         updatedAt: now,
         deletedAt: null,
@@ -116,7 +113,6 @@ export function getWellKnownConversation(id: WellKnownConversationId): Conversat
     db.conversations.create({
       id: meta.id,
       title: meta.title,
-      channel: meta.channel,
       createdAt: now,
       updatedAt: now,
       deletedAt: null,

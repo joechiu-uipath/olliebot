@@ -75,8 +75,7 @@ export class WorkerAgent extends AbstractAgent {
     this._state.lastActivity = new Date();
     this._state.status = 'working';
 
-    const channel = this.channels.get(message.channel);
-    if (!channel) return;
+    if (!this.channel) return;
 
     try {
       const response = await this.generateResponse([
@@ -84,10 +83,10 @@ export class WorkerAgent extends AbstractAgent {
         message,
       ]);
 
-      await this.sendToChannel(channel, response, { markdown: true });
-      this.saveAssistantMessage(message.channel, response);
+      await this.sendToChannel(this.channel, response, { markdown: true });
+      this.saveAssistantMessage(response);
     } catch (error) {
-      await this.sendError(channel, 'Failed to process message', String(error));
+      await this.sendError(this.channel!, 'Failed to process message', String(error));
     }
 
     this._state.status = 'idle';
@@ -125,7 +124,6 @@ export class WorkerAgent extends AbstractAgent {
         const contextMessages: Message[] = [
           {
             id: uuid(),
-            channel: channel.id,
             role: 'system',
             content: `Your mission: ${mission}\n\nRespond as ${this.identity.name} (${this.identity.emoji}).`,
             createdAt: new Date(),
@@ -135,7 +133,7 @@ export class WorkerAgent extends AbstractAgent {
 
         const response = await this.generateResponse(contextMessages);
         await this.sendToChannel(channel, response, { markdown: true });
-        this.saveAssistantMessage(channel.id, response);
+        this.saveAssistantMessage(response);
 
         // Report completion
         await this.sendToAgent(this.parentId, {
@@ -215,7 +213,7 @@ export class WorkerAgent extends AbstractAgent {
         messageEventService.setChannel(channel as Channel);
 
         // Use centralized service that broadcasts AND persists
-        messageEventService.emitToolEvent(event, this.conversationId, channel.id, {
+        messageEventService.emitToolEvent(event, this.conversationId, {
           id: this.identity.id,
           name: this.identity.name,
           emoji: this.identity.emoji,
@@ -401,7 +399,7 @@ export class WorkerAgent extends AbstractAgent {
                   }
                   const messageEventService = getMessageEventService();
                   messageEventService.setChannel(channel as Channel);
-                  messageEventService.emitToolEvent(event, this.conversationId, channel.id, {
+                  messageEventService.emitToolEvent(event, this.conversationId, {
                     id: this.identity.id,
                     name: this.identity.name,
                     emoji: this.identity.emoji,
@@ -456,7 +454,7 @@ export class WorkerAgent extends AbstractAgent {
       this.endStreamWithCitations(channel, streamId, this.conversationId || undefined, citationData);
 
       // Save and report
-      this.saveAssistantMessage(channel.id, fullResponse, citationData);
+      this.saveAssistantMessage(fullResponse, citationData);
       console.log(`[${this.identity.name}] Task done (${iterationCount} iter, ${fullResponse.length} chars)`);
 
       // Pass both citations (matched) and all collected sources to parent
@@ -479,11 +477,11 @@ export class WorkerAgent extends AbstractAgent {
     }
   }
 
-  async requestHelp(question: string, channelId: string): Promise<void> {
+  async requestHelp(question: string): Promise<void> {
     await this.sendToAgent(this.parentId, {
       type: 'request_help',
       toAgent: this.parentId,
-      payload: { question, channelId },
+      payload: { question },
     });
   }
 
@@ -585,7 +583,6 @@ export class WorkerAgent extends AbstractAgent {
         rationale,
       },
       this.conversationId,
-      channel.id,
       this.turnId || undefined
     );
 
@@ -682,10 +679,9 @@ export class WorkerAgent extends AbstractAgent {
         await this.shutdown();
         break;
       case 'task_assignment': {
-        const payload = comm.payload as { mission: string; channelId: string; message: Message };
-        const channel = this.channels.get(payload.channelId);
-        if (channel) {
-          await this.handleDelegatedTask(payload.message, payload.mission, channel);
+        const payload = comm.payload as { mission: string; message: Message };
+        if (this.channel) {
+          await this.handleDelegatedTask(payload.message, payload.mission, this.channel);
         }
         break;
       }
@@ -740,7 +736,7 @@ export class WorkerAgent extends AbstractAgent {
     }
   }
 
-  private saveAssistantMessage(channelId: string, content: string, citations?: StoredCitationData): void {
+  private saveAssistantMessage(content: string, citations?: StoredCitationData): void {
     const metadata: Record<string, unknown> = {
       agentId: this.identity.id,
       agentName: this.identity.name,
@@ -755,7 +751,6 @@ export class WorkerAgent extends AbstractAgent {
 
     const message: Message = {
       id: uuid(),
-      channel: channelId,
       role: 'assistant',
       content,
       metadata,
@@ -777,7 +772,6 @@ export class WorkerAgent extends AbstractAgent {
       db.messages.create({
         id: message.id,
         conversationId: this.conversationId,
-        channel: message.channel,
         role: message.role,
         content: message.content,
         metadata: message.metadata || {},

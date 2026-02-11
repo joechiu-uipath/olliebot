@@ -965,15 +965,13 @@ export class AssistantServer {
             taskName: task.name,
             taskDescription,
           },
-          conversationId || null,
-          'web-main'
+          conversationId || null
         );
 
         // Create a message to trigger the task execution via the supervisor
         // The message content is for the LLM, metadata is for UI display
         const taskMessage = {
           id: crypto.randomUUID(),
-          channel: 'web-main',
           role: 'user' as const,
           content: `Run the "${task.name}" task now. Here is the task configuration:\n\n${JSON.stringify(task.jsonConfig, null, 2)}`,
           createdAt: new Date(),
