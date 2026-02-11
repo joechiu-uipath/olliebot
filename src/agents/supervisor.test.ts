@@ -37,13 +37,19 @@ vi.mock('../db/well-known-conversations.js', () => ({
   isWellKnownConversation: vi.fn((id: string) => id === 'feed'),
 }));
 
+// Shared mock functions for MessageEventService - allows tracking across all getMessageEventService() calls
+const mockEmitToolEvent = vi.fn();
+const mockEmitDelegationEvent = vi.fn();
+const mockEmitTaskRunEvent = vi.fn(() => 'task-run-id');
+const mockEmitErrorEvent = vi.fn();
+
 vi.mock('../services/message-event-service.js', () => ({
   getMessageEventService: vi.fn(() => ({
     setChannel: vi.fn(),
-    emitToolEvent: vi.fn(),
-    emitDelegationEvent: vi.fn(),
-    emitTaskRunEvent: vi.fn(() => 'task-run-id'),
-    emitErrorEvent: vi.fn(),
+    emitToolEvent: mockEmitToolEvent,
+    emitDelegationEvent: mockEmitDelegationEvent,
+    emitTaskRunEvent: mockEmitTaskRunEvent,
+    emitErrorEvent: mockEmitErrorEvent,
   })),
 }));
 
@@ -277,25 +283,24 @@ describe('SupervisorAgentImpl', () => {
       );
     });
 
-    it('clears conversation state when message has no conversationId', async () => {
-      // Set up existing state
-      (supervisor as any).currentConversationId = 'old-conv';
-      (supervisor as any).conversationHistory = [{ id: 'msg-1' }];
+    it('creates new conversation when message has no conversationId', async () => {
+      // Set up existing state (conversation history)
+      (supervisor as any).conversationHistory = [{ id: 'msg-1', role: 'user', content: 'old message', createdAt: new Date() }];
 
       const message: Message = {
         id: 'msg-new',
         role: 'user',
         content: 'Start fresh',
         createdAt: new Date(),
-        // No conversationId in metadata
+        // No conversationId in metadata - should trigger new conversation creation
       };
 
       mockLLMService.supportsStreaming.mockReturnValueOnce(false);
 
       await supervisor.handleMessage(message);
 
-      // Should have cleared the old conversation context
-      expect((supervisor as any).currentConversationId).not.toBe('old-conv');
+      // Should have created/found a conversation (mock findRecent returns null, so creates new)
+      expect(mockConversationsCreate).toHaveBeenCalled();
     });
 
     it('loads history from database when message has conversationId', async () => {
@@ -418,6 +423,238 @@ describe('SupervisorAgentImpl', () => {
   describe('getTaskStatus', () => {
     it('returns undefined for unknown task', () => {
       expect(supervisor.getTaskStatus('unknown-task')).toBeUndefined();
+    });
+  });
+
+  describe('tool event routing with callerId', () => {
+    it('creates callerId that includes conversationId for uniqueness', async () => {
+      // Set up tool runner mock that captures the callerId from createRequest
+      const capturedCallerIds: string[] = [];
+      const mockToolRunner = {
+        onToolEvent: vi.fn((callback: (event: any) => void) => {
+          // Store callback so we can trigger events
+          (mockToolRunner as any).eventCallback = callback;
+          return () => {}; // Unsubscribe function
+        }),
+        getToolsForLLM: vi.fn(() => [{ name: 'test_tool', description: 'Test', input_schema: {} }]),
+        createRequest: vi.fn((id: string, name: string, input: any, groupId?: string, callerId?: string) => {
+          capturedCallerIds.push(callerId || '');
+          return { id, toolName: name, source: 'native', parameters: input, callerId };
+        }),
+        executeToolsWithCitations: vi.fn().mockResolvedValue({ results: [], citations: [] }),
+        isPrivateTool: vi.fn(() => false),
+      };
+
+      // Set tool runner on supervisor
+      (supervisor as any).toolRunner = mockToolRunner;
+
+      // Mock streaming support
+      mockLLMService.supportsStreaming.mockReturnValue(true);
+      mockLLMService.generateWithToolsStream.mockImplementation(async (_messages, callbacks, _options) => {
+        callbacks.onChunk('Response');
+        callbacks.onComplete();
+        // Return response with tool use to trigger tool execution
+        return {
+          content: 'Response',
+          toolUse: [{ id: 'tool-1', name: 'test_tool', input: {} }],
+        };
+      });
+
+      // First message with conversationId 'feed'
+      const message1: Message = {
+        id: 'msg-1',
+        role: 'user',
+        content: 'Test 1',
+        createdAt: new Date(),
+        metadata: { conversationId: 'feed', type: 'task_run' }, // Scheduled task
+      };
+
+      await supervisor.handleMessage(message1);
+
+      // Verify callerId includes conversationId
+      expect(capturedCallerIds.length).toBeGreaterThan(0);
+      expect(capturedCallerIds[0]).toContain('supervisor-main');
+      expect(capturedCallerIds[0]).toContain('feed');
+      expect(capturedCallerIds[0]).toBe('supervisor-main:feed');
+    });
+
+    it('uses different callerIds for different conversations', async () => {
+      const capturedCallerIds: string[] = [];
+      const mockToolRunner = {
+        onToolEvent: vi.fn(() => () => {}),
+        getToolsForLLM: vi.fn(() => [{ name: 'test_tool', description: 'Test', input_schema: {} }]),
+        createRequest: vi.fn((id: string, name: string, input: any, groupId?: string, callerId?: string) => {
+          capturedCallerIds.push(callerId || '');
+          return { id, toolName: name, source: 'native', parameters: input, callerId };
+        }),
+        executeToolsWithCitations: vi.fn().mockResolvedValue({ results: [], citations: [] }),
+        isPrivateTool: vi.fn(() => false),
+      };
+
+      (supervisor as any).toolRunner = mockToolRunner;
+
+      mockLLMService.supportsStreaming.mockReturnValue(true);
+      mockLLMService.generateWithToolsStream.mockImplementation(async (_messages, callbacks, _options) => {
+        callbacks.onChunk('Response');
+        callbacks.onComplete();
+        return { content: 'Response', toolUse: [{ id: 'tool-1', name: 'test_tool', input: {} }] };
+      });
+
+      // First request with feed conversation
+      const message1: Message = {
+        id: 'msg-1',
+        role: 'user',
+        content: 'Feed task',
+        createdAt: new Date(),
+        metadata: { conversationId: 'feed', type: 'task_run' },
+      };
+
+      await supervisor.handleMessage(message1);
+
+      // Reset for second request
+      capturedCallerIds.length = 0;
+
+      // Second request with user conversation
+      const userConvId = 'user-conv-123';
+      mockConversationsFindById.mockReturnValueOnce({ id: userConvId, title: 'User Chat' });
+
+      const message2: Message = {
+        id: 'msg-2',
+        role: 'user',
+        content: 'User message',
+        createdAt: new Date(),
+        metadata: { conversationId: userConvId },
+      };
+
+      await supervisor.handleMessage(message2);
+
+      // Verify second request used different callerId
+      expect(capturedCallerIds.length).toBeGreaterThan(0);
+      expect(capturedCallerIds[0]).toBe(`supervisor-main:${userConvId}`);
+    });
+
+    it('event listener only processes events with matching callerId', async () => {
+      // Clear the shared mock before test
+      mockEmitToolEvent.mockClear();
+
+      let capturedCallback: ((event: any) => void) | null = null;
+
+      const mockToolRunner = {
+        onToolEvent: vi.fn((callback: (event: any) => void) => {
+          capturedCallback = callback;
+          return () => { capturedCallback = null; };
+        }),
+        getToolsForLLM: vi.fn(() => [{ name: 'test_tool', description: 'Test', input_schema: {} }]),
+        createRequest: vi.fn((id: string, name: string, input: any, groupId?: string, callerId?: string) => {
+          return { id, toolName: name, source: 'native', parameters: input, callerId };
+        }),
+        executeToolsWithCitations: vi.fn().mockResolvedValue({ results: [], citations: [] }),
+        isPrivateTool: vi.fn(() => false),
+      };
+
+      (supervisor as any).toolRunner = mockToolRunner;
+
+      mockLLMService.supportsStreaming.mockReturnValue(true);
+      mockLLMService.generateWithToolsStream.mockImplementation(async (_messages, callbacks, _options) => {
+        callbacks.onChunk('Response');
+
+        // Simulate tool events DURING streaming (while listener is active)
+        if (capturedCallback) {
+          // Event with MATCHING callerId - should be processed
+          capturedCallback({
+            type: 'tool_execution_finished',
+            callerId: 'supervisor-main:feed',
+            toolName: 'test_tool',
+            requestId: 'req-match',
+            timestamp: new Date(),
+          });
+
+          // Event with NON-MATCHING callerId - should be filtered out
+          capturedCallback({
+            type: 'tool_execution_finished',
+            callerId: 'supervisor-main:other-conv',
+            toolName: 'test_tool',
+            requestId: 'req-nomatch',
+            timestamp: new Date(),
+          });
+        }
+
+        callbacks.onComplete();
+        return { content: 'Response', toolUse: [] };
+      });
+
+      const message: Message = {
+        id: 'msg-1',
+        role: 'user',
+        content: 'Feed task',
+        createdAt: new Date(),
+        metadata: { conversationId: 'feed', type: 'task_run' },
+      };
+
+      await supervisor.handleMessage(message);
+
+      // Verify only the MATCHING event was processed (emitToolEvent called once, not twice)
+      expect(mockEmitToolEvent).toHaveBeenCalledTimes(1);
+      // Verify it was called with the correct conversationId
+      expect(mockEmitToolEvent).toHaveBeenCalledWith(
+        expect.objectContaining({ callerId: 'supervisor-main:feed' }),
+        'feed',
+        expect.anything(),
+        expect.anything()
+      );
+    });
+
+    it('ignores tool events from different conversations', async () => {
+      // Clear the shared mock before test
+      mockEmitToolEvent.mockClear();
+
+      let eventCallback: ((event: any) => void) | null = null;
+
+      const mockToolRunner = {
+        onToolEvent: vi.fn((callback: (event: any) => void) => {
+          eventCallback = callback;
+          return () => { eventCallback = null; };
+        }),
+        getToolsForLLM: vi.fn(() => []),
+        createRequest: vi.fn(),
+        executeToolsWithCitations: vi.fn().mockResolvedValue({ results: [], citations: [] }),
+        isPrivateTool: vi.fn(() => false),
+      };
+
+      (supervisor as any).toolRunner = mockToolRunner;
+
+      mockLLMService.supportsStreaming.mockReturnValue(true);
+      mockLLMService.generateWithToolsStream.mockImplementation(async (_messages, callbacks, _options) => {
+        callbacks.onChunk('Response');
+
+        // Simulate tool event with DIFFERENT callerId DURING streaming
+        if (eventCallback) {
+          eventCallback({
+            type: 'tool_execution_finished',
+            callerId: 'supervisor-main:feed', // Different conversation!
+            toolName: 'user.lottery',
+            requestId: 'req-1',
+            timestamp: new Date(),
+          });
+        }
+
+        callbacks.onComplete();
+        return { content: 'Response', toolUse: [] };
+      });
+
+      // Handle message for user conversation (not feed)
+      const message: Message = {
+        id: 'msg-1',
+        role: 'user',
+        content: 'User message',
+        createdAt: new Date(),
+        metadata: { conversationId: 'user-conv-abc' },
+      };
+
+      await supervisor.handleMessage(message);
+
+      // Event should NOT be processed (callerId 'supervisor-main:feed' doesn't match 'supervisor-main:user-conv-abc')
+      expect(mockEmitToolEvent).not.toHaveBeenCalled();
     });
   });
 });

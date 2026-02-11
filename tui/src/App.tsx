@@ -89,6 +89,42 @@ export function App() {
         m.id === msg.streamId ? { ...m, isStreaming: false } : m
       ));
       setIsResponsePending(false);
+    } else if (data.type === 'stream_resume') {
+      // Handle stream resumption when switching back to a conversation
+      const msg = data as WsMessage & {
+        streamId?: string;
+        conversationId: string;
+        agentName?: string;
+        agentEmoji?: string;
+        accumulatedContent?: string;
+        active?: boolean;
+      };
+      if (msg.conversationId !== currentConversationId) return;
+
+      // No active stream for this conversation
+      if (msg.active === false || !msg.streamId) return;
+
+      setMessages(prev => {
+        const existingStream = prev.find(m => m.id === msg.streamId);
+        if (existingStream) {
+          // Update existing stream message
+          return prev.map(m =>
+            m.id === msg.streamId
+              ? { ...m, content: msg.accumulatedContent || '', isStreaming: true }
+              : m
+          );
+        }
+        // Create new streaming message
+        return [...prev, {
+          id: msg.streamId!,
+          role: 'assistant' as const,
+          content: msg.accumulatedContent || '',
+          isStreaming: true,
+          agentName: msg.agentName,
+          agentEmoji: msg.agentEmoji,
+        }];
+      });
+      setIsResponsePending(true);
     } else if (data.type === 'error') {
       const msg = data as WsMessage & { error: string; details?: string; conversationId?: string };
       if (msg.conversationId && msg.conversationId !== currentConversationId) return;
@@ -247,6 +283,9 @@ export function App() {
             mission: msg.delegationMission as string | undefined,
             taskName: msg.taskName as string | undefined,
           })));
+
+          // Request active stream state for this conversation (to resume streaming display)
+          sendMessage({ type: 'get-active-stream', conversationId: currentConversationId });
         }
       } catch {
         // Keep messages empty on error
@@ -257,7 +296,7 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [currentConversationId]);
+  }, [currentConversationId, sendMessage]);
 
   // Global key handling
   useInput((input, key) => {

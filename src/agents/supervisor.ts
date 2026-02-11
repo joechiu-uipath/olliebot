@@ -27,8 +27,6 @@ import { SUPERVISOR_ICON, SUPERVISOR_NAME, CONVERSATION_HISTORY_LIMIT } from '..
 export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAgent {
   private subAgents: Map<string, WorkerAgent> = new Map();
   private tasks: Map<string, TaskAssignment> = new Map();
-  private currentConversationId: string | null = null;
-  private currentTurnId: string | null = null; // ID of the originating message for this turn
   private conversationMessageCount: Map<string, number> = new Map(); // Track message counts for auto-naming
   // Track messages currently being processed to prevent re-processing due to timeouts/retries
   private processingMessages: Set<string> = new Set();
@@ -66,6 +64,9 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
     console.log(`[${this.identity.name}] Supervisor initialized with ${specialistCount} specialist types`);
   }
 
+  // Note: getConversationId() is not overridden - supervisor uses request-scoped conversationId
+  // passed through method parameters, not instance state.
+
   registerChannel(channel: Channel): void {
     super.registerChannel(channel);
 
@@ -97,36 +98,38 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
     // Mark message as being processed
     this.processingMessages.add(message.id);
 
-    // Load conversation context from message metadata.
-    // Each message carries its own conversationId - this is request-scoped, not session state.
+    // Determine conversationId from message metadata (request-scoped, not instance state).
     // IMPORTANT: Well-known conversations (like 'feed') should ONLY be used for scheduled tasks,
     // not for user-initiated messages. If a user sends a message while viewing Feed, we should
     // create a new conversation for their request, not pollute the Feed with user interactions.
     const msgConversationId = message.metadata?.conversationId as string | undefined;
     const isScheduledTask = message.metadata?.type === 'task_run';
+    let initialConversationId: string | null = null;
+
     if (msgConversationId) {
       // Only use well-known conversation IDs for scheduled tasks
       if (isWellKnownConversation(msgConversationId) && !isScheduledTask) {
         // User message from Feed view - don't use Feed conversation, will create new one later
         console.log(`[${this.identity.name}] User message from well-known conversation '${msgConversationId}', will create new conversation`);
-        this.loadConversationContext(null);
+        initialConversationId = null;
       } else {
-        this.loadConversationContext(msgConversationId);
+        initialConversationId = msgConversationId;
       }
-    } else {
-      // No conversationId in metadata - clear context so ensureConversation() will create a new one
-      // or find a recent conversation to continue
-      this.loadConversationContext(null);
     }
 
-    // Set the turnId for this message processing
+    // Load conversation history from database (request-scoped, doesn't set instance state)
+    this.conversationHistory = this.loadConversationHistory(initialConversationId);
+
+    // Set the turnId for this message processing (request-scoped)
     // For task_run messages, use the turnId from metadata (set by the task_run event)
     // For user messages, the message ID is the turnId
-    this.currentTurnId = (message.metadata?.turnId as string) || message.id;
+    const requestTurnId = (message.metadata?.turnId as string) || message.id;
 
-    // Save message to history
+    // Save message to history and get/create conversationId
     this.conversationHistory.push(message);
-    this.saveMessageInternal(message);
+    const requestConversationId = this.saveMessageInternal(message, initialConversationId, requestTurnId);
+
+    // All state below is request-scoped - passed through parameters, not instance variables
 
     if (!this.channel) {
       console.error(`[${this.identity.name}] No channel registered`);
@@ -169,7 +172,9 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
             rationale: `User explicitly requested via #${commandResult.command} command`,
           },
           message,
-          channel
+          channel,
+          requestConversationId,
+          requestTurnId
         );
       } else {
         // No command trigger - proceed with normal LLM processing
@@ -177,22 +182,25 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
         const supportsStreaming = typeof channel.startStream === 'function' && this.llmService.supportsStreaming();
 
         if (supportsStreaming) {
-          await this.generateStreamingResponse(message, channel);
+          await this.generateStreamingResponse(message, channel, requestConversationId, requestTurnId);
         } else {
           // Fallback to non-streaming
           const response = await this.generateResponse(this.conversationHistory.slice(-CONVERSATION_HISTORY_LIMIT));
           const delegationMatch = response.match(/```delegate\s*([\s\S]*?)```/);
 
           if (delegationMatch) {
-            await this.handleDelegation(delegationMatch[1], message, channel);
+            await this.handleDelegation(delegationMatch[1], message, channel, requestConversationId, requestTurnId);
           } else {
-            await this.sendMessage(response, { reasoningMode: message.metadata?.reasoningMode as string | undefined });
+            await this.sendMessage(response, {
+              reasoningMode: message.metadata?.reasoningMode as string | undefined,
+              conversationId: requestConversationId,
+            });
           }
         }
       }
     } catch (error) {
       console.error(`[${this.identity.name}] Error:`, error);
-      await this.sendError('Failed to process message', String(error));
+      await this.sendError('Failed to process message', String(error), requestConversationId);
     } finally {
       // Clean up processing state after a delay (allow for retries to be detected)
       setTimeout(() => {
@@ -204,7 +212,12 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
     this._state.status = 'idle';
   }
 
-  private async generateStreamingResponse(message: Message, channel: Channel): Promise<void> {
+  private async generateStreamingResponse(
+    message: Message,
+    channel: Channel,
+    conversationId: string | undefined,
+    turnId: string | undefined
+  ): Promise<void> {
     const streamId = uuid();
     let fullResponse = '';
 
@@ -215,23 +228,27 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
     await this.refreshRagDataCache();
 
     // Setup tool event broadcasting and persistence via MessageEventService
+    // IMPORTANT: callerId must be unique per conversation to prevent race conditions
+    // when handling concurrent requests. If two requests register listeners with the same
+    // callerId, both would process tool events and race to save to DB.
+    const callerId = `${this.identity.id}:${conversationId || 'no-conv'}`;
     let unsubscribeTool: (() => void) | undefined;
     if (this.toolRunner) {
       unsubscribeTool = this.toolRunner.onToolEvent((event) => {
-        // Only emit events for tools THIS agent called (filter by callerId)
-        if (event.callerId && event.callerId !== this.identity.id) {
-          return; // This event is for a different agent
+        // Only emit events for tools THIS conversation's request called (filter by callerId)
+        if (event.callerId && event.callerId !== callerId) {
+          return; // This event is for a different agent/conversation
         }
 
         const messageEventService = getMessageEventService();
         messageEventService.setChannel(channel as Channel);
 
         // Use centralized service that broadcasts AND persists
-        messageEventService.emitToolEvent(event, this.currentConversationId, {
+        messageEventService.emitToolEvent(event, conversationId ?? null, {
           id: this.identity.id,
           name: this.identity.name,
           emoji: this.identity.emoji,
-        }, this.currentTurnId || undefined);
+        }, turnId);
       });
     }
 
@@ -241,7 +258,7 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
         agentId: this.identity.id,
         agentName: this.identity.name,
         agentEmoji: this.identity.emoji,
-        conversationId: this.currentConversationId || undefined,
+        conversationId,
       });
 
       const systemPrompt = this.buildSystemPrompt();
@@ -309,7 +326,7 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
             {
               onChunk: (chunk: string) => {
                 fullResponse += chunk;
-                channel.sendStreamChunk!(streamId, chunk, this.currentConversationId || undefined);
+                channel.sendStreamChunk!(streamId, chunk, conversationId);
               },
               onComplete: () => {
                 // Stream complete
@@ -324,9 +341,9 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
           // Check if LLM requested tool use
           if (response.toolUse && response.toolUse.length > 0) {
             // Execute requested tools with citation extraction
-            // Pass this.identity.id as callerId so tool events are attributed to this agent only
+            // callerId includes conversationId to ensure correct event routing
             const toolRequests = response.toolUse.map((tu) =>
-              this.toolRunner!.createRequest(tu.id, tu.name, tu.input, undefined, this.identity.id)
+              this.toolRunner!.createRequest(tu.id, tu.name, tu.input, undefined, callerId)
             );
 
             const { results, citations } = await this.toolRunner.executeToolsWithCitations(toolRequests);
@@ -343,7 +360,7 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
               if (this.delegatedMessages.has(message.id)) {
                 console.log(`[${this.identity.name}] Already delegated for message ${message.id}, skipping`);
                 // End stream and return without re-delegating
-                this.endStreamWithCitations(channel, streamId, this.currentConversationId || undefined, undefined);
+                this.endStreamWithCitations(channel, streamId, conversationId, undefined);
                 if (unsubscribeTool) {
                   unsubscribeTool();
                 }
@@ -363,12 +380,12 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
               };
 
               // End the stream before delegation (no citations for delegated tasks)
-              this.endStreamWithCitations(channel, streamId, this.currentConversationId || undefined, undefined);
+              this.endStreamWithCitations(channel, streamId, conversationId, undefined);
 
               // Save any response content before delegation
               const reasoningMode = message.metadata?.reasoningMode as string | undefined;
-              if (fullResponse.trim()) {
-                this.saveAssistantMessage(fullResponse.trim(), { reasoningMode });
+              if (fullResponse.trim() && conversationId && turnId) {
+                this.saveAssistantMessageWithContext(fullResponse.trim(), conversationId, turnId, { reasoningMode });
               }
 
               // Delegation logging handled by handleDelegationFromTool
@@ -381,7 +398,7 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
               }
 
               // Perform the delegation
-              await this.handleDelegationFromTool(delegationParams, message, channel);
+              await this.handleDelegationFromTool(delegationParams, message, channel, conversationId, turnId);
 
               return;
             }
@@ -413,7 +430,7 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
             {
               onChunk: (chunk) => {
                 fullResponse += chunk;
-                channel.sendStreamChunk!(streamId, chunk, this.currentConversationId || undefined);
+                channel.sendStreamChunk!(streamId, chunk, conversationId);
               },
               onComplete: () => {
                 // Stream complete
@@ -431,15 +448,15 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
       const citationData = await this.buildCitationData(fullResponse, collectedSources);
 
       // End stream with citations
-      this.endStreamWithCitations(channel, streamId, this.currentConversationId || undefined, citationData);
+      this.endStreamWithCitations(channel, streamId, conversationId, citationData);
 
       // Save the response (delegation is now handled via tool use, not markdown blocks)
       const reasoningMode = message.metadata?.reasoningMode as string | undefined;
-      if (fullResponse.trim()) {
-        this.saveAssistantMessage(fullResponse, { reasoningMode, citations: citationData });
+      if (fullResponse.trim() && conversationId && turnId) {
+        this.saveAssistantMessageWithContext(fullResponse, conversationId, turnId, { reasoningMode, citations: citationData });
       }
     } catch (error) {
-      this.endStreamWithCitations(channel, streamId, this.currentConversationId || undefined, undefined);
+      this.endStreamWithCitations(channel, streamId, conversationId, undefined);
       // Log full error details server-side, send sanitized error to client
       let safeDetails = 'An internal error occurred. Please try again.';
       if (error instanceof Error) {
@@ -451,7 +468,7 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
       } else {
         console.error('[Supervisor] Full streaming error:', error);
       }
-      await this.sendError('Streaming error', safeDetails);
+      await this.sendError('Streaming error', safeDetails, conversationId);
     } finally {
       // Cleanup tool event subscription
       if (unsubscribeTool) {
@@ -463,7 +480,9 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
   private async handleDelegation(
     delegationJson: string,
     originalMessage: Message,
-    channel: Channel
+    channel: Channel,
+    conversationId: string | undefined,
+    turnId: string | undefined
   ): Promise<void> {
     try {
       const delegation = JSON.parse(delegationJson.trim());
@@ -485,15 +504,11 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
         throw new Error('Failed to spawn agent');
       }
 
-      // Pass the current conversationId and turnId to the worker agent
-      if (this.currentConversationId) {
-        agent.conversationId = this.currentConversationId;
-      } else {
-        // Ensure we have a conversation before delegating
-        const convId = this.ensureConversation(originalMessage.content);
-        agent.conversationId = convId;
-      }
-      agent.turnId = this.currentTurnId;
+      // Pass the conversationId and turnId to the worker agent
+      // Ensure we have a conversation (use existing or create new)
+      const effectiveConversationId = conversationId || this.ensureConversation(null, originalMessage.content);
+      agent.conversationId = effectiveConversationId;
+      agent.turnId = turnId ?? null;
 
       // Emit delegation event via MessageEventService (broadcasts AND persists)
       const messageEventService = getMessageEventService();
@@ -507,90 +522,8 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
           mission,
           rationale,
         },
-        this.currentConversationId,
-        this.currentTurnId || undefined
-      );
-
-      // Create task assignment
-      const task = await this.delegateTask(mission);
-
-      // Have the sub-agent handle the message
-      agent.registerChannel(channel);
-      await agent.handleDelegatedTask(originalMessage, mission, channel);
-
-    } catch (error) {
-      console.error(`[${this.identity.name}] Delegation failed:`, error);
-      // Fall back to handling directly
-      const fallbackResponse = await this.generateResponse([
-        ...this.conversationHistory.slice(-CONVERSATION_HISTORY_LIMIT),
-        {
-          id: uuid(),
-          role: 'system',
-          content: 'Delegation failed. Please respond directly to the user.',
-          createdAt: new Date(),
-        },
-      ]);
-      await this.sendMessage(fallbackResponse);
-    }
-  }
-
-  /**
-   * Handle delegation from the delegate tool (params already parsed)
-   */
-  private async handleDelegationFromTool(
-    params: {
-      type: string;
-      mission: string;
-      rationale?: string;
-      customName?: string;
-      customEmoji?: string;
-    },
-    originalMessage: Message,
-    channel: Channel
-  ): Promise<void> {
-    const { type, mission, customName, customEmoji, rationale } = params;
-
-    try {
-      console.log(`[${this.identity.name}] Delegating to ${type}`);
-
-      // Spawn appropriate agent (pass type explicitly for prompt loading)
-      const agentId = await this.spawnAgent(
-        {
-          identity: this.createAgentIdentity(type, customName, customEmoji),
-          mission,
-        },
-        type
-      );
-
-      const agent = this.subAgents.get(agentId);
-      if (!agent) {
-        throw new Error('Failed to spawn agent');
-      }
-
-      // Pass the current conversationId and turnId to the worker agent
-      if (this.currentConversationId) {
-        agent.conversationId = this.currentConversationId;
-      } else {
-        // Ensure we have a conversation before delegating
-        const convId = this.ensureConversation(originalMessage.content);
-        agent.conversationId = convId;
-      }
-      agent.turnId = this.currentTurnId;
-
-      // Emit delegation event via MessageEventService (broadcasts AND persists)
-      const messageEventService = getMessageEventService();
-      messageEventService.setChannel(channel as Channel);
-      messageEventService.emitDelegationEvent(
-        {
-          agentId: agent.identity.id,
-          agentName: agent.identity.name,
-          agentEmoji: agent.identity.emoji,
-          agentType: type,
-          mission,
-          rationale,
-        },
-        this.currentConversationId,
-        this.currentTurnId || undefined
+        effectiveConversationId,
+        turnId
       );
 
       // Create task assignment
@@ -612,7 +545,87 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
           createdAt: new Date(),
         },
       ]);
-      await this.sendMessage(fallbackResponse);
+      await this.sendMessage(fallbackResponse, { conversationId });
+    }
+  }
+
+  /**
+   * Handle delegation from the delegate tool (params already parsed)
+   */
+  private async handleDelegationFromTool(
+    params: {
+      type: string;
+      mission: string;
+      rationale?: string;
+      customName?: string;
+      customEmoji?: string;
+    },
+    originalMessage: Message,
+    channel: Channel,
+    conversationId: string | undefined,
+    turnId: string | undefined
+  ): Promise<void> {
+    const { type, mission, customName, customEmoji, rationale } = params;
+
+    try {
+      console.log(`[${this.identity.name}] Delegating to ${type}`);
+
+      // Spawn appropriate agent (pass type explicitly for prompt loading)
+      const agentId = await this.spawnAgent(
+        {
+          identity: this.createAgentIdentity(type, customName, customEmoji),
+          mission,
+        },
+        type
+      );
+
+      const agent = this.subAgents.get(agentId);
+      if (!agent) {
+        throw new Error('Failed to spawn agent');
+      }
+
+      // Pass the conversationId and turnId to the worker agent
+      // Ensure we have a conversation (use existing or create new)
+      const effectiveConversationId = conversationId || this.ensureConversation(null, originalMessage.content);
+      agent.conversationId = effectiveConversationId;
+      agent.turnId = turnId ?? null;
+
+      // Emit delegation event via MessageEventService (broadcasts AND persists)
+      const messageEventService = getMessageEventService();
+      messageEventService.setChannel(channel as Channel);
+      messageEventService.emitDelegationEvent(
+        {
+          agentId: agent.identity.id,
+          agentName: agent.identity.name,
+          agentEmoji: agent.identity.emoji,
+          agentType: type,
+          mission,
+          rationale,
+        },
+        effectiveConversationId,
+        turnId
+      );
+
+      // Create task assignment
+      await this.delegateTask(mission);
+
+      // Have the sub-agent handle the message
+      agent.registerChannel(channel);
+      await agent.handleDelegatedTask(originalMessage, mission, channel);
+
+    } catch (error) {
+      console.error(`[${this.identity.name}] Delegation failed:`, error);
+      // Fall back to handling directly
+      const fallbackResponse = await this.generateResponse([
+        ...this.conversationHistory.slice(-CONVERSATION_HISTORY_LIMIT),
+        {
+          id: uuid(),
+          role: 'system',
+          content: 'Delegation failed. Please respond directly to the user.',
+          createdAt: new Date(),
+        },
+      ]);
+      await this.sendMessage(fallbackResponse, { conversationId });
     }
   }
 
@@ -768,7 +781,17 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
     }
   }
 
-  private ensureConversation(firstMessageContent?: string | unknown[]): string {
+  /**
+   * Ensure a conversation exists for the given conversationId.
+   * If conversationId is provided and valid, returns it after updating timestamp.
+   * If conversationId is null, finds a recent conversation or creates a new one.
+   * Does NOT set instance state - returns the conversationId to use.
+   *
+   * @param currentConversationId - The current conversationId from the request (or null)
+   * @param firstMessageContent - Content of the first message (for title generation)
+   * @returns The conversationId to use for this request
+   */
+  private ensureConversation(currentConversationId: string | null, firstMessageContent?: string | unknown[]): string {
     const db = getDb();
 
     // Helper to generate title from message content
@@ -783,14 +806,14 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
       return textContent.substring(0, 30).trim() + (textContent.length > 30 ? '...' : '');
     };
 
-    // If we have a current conversation, update its timestamp and return it
-    if (this.currentConversationId) {
-      const conv = db.conversations.findById(this.currentConversationId);
+    // If we have a conversation, update its timestamp and return it
+    if (currentConversationId) {
+      const conv = db.conversations.findById(currentConversationId);
       // If conversation has default title and we have message content, update the title
       if (conv && conv.title === 'New Conversation' && !conv.manuallyNamed && firstMessageContent) {
         const newTitle = generateTitleFromContent(firstMessageContent);
         if (newTitle) {
-          db.conversations.update(this.currentConversationId, {
+          db.conversations.update(currentConversationId, {
             title: newTitle,
             updatedAt: new Date().toISOString(),
           });
@@ -798,26 +821,26 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
           if (this.channel) {
             this.channel.broadcast({
               type: 'conversation_updated',
-              conversation: { id: this.currentConversationId, title: newTitle, updatedAt: new Date().toISOString() },
+              conversation: { id: currentConversationId, title: newTitle, updatedAt: new Date().toISOString() },
             });
           }
-          return this.currentConversationId;
+          return currentConversationId;
         }
       }
-      db.conversations.update(this.currentConversationId, { updatedAt: new Date().toISOString() });
-      return this.currentConversationId;
+      db.conversations.update(currentConversationId, { updatedAt: new Date().toISOString() });
+      return currentConversationId;
     }
 
     // Check for recent conversation (within last hour)
     const recentConversation = db.conversations.findRecent(60 * 60 * 1000);
 
     if (recentConversation) {
-      this.currentConversationId = recentConversation.id;
+      const recentId = recentConversation.id;
       // If recent conversation has default title and we have message content, update the title
       if (recentConversation.title === 'New Conversation' && !recentConversation.manuallyNamed && firstMessageContent) {
         const newTitle = generateTitleFromContent(firstMessageContent);
         if (newTitle) {
-          db.conversations.update(this.currentConversationId, {
+          db.conversations.update(recentId, {
             title: newTitle,
             updatedAt: new Date().toISOString(),
           });
@@ -825,14 +848,14 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
           if (this.channel) {
             this.channel.broadcast({
               type: 'conversation_updated',
-              conversation: { id: this.currentConversationId, title: newTitle, updatedAt: new Date().toISOString() },
+              conversation: { id: recentId, title: newTitle, updatedAt: new Date().toISOString() },
             });
           }
-          return this.currentConversationId;
+          return recentId;
         }
       }
-      db.conversations.update(this.currentConversationId, { updatedAt: new Date().toISOString() });
-      return this.currentConversationId;
+      db.conversations.update(recentId, { updatedAt: new Date().toISOString() });
+      return recentId;
     }
 
     // Create a new conversation
@@ -849,8 +872,6 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
       updatedAt: now,
       deletedAt: null,
     });
-
-    this.currentConversationId = id;
 
     // Notify frontend about the new conversation
     if (this.channel) {
@@ -869,56 +890,42 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
   }
 
   /**
-   * Load conversation context from message metadata.
-   * This is called at the start of handleMessage to set up the conversation
-   * context for the current request. It loads conversation history from the
-   * database so the LLM has context for its response.
-   *
-   * Note: This is request-scoped state, not persistent UI navigation state.
-   * UI navigation (which conversation the user is viewing) is managed by
-   * the channel/frontend, not the supervisor.
+   * Load conversation history from database.
+   * Returns the history as an array - does NOT set instance state.
+   * This is request-scoped and called at the start of handleMessage.
    */
-  private loadConversationContext(conversationId: string | null): void {
-    // Only reload if actually switching conversations
-    if (conversationId === this.currentConversationId) {
-      return;
+  private loadConversationHistory(conversationId: string | null): Message[] {
+    if (!conversationId) {
+      return [];
     }
 
-    this.currentConversationId = conversationId;
+    const db = getDb();
+    const dbMessages = db.messages.findByConversationId(conversationId);
 
-    // Clear and reload conversation history from database
-    if (conversationId) {
-      const db = getDb();
-      const dbMessages = db.messages.findByConversationId(conversationId);
+    // Update message count for auto-naming
+    this.conversationMessageCount.set(conversationId, dbMessages.length);
 
-      // Convert DB messages to Message format for in-memory history
-      // Filter out 'tool' role messages - these are UI display events, not LLM conversation turns.
-      // Tool results during a conversation are handled inline and not persisted as separate messages.
-      // Also filter out delegation messages which are UI-only.
-      this.conversationHistory = dbMessages
-        .filter((m) => {
-          // Skip tool events (UI display only)
-          if (m.role === 'tool') return false;
-          // Skip delegation events (UI display only)
-          if (m.metadata?.type === 'delegation') return false;
-          // Skip task_run markers (UI display only)
-          if (m.metadata?.type === 'task_run') return false;
-          return true;
-        })
-        .map((m) => ({
-          id: m.id,
-          role: m.role as Message['role'],
-          content: m.content,
-          createdAt: new Date(m.createdAt),
-          metadata: m.metadata,
-        }));
-
-      // Update message count
-      this.conversationMessageCount.set(conversationId, dbMessages.length);
-    } else {
-      // New/no conversation - clear history
-      this.conversationHistory = [];
-    }
+    // Convert DB messages to Message format for in-memory history
+    // Filter out 'tool' role messages - these are UI display events, not LLM conversation turns.
+    // Tool results during a conversation are handled inline and not persisted as separate messages.
+    // Also filter out delegation messages which are UI-only.
+    return dbMessages
+      .filter((m) => {
+        // Skip tool events (UI display only)
+        if (m.role === 'tool') return false;
+        // Skip delegation events (UI display only)
+        if (m.metadata?.type === 'delegation') return false;
+        // Skip task_run markers (UI display only)
+        if (m.metadata?.type === 'task_run') return false;
+        return true;
+      })
+      .map((m) => ({
+        id: m.id,
+        role: m.role as Message['role'],
+        content: m.content,
+        createdAt: new Date(m.createdAt),
+        metadata: m.metadata,
+      }));
   }
 
   /**
@@ -931,13 +938,18 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
    * Workers don't need this because their conversationId is set by
    * supervisor when spawning, and they don't receive user messages.
    *
-   * For assistant messages, use saveAssistantMessage() which builds
-   * the message with agent metadata and then calls this method.
+   * @param message - The message to save
+   * @param currentConversationId - The current conversationId (or null to create/find one)
+   * @param turnId - The turnId for this message
+   * @returns The conversationId used (may be different from input if new conversation was created)
    */
-  private saveMessageInternal(message: Message): void {
+  private saveMessageInternal(message: Message, currentConversationId: string | null, turnId: string): string {
     try {
       const db = getDb();
-      const conversationId = this.ensureConversation(message.role === 'user' ? message.content : undefined);
+      const conversationId = this.ensureConversation(
+        currentConversationId,
+        message.role === 'user' ? message.content : undefined
+      );
 
       // Include attachment info in metadata (without base64 data)
       const metadata = {
@@ -956,17 +968,30 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
         content: message.content,
         metadata,
         createdAt: message.createdAt.toISOString(),
-        turnId: this.currentTurnId || undefined,
+        turnId,
       });
 
       // Track message count for auto-naming
       this.incrementMessageCount(conversationId);
+
+      return conversationId;
     } catch (error) {
       console.error(`[${this.identity.name}] Failed to save message:`, error);
+      // Return whatever we had, even if save failed
+      return currentConversationId || 'error';
     }
   }
 
-  protected override saveAssistantMessage(content: string, options?: { citations?: StoredCitationData; reasoningMode?: string }): void {
+  /**
+   * Save an assistant message to conversation history and database.
+   * Requires conversationId and turnId to be passed explicitly (request-scoped).
+   */
+  protected saveAssistantMessageWithContext(
+    content: string,
+    conversationId: string,
+    turnId: string,
+    options?: { citations?: StoredCitationData; reasoningMode?: string }
+  ): void {
     const metadata: Record<string, unknown> = {
       agentId: this.identity.id,
       agentName: this.identity.name,
@@ -986,7 +1011,31 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
       createdAt: new Date(),
     };
     this.conversationHistory.push(message);
-    this.saveMessageInternal(message);
+    this.saveMessageInternal(message, conversationId, turnId);
+  }
+
+  /**
+   * @deprecated Use saveAssistantMessageWithContext instead for request-scoped conversationId.
+   * This override exists for compatibility with base class but should not be used directly.
+   */
+  protected override saveAssistantMessage(content: string, options?: { citations?: StoredCitationData; reasoningMode?: string }): void {
+    // This should not be called directly in supervisor - we need conversationId context.
+    // Log a warning if this is ever reached without proper context.
+    console.warn(`[${this.identity.name}] saveAssistantMessage called without context - this may cause issues`);
+    const message: Message = {
+      id: uuid(),
+      role: 'assistant',
+      content,
+      metadata: {
+        agentId: this.identity.id,
+        agentName: this.identity.name,
+        ...(options?.reasoningMode && { reasoningMode: options.reasoningMode }),
+        ...(options?.citations && options.citations.sources.length > 0 && { citations: options.citations }),
+      },
+      createdAt: new Date(),
+    };
+    this.conversationHistory.push(message);
+    // Can't save to DB without conversationId - just add to in-memory history
   }
 
   /**

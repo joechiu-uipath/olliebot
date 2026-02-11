@@ -220,13 +220,17 @@ export abstract class AbstractAgent implements BaseAgent {
 
   abstract handleMessage(message: Message): Promise<void>;
 
-  async sendMessage(content: string, saveOptions?: { citations?: StoredCitationData; reasoningMode?: string }): Promise<void> {
+  async sendMessage(content: string, options?: {
+    citations?: StoredCitationData;
+    reasoningMode?: string;
+    conversationId?: string;
+  }): Promise<void> {
     if (!this.channel) {
       console.error(`[${this.identity.name}] Cannot send message: no channel registered`);
       return;
     }
 
-    // Send with agent metadata (markdown: true is the default)
+    // Send with agent metadata and conversation context
     await this.channel.send(content, {
       markdown: true,
       agent: {
@@ -234,10 +238,11 @@ export abstract class AbstractAgent implements BaseAgent {
         agentName: this.identity.name,
         agentEmoji: this.identity.emoji,
       },
+      conversationId: options?.conversationId,
     });
 
     // Save to conversation history and database
-    this.saveAssistantMessage(content, saveOptions);
+    this.saveAssistantMessage(content, options);
 
     this._state.lastActivity = new Date();
   }
@@ -266,12 +271,12 @@ export abstract class AbstractAgent implements BaseAgent {
     this.conversationHistory.push(message);
   }
 
-  async sendError(error: string, details?: string): Promise<void> {
+  async sendError(error: string, details?: string, conversationId?: string): Promise<void> {
     if (!this.channel) {
       console.error(`[${this.identity.name}] Cannot send error: no channel registered`);
       return;
     }
-    await this.channel.sendError(error, details);
+    await this.channel.sendError(error, details, conversationId);
   }
 
   async receiveFromAgent(comm: AgentCommunication): Promise<void> {

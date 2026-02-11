@@ -15,6 +15,21 @@ interface WebSocketClient {
   connectedAt: Date;
 }
 
+/**
+ * Tracks an active stream for a conversation.
+ * Used to resume streaming display when user switches back to a conversation.
+ */
+interface ActiveStream {
+  streamId: string;
+  conversationId: string;
+  agentId?: string;
+  agentName?: string;
+  agentEmoji?: string;
+  agentType?: string;
+  accumulatedContent: string;
+  startTime: Date;
+}
+
 export class WebSocketChannel implements Channel {
   readonly id: string;
   readonly name = 'web';
@@ -25,6 +40,12 @@ export class WebSocketChannel implements Channel {
   private actionHandler: ((action: string, data: unknown) => Promise<void>) | null = null;
   private interactionHandler: ((requestId: string, response: unknown, conversationId?: string) => Promise<void>) | null = null;
   private connected = false;
+
+  /**
+   * Tracks active streams by conversationId.
+   * Allows frontend to resume streaming display when switching back to a conversation.
+   */
+  private activeStreams: Map<string, ActiveStream> = new Map();
 
   constructor(id: string = 'web-default') {
     this.id = id;
@@ -125,11 +146,46 @@ export class WebSocketChannel implements Channel {
       await this.browserActionHandler(msg.action, msg.sessionId);
     } else if (msg.type === 'desktop-action' && msg.action && msg.sessionId && this.desktopActionHandler) {
       await this.desktopActionHandler(msg.action, msg.sessionId);
+    } else if (msg.type === 'get-active-stream' && msg.conversationId) {
+      // Frontend is switching to a conversation and wants to resume any active stream
+      this.sendActiveStreamState(clientId, msg.conversationId);
     }
   }
 
   onNewConversation(handler: () => void): void {
     this.newConversationHandler = handler;
+  }
+
+  /**
+   * Send active stream state to a client when they switch to a conversation.
+   * Allows frontend to resume displaying an in-progress stream.
+   */
+  private sendActiveStreamState(clientId: string, conversationId: string): void {
+    const activeStream = this.activeStreams.get(conversationId);
+
+    if (activeStream) {
+      // Send stream_resume event with accumulated content
+      this.sendToClient(clientId, {
+        type: 'stream_resume',
+        streamId: activeStream.streamId,
+        conversationId: activeStream.conversationId,
+        agentId: activeStream.agentId,
+        agentName: activeStream.agentName,
+        agentEmoji: activeStream.agentEmoji,
+        agentType: activeStream.agentType,
+        accumulatedContent: activeStream.accumulatedContent,
+        startTime: activeStream.startTime.toISOString(),
+        timestamp: new Date().toISOString(),
+      });
+    } else {
+      // No active stream for this conversation
+      this.sendToClient(clientId, {
+        type: 'stream_resume',
+        conversationId,
+        active: false,
+        timestamp: new Date().toISOString(),
+      });
+    }
   }
 
   private sendToClient(clientId: string, data: unknown): void {
@@ -146,6 +202,11 @@ export class WebSocketChannel implements Channel {
   }
 
   async send(content: string, options?: SendOptions): Promise<void> {
+    // Warn if no conversationId - message won't be routed correctly on frontend
+    if (!options?.conversationId) {
+      console.warn('[WebSocketChannel] send() called without conversationId - message will only appear in Feed');
+    }
+
     const payload: {
       type: string;
       id: string;
@@ -156,6 +217,7 @@ export class WebSocketChannel implements Channel {
       agentId?: string;
       agentName?: string;
       agentEmoji?: string;
+      conversationId?: string;
       timestamp: string;
     } = {
       type: 'message',
@@ -163,6 +225,7 @@ export class WebSocketChannel implements Channel {
       content,
       markdown: options?.markdown ?? true,
       html: options?.html ?? false,
+      conversationId: options?.conversationId,
       timestamp: new Date().toISOString(),
     };
 
@@ -181,40 +244,29 @@ export class WebSocketChannel implements Channel {
     this.broadcast(payload);
   }
 
-  async sendError(error: string, details?: string): Promise<void> {
-    const payload = {
+  async sendError(error: string, details?: string, conversationId?: string): Promise<void> {
+    // Warn if no conversationId - error won't be routed correctly on frontend
+    if (!conversationId) {
+      console.warn('[WebSocketChannel] sendError() called without conversationId - error will only appear in Feed');
+    }
+
+    const payload: {
+      type: string;
+      id: string;
+      error: string;
+      details?: string;
+      conversationId?: string;
+      timestamp: string;
+    } = {
       type: 'error',
       id: uuid(),
       error,
       details,
+      conversationId,
       timestamp: new Date().toISOString(),
     };
 
     // Broadcast error to all connected clients
-    this.broadcast(payload);
-  }
-
-  async sendAsAgent(
-    content: string,
-    options?: {
-      markdown?: boolean;
-      agentId?: string;
-      agentName?: string;
-      agentEmoji?: string;
-    }
-  ): Promise<void> {
-    const payload = {
-      type: 'message',
-      id: uuid(),
-      content,
-      markdown: options?.markdown ?? true,
-      html: false,
-      agentId: options?.agentId,
-      agentName: options?.agentName,
-      agentEmoji: options?.agentEmoji,
-      timestamp: new Date().toISOString(),
-    };
-
     this.broadcast(payload);
   }
 
@@ -227,6 +279,20 @@ export class WebSocketChannel implements Channel {
       timestamp: new Date().toISOString(),
     };
     this.broadcast(payload);
+
+    // Track active stream for conversation switching
+    if (options?.conversationId) {
+      this.activeStreams.set(options.conversationId, {
+        streamId,
+        conversationId: options.conversationId,
+        agentId: options.agentId,
+        agentName: options.agentName,
+        agentEmoji: options.agentEmoji,
+        agentType: options.agentType,
+        accumulatedContent: '',
+        startTime: new Date(),
+      });
+    }
   }
 
   sendStreamChunk(streamId: string, chunk: string, conversationId?: string): void {
@@ -237,6 +303,14 @@ export class WebSocketChannel implements Channel {
       conversationId,
     };
     this.broadcast(payload);
+
+    // Accumulate content for stream resumption
+    if (conversationId) {
+      const activeStream = this.activeStreams.get(conversationId);
+      if (activeStream && activeStream.streamId === streamId) {
+        activeStream.accumulatedContent += chunk;
+      }
+    }
   }
 
   endStream(streamId: string, options?: StreamEndOptions): void {
@@ -259,6 +333,11 @@ export class WebSocketChannel implements Channel {
     }
 
     this.broadcast(payload);
+
+    // Remove stream tracking (stream is complete)
+    if (options?.conversationId) {
+      this.activeStreams.delete(options.conversationId);
+    }
   }
 
   /**
@@ -318,6 +397,22 @@ export class WebSocketChannel implements Channel {
       client.ws.close();
     }
     this.clients.clear();
+    this.activeStreams.clear();
     this.connected = false;
+  }
+
+  /**
+   * Get active stream info for a conversation (if any).
+   * Used for testing and debugging.
+   */
+  getActiveStream(conversationId: string): ActiveStream | undefined {
+    return this.activeStreams.get(conversationId);
+  }
+
+  /**
+   * Check if a conversation has an active stream.
+   */
+  hasActiveStream(conversationId: string): boolean {
+    return this.activeStreams.has(conversationId);
   }
 }

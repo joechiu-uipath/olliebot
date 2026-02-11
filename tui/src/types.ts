@@ -85,6 +85,7 @@ export type WsMessageType =
   | 'stream_start'
   | 'stream_chunk'
   | 'stream_end'
+  | 'stream_resume'
   | 'error'
   | 'connected'
   | 'tool_requested'

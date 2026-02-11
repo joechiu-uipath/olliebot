@@ -669,28 +669,12 @@ export class ConsoleChannel implements Channel {
     }
   }
 
-  async sendError(error: string, details?: string): Promise<void> {
+  async sendError(error: string, details?: string, _conversationId?: string): Promise<void> {
     console.log(`\n❌ Error: ${error}`);
     if (details) {
       console.log(`   Details: ${details}`);
     }
     console.log('');
-  }
-
-  async sendAsAgent(
-    content: string,
-    options?: { markdown?: boolean; agentName?: string; agentEmoji?: string }
-  ): Promise<void> {
-    const agentLabel = options?.agentEmoji && options?.agentName
-      ? `${options.agentEmoji} ${options.agentName}`
-      : `${SUPERVISOR_ICON} ${SUPERVISOR_NAME}`;
-
-    let output = content;
-    if (!options?.markdown) {
-      output = this.stripMarkdown(output);
-    }
-
-    console.log(`\n${agentLabel}: ${output}\n`);
   }
 
   // Streaming support

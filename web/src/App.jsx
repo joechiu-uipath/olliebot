@@ -156,6 +156,9 @@ function App() {
   const virtuosoRef = useRef(null);
   const chatInputRef = useRef(null);
 
+  // Ref for scrollToBottom function (used by WebSocket handler)
+  const scrollToBottomRef = useRef(null);
+
   // Ref to track current conversation ID for use in callbacks
   const currentConversationIdRef = useRef(currentConversationId);
 
@@ -224,6 +227,8 @@ function App() {
     setEvalResults,
     setEvalError,
     setEvalLoading,
+    // Scroll callback (accessed via ref since it's defined later)
+    scrollToBottom: () => scrollToBottomRef.current?.(),
   }));
 
   // Callback to set evalJobId - updates both ref (for WebSocket handler) and state
@@ -433,6 +438,11 @@ function App() {
       align: 'end',
     });
   }, [messages.length]);
+
+  // Keep ref updated for WebSocket handler access
+  useEffect(() => {
+    scrollToBottomRef.current = scrollToBottom;
+  }, [scrollToBottom]);
 
   // Load older messages when scrolling near unloaded area
   const loadOlderMessages = useCallback(async () => {
@@ -731,6 +741,8 @@ function App() {
     // Mark that we're navigating to prevent URL sync effect from re-triggering
     isNavigatingRef.current = true;
     setShowScrollButton(false);
+    // Reset pending state - the previous conversation's response shouldn't block the new one
+    setIsResponsePending(false);
 
     // Navigate to the conversation URL
     navigate(`/chat/${encodeURIComponent(convId)}`);
@@ -750,6 +762,9 @@ function App() {
         setHasMoreOlder(pagination.hasOlder || false);
         setOldestCursor(pagination.oldestCursor || null);
         setFirstItemIndex(VIRTUOSO_START_INDEX);
+
+        // Request active stream state for this conversation (to resume streaming display)
+        sendMessage({ type: 'get-active-stream', conversationId: convId });
       })
       .catch(() => {
         if (fetchId !== messageFetchCounter.current) return;
@@ -825,6 +840,14 @@ function App() {
       agentCommand: currentAgentCommand,
     };
     setMessages((prev) => [...prev, userMessage]);
+
+    // Scroll to bottom after adding user message (user expects to see the response)
+    setTimeout(() => {
+      virtuosoRef.current?.scrollToIndex({
+        index: 'LAST',
+        behavior: 'smooth',
+      });
+    }, 50);
 
     // Send via WebSocket with conversation ID, attachments, reasoning effort, message type, and agent command
     sendMessage({
@@ -2091,6 +2114,7 @@ function App() {
               initialTopMostItemIndex={messages.length - 1}
               followOutput={(isAtBottom) => isAtBottom ? 'smooth' : false}
               atBottomStateChange={handleAtBottomStateChange}
+              atBottomThreshold={100}
               startReached={loadOlderMessages}
               increaseViewportBy={{ top: 200, bottom: 200 }}
               components={{

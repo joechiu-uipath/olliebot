@@ -165,8 +165,8 @@ export interface BaseAgent {
 
   // Communication
   handleMessage(message: Message): Promise<void>;
-  sendMessage(content: string, saveOptions?: { citations?: unknown; reasoningMode?: string }): Promise<void>;
-  sendError(error: string, details?: string): Promise<void>;
+  sendMessage(content: string, options?: { citations?: unknown; reasoningMode?: string; conversationId?: string }): Promise<void>;
+  sendError(error: string, details?: string, conversationId?: string): Promise<void>;
 
   // Inter-agent communication
   receiveFromAgent(comm: AgentCommunication): Promise<void>;

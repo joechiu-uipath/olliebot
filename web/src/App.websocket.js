@@ -45,7 +45,27 @@ export function createMessageHandler(deps) {
     setEvalResults,
     setEvalError,
     setEvalLoading,
+    // Scroll callback
+    scrollToBottom,
   } = deps;
+
+  /**
+   * Message types that are scoped to a specific conversation.
+   * These will be filtered out if they don't match the current conversation.
+   * All other message types are global (browser sessions, desktop sessions, RAG, etc.)
+   */
+  const CONVERSATION_SCOPED_TYPES = new Set([
+    'message',
+    'stream_start',
+    'stream_chunk',
+    'stream_end',
+    'stream_resume',
+    'error',
+    'tool_requested',
+    'tool_execution_finished',
+    'delegation',
+    'task_run',
+  ]);
 
   /**
    * Helper to check if message belongs to current conversation
@@ -69,6 +89,11 @@ export function createMessageHandler(deps) {
    * Main message handler - processes WebSocket messages by type
    */
   return function handleMessage(data) {
+    // Early exit for conversation-scoped messages that don't match current conversation
+    if (CONVERSATION_SCOPED_TYPES.has(data.type) && !isForCurrentConversation(data.conversationId)) {
+      return;
+    }
+
     switch (data.type) {
       case 'message':
         handleRegularMessage(data);
@@ -81,6 +106,9 @@ export function createMessageHandler(deps) {
         break;
       case 'stream_end':
         handleStreamEnd(data);
+        break;
+      case 'stream_resume':
+        handleStreamResume(data);
         break;
       case 'error':
         handleError(data);
@@ -177,8 +205,6 @@ export function createMessageHandler(deps) {
   // ============================================================================
 
   function handleRegularMessage(data) {
-    if (!isForCurrentConversation(data.conversationId)) return;
-
     const messageId = data.id || `msg-${Date.now()}`;
     setMessages((prev) => {
       if (prev.some((m) => m.id === messageId)) return prev;
@@ -200,8 +226,6 @@ export function createMessageHandler(deps) {
   }
 
   function handleStreamStart(data) {
-    if (!isForCurrentConversation(data.conversationId)) return;
-
     setMessages((prev) => {
       const lastUserMsg = [...prev].reverse().find(m => m.role === 'user');
       return [
@@ -223,8 +247,6 @@ export function createMessageHandler(deps) {
   }
 
   function handleStreamChunk(data) {
-    if (!isForCurrentConversation(data.conversationId)) return;
-
     setMessages((prev) =>
       prev.map((m) =>
         m.id === data.streamId
@@ -235,8 +257,6 @@ export function createMessageHandler(deps) {
   }
 
   function handleStreamEnd(data) {
-    if (!isForCurrentConversation(data.conversationId)) return;
-
     setMessages((prev) =>
       prev.map((m) =>
         m.id === data.streamId
@@ -247,9 +267,53 @@ export function createMessageHandler(deps) {
     setIsResponsePending(false);
   }
 
-  function handleError(data) {
-    if (!isForCurrentConversation(data.conversationId)) return;
+  /**
+   * Handle stream_resume - restore an in-progress stream when switching back to a conversation
+   */
+  function handleStreamResume(data) {
+    // If no active stream for this conversation, nothing to do
+    if (data.active === false || !data.streamId) {
+      return;
+    }
 
+    // Check if we already have this stream message
+    setMessages((prev) => {
+      const existingStream = prev.find((m) => m.id === data.streamId);
+      if (existingStream) {
+        // Stream message already exists - update it with accumulated content
+        return prev.map((m) =>
+          m.id === data.streamId
+            ? { ...m, content: data.accumulatedContent, isStreaming: true }
+            : m
+        );
+      }
+
+      // Stream message doesn't exist - create it
+      return [
+        ...prev,
+        {
+          id: data.streamId,
+          role: 'assistant',
+          content: data.accumulatedContent || '',
+          isStreaming: true,
+          agentName: data.agentName,
+          agentEmoji: data.agentEmoji,
+          agentType: data.agentType,
+          timestamp: data.startTime,
+        },
+      ];
+    });
+
+    // Mark response as pending since stream is still active
+    setIsResponsePending(true);
+
+    // Scroll to bottom to show the resumed stream
+    if (scrollToBottom) {
+      setTimeout(() => scrollToBottom(), 50);
+    }
+  }
+
+  function handleError(data) {
     const errorId = data.id || `err-${Date.now()}`;
     setMessages((prev) => {
       if (prev.some((m) => m.id === errorId)) return prev;
@@ -269,8 +333,6 @@ export function createMessageHandler(deps) {
   }
 
   function handleToolRequested(data) {
-    if (!isForCurrentConversation(data.conversationId)) return;
-
     const toolId = `tool-${data.requestId}`;
     setMessages((prev) => {
       if (prev.some((m) => m.id === toolId)) return prev;
@@ -301,8 +363,6 @@ export function createMessageHandler(deps) {
   }
 
   function handleToolFinished(data) {
-    if (!isForCurrentConversation(data.conversationId)) return;
-
     setMessages((prev) =>
       prev.map((m) =>
         m.id === `tool-${data.requestId}`
@@ -320,8 +380,6 @@ export function createMessageHandler(deps) {
   }
 
   function handleDelegation(data) {
-    if (!isForCurrentConversation(data.conversationId)) return;
-
     const delegationId = `delegation-${data.agentId}`;
     setMessages((prev) => {
       if (prev.some((m) => m.id === delegationId)) return prev;
@@ -342,8 +400,6 @@ export function createMessageHandler(deps) {
   }
 
   function handleTaskRun(data) {
-    if (!isForCurrentConversation(data.conversationId)) return;
-
     const taskRunId = `task-run-${data.taskId}-${Date.now()}`;
     setMessages((prev) => {
       if (prev.some((m) => m.taskId === data.taskId && m.role === 'task_run')) return prev;

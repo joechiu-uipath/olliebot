@@ -49,6 +49,7 @@ export interface SendOptions {
   html?: boolean;
   buttons?: ActionButton[];
   agent?: AgentMetadata;
+  conversationId?: string;
 }
 
 export interface ActionButton {
@@ -78,7 +79,7 @@ export interface Channel {
   send(content: string, options?: SendOptions): Promise<void>;
 
   // Send an error message to the user
-  sendError(error: string, details?: string): Promise<void>;
+  sendError(error: string, details?: string, conversationId?: string): Promise<void>;
 
   // Streaming support (required)
   startStream(streamId: string, options?: StreamStartOptions): void;

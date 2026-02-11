@@ -1,7 +1,7 @@
 // Worker Agent - handles delegated tasks from supervisor
 
 import { v4 as uuid } from 'uuid';
-import { AbstractAgent, type AgentRegistry } from './base-agent.js';
+import { AbstractAgent } from './base-agent.js';
 import type {
   AgentConfig,
   AgentCommunication,
@@ -84,9 +84,9 @@ export class WorkerAgent extends AbstractAgent {
         message,
       ]);
 
-      await this.sendMessage(response);
+      await this.sendMessage(response, { conversationId: this.conversationId || undefined });
     } catch (error) {
-      await this.sendError('Failed to process message', String(error));
+      await this.sendError('Failed to process message', String(error), this.conversationId || undefined);
     }
 
     this._state.status = 'idle';
@@ -132,7 +132,7 @@ export class WorkerAgent extends AbstractAgent {
         ];
 
         const response = await this.generateResponse(contextMessages);
-        await this.sendMessage(response);
+        await this.sendMessage(response, { conversationId: this.conversationId || undefined });
 
         // Report completion
         await this.sendToAgent(this.parentId, {
@@ -148,7 +148,7 @@ export class WorkerAgent extends AbstractAgent {
     } catch (error) {
       console.error(`[${this.identity.name}] Task failed:`, error);
 
-      await this.sendError(`${this.identity.name} encountered an error`, String(error));
+      await this.sendError(`${this.identity.name} encountered an error`, String(error), this.conversationId || undefined);
 
       // Report failure to supervisor
       await this.sendToAgent(this.parentId, {
