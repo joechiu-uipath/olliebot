@@ -189,9 +189,4 @@ export interface SupervisorAgent extends BaseAgent {
 
   // Channel management
   registerChannel(channel: Channel): void;
-
-  // Conversation management
-  setConversationId(conversationId: string | null): void;
-  getCurrentConversationId(): string | null;
-  startNewConversation(): void;
 }

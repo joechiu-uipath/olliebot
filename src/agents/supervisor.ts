@@ -78,13 +78,10 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
       console.log(`[${this.identity.name}] Action: ${action}`, data);
     });
 
-    // Handle new conversation request if channel supports it
-    if ('onNewConversation' in channel && typeof channel.onNewConversation === 'function') {
-      (channel as { onNewConversation: (handler: () => void) => void }).onNewConversation(() => {
-        this.startNewConversation();
-        console.log(`[${this.identity.name}] Started new conversation`);
-      });
-    }
+    // Note: onNewConversation is not needed - conversation context is now request-scoped.
+    // Each message carries its own conversationId in metadata. To start a new conversation,
+    // the frontend simply doesn't send a conversationId, and ensureConversation() will
+    // create one or find a recent conversation to continue.
   }
 
   async handleMessage(message: Message): Promise<void> {
@@ -100,7 +97,8 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
     // Mark message as being processed
     this.processingMessages.add(message.id);
 
-    // If message includes a conversationId, set it on the supervisor
+    // Load conversation context from message metadata.
+    // Each message carries its own conversationId - this is request-scoped, not session state.
     // IMPORTANT: Well-known conversations (like 'feed') should ONLY be used for scheduled tasks,
     // not for user-initiated messages. If a user sends a message while viewing Feed, we should
     // create a new conversation for their request, not pollute the Feed with user interactions.
@@ -111,10 +109,14 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
       if (isWellKnownConversation(msgConversationId) && !isScheduledTask) {
         // User message from Feed view - don't use Feed conversation, will create new one later
         console.log(`[${this.identity.name}] User message from well-known conversation '${msgConversationId}', will create new conversation`);
-        this.setConversationId(null);
+        this.loadConversationContext(null);
       } else {
-        this.setConversationId(msgConversationId);
+        this.loadConversationContext(msgConversationId);
       }
+    } else {
+      // No conversationId in metadata - clear context so ensureConversation() will create a new one
+      // or find a recent conversation to continue
+      this.loadConversationContext(null);
     }
 
     // Set the turnId for this message processing
@@ -866,14 +868,17 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
     return id;
   }
 
-  // Start a new conversation (called when user clicks "New Chat")
-  startNewConversation(): void {
-    this.currentConversationId = null;
-    this.conversationHistory = [];
-  }
-
-  // Set the current conversation ID (used when running tasks in a specific conversation)
-  setConversationId(conversationId: string | null): void {
+  /**
+   * Load conversation context from message metadata.
+   * This is called at the start of handleMessage to set up the conversation
+   * context for the current request. It loads conversation history from the
+   * database so the LLM has context for its response.
+   *
+   * Note: This is request-scoped state, not persistent UI navigation state.
+   * UI navigation (which conversation the user is viewing) is managed by
+   * the channel/frontend, not the supervisor.
+   */
+  private loadConversationContext(conversationId: string | null): void {
     // Only reload if actually switching conversations
     if (conversationId === this.currentConversationId) {
       return;
@@ -914,11 +919,6 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
       // New/no conversation - clear history
       this.conversationHistory = [];
     }
-  }
-
-  // Get the current conversation ID
-  getCurrentConversationId(): string | null {
-    return this.currentConversationId;
   }
 
   /**

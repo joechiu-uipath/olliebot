@@ -202,6 +202,9 @@ export class ConsoleChannel implements Channel {
             role: 'user',
             content: userInput,
             createdAt: new Date(),
+            metadata: {
+              conversationId: this.conversationProvider?.getCurrentConversationId() ?? undefined,
+            },
           };
           await this.messageHandler(message);
         }

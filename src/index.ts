@@ -526,6 +526,12 @@ async function main(): Promise<void> {
     console.log('[Init] Starting in console mode...');
     const consoleChannel = new ConsoleChannel();
 
+    // Navigation state for console UI - tracks which conversation the user is viewing
+    // This is separate from supervisor's request-scoped conversation handling
+    const navigationState = {
+      currentConversationId: null as string | null,
+    };
+
     // Wire up conversation provider for console commands
     consoleChannel.setConversationProvider({
       listConversations: (limit = 20) => {
@@ -543,9 +549,9 @@ async function main(): Promise<void> {
           createdAt: m.createdAt,
         }));
       },
-      getCurrentConversationId: () => supervisor.getCurrentConversationId(),
-      setConversationId: (id) => supervisor.setConversationId(id),
-      startNewConversation: () => supervisor.startNewConversation(),
+      getCurrentConversationId: () => navigationState.currentConversationId,
+      setConversationId: (id) => { navigationState.currentConversationId = id; },
+      startNewConversation: () => { navigationState.currentConversationId = null; },
     });
 
     // Wire up system provider for tasks, tools, MCP

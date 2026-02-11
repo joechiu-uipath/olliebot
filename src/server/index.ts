@@ -948,11 +948,6 @@ export class AssistantServer {
         const now = new Date().toISOString();
         db.tasks.update(task.id, { lastRun: now, updatedAt: now });
 
-        // If a conversation ID was provided, set it on the supervisor
-        if (conversationId) {
-          this.supervisor.setConversationId(conversationId);
-        }
-
         // Get description from jsonConfig
         const taskDescription = (task.jsonConfig as { description?: string }).description || '';
 
@@ -970,6 +965,7 @@ export class AssistantServer {
 
         // Create a message to trigger the task execution via the supervisor
         // The message content is for the LLM, metadata is for UI display
+        // conversationId is passed in metadata - supervisor reads it from there
         const taskMessage = {
           id: crypto.randomUUID(),
           role: 'user' as const,
@@ -981,6 +977,7 @@ export class AssistantServer {
             taskName: task.name,
             taskDescription,
             turnId, // Pass the turnId from the task_run event
+            conversationId: conversationId || undefined, // Conversation context for this task
           },
         };
 
