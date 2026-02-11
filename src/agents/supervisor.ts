@@ -22,7 +22,7 @@ import type { CitationSource, StoredCitationData } from '../citations/types.js';
 import { DEEP_RESEARCH_WORKFLOW_ID, AGENT_IDS } from '../deep-research/constants.js';
 import { SELF_CODING_WORKFLOW_ID, AGENT_IDS as CODING_AGENT_IDS } from '../self-coding/constants.js';
 import { getMessageEventService } from '../services/message-event-service.js';
-import { SUPERVISOR_ICON, SUPERVISOR_NAME } from '../constants.js';
+import { SUPERVISOR_ICON, SUPERVISOR_NAME, CONVERSATION_HISTORY_LIMIT } from '../constants.js';
 
 export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAgent {
   private subAgents: Map<string, WorkerAgent> = new Map();
@@ -124,7 +124,7 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
 
     // Save message to history
     this.conversationHistory.push(message);
-    this.saveMessage(message);
+    this.saveMessageInternal(message);
 
     if (!this.channel) {
       console.error(`[${this.identity.name}] No channel registered`);
@@ -178,20 +178,19 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
           await this.generateStreamingResponse(message, channel);
         } else {
           // Fallback to non-streaming
-          const response = await this.generateResponse(this.conversationHistory.slice(-10));
+          const response = await this.generateResponse(this.conversationHistory.slice(-CONVERSATION_HISTORY_LIMIT));
           const delegationMatch = response.match(/```delegate\s*([\s\S]*?)```/);
 
           if (delegationMatch) {
             await this.handleDelegation(delegationMatch[1], message, channel);
           } else {
-            await this.sendToChannel(channel, response, { markdown: true });
-            this.saveAssistantMessage( response, message.metadata?.reasoningMode as string | undefined);
+            await this.sendMessage(response, { reasoningMode: message.metadata?.reasoningMode as string | undefined });
           }
         }
       }
     } catch (error) {
       console.error(`[${this.identity.name}] Error:`, error);
-      await this.sendError(channel, 'Failed to process message', String(error));
+      await this.sendError('Failed to process message', String(error));
     } finally {
       // Clean up processing state after a delay (allow for retries to be detected)
       setTimeout(() => {
@@ -252,7 +251,7 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
       // Build initial messages, including image attachments and messageType
       let llmMessages: LLMMessage[] = [
         { role: 'system', content: systemPrompt },
-        ...this.conversationHistory.slice(-10).map((m) => {
+        ...this.conversationHistory.slice(-CONVERSATION_HISTORY_LIMIT).map((m) => {
           // Check if message has image attachments
           const imageAttachments = m.attachments?.filter(a => a.type.startsWith('image/')) || [];
 
@@ -367,7 +366,7 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
               // Save any response content before delegation
               const reasoningMode = message.metadata?.reasoningMode as string | undefined;
               if (fullResponse.trim()) {
-                this.saveAssistantMessage( fullResponse.trim(), reasoningMode);
+                this.saveAssistantMessage(fullResponse.trim(), { reasoningMode });
               }
 
               // Delegation logging handled by handleDelegationFromTool
@@ -435,7 +434,7 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
       // Save the response (delegation is now handled via tool use, not markdown blocks)
       const reasoningMode = message.metadata?.reasoningMode as string | undefined;
       if (fullResponse.trim()) {
-        this.saveAssistantMessage( fullResponse, reasoningMode, citationData);
+        this.saveAssistantMessage(fullResponse, { reasoningMode, citations: citationData });
       }
     } catch (error) {
       this.endStreamWithCitations(channel, streamId, this.currentConversationId || undefined, undefined);
@@ -450,7 +449,7 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
       } else {
         console.error('[Supervisor] Full streaming error:', error);
       }
-      await this.sendError(channel, 'Streaming error', safeDetails);
+      await this.sendError('Streaming error', safeDetails);
     } finally {
       // Cleanup tool event subscription
       if (unsubscribeTool) {
@@ -521,7 +520,7 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
       console.error(`[${this.identity.name}] Delegation failed:`, error);
       // Fall back to handling directly
       const fallbackResponse = await this.generateResponse([
-        ...this.conversationHistory.slice(-10),
+        ...this.conversationHistory.slice(-CONVERSATION_HISTORY_LIMIT),
         {
           id: uuid(),
           role: 'system',
@@ -529,7 +528,7 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
           createdAt: new Date(),
         },
       ]);
-      await this.sendToChannel(channel, fallbackResponse, { markdown: true });
+      await this.sendMessage(fallbackResponse);
     }
   }
 
@@ -603,7 +602,7 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
       console.error(`[${this.identity.name}] Delegation failed:`, error);
       // Fall back to handling directly
       const fallbackResponse = await this.generateResponse([
-        ...this.conversationHistory.slice(-10),
+        ...this.conversationHistory.slice(-CONVERSATION_HISTORY_LIMIT),
         {
           id: uuid(),
           role: 'system',
@@ -611,7 +610,7 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
           createdAt: new Date(),
         },
       ]);
-      await this.sendToChannel(channel, fallbackResponse, { markdown: true });
+      await this.sendMessage(fallbackResponse);
     }
   }
 
@@ -757,18 +756,6 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
           task.status = 'completed';
           task.result = payload.result;
           task.completedAt = new Date();
-        }
-        break;
-      }
-      case 'request_help': {
-        // Sub-agent requesting help
-        const payload = comm.payload as { question: string };
-        if (this.channel) {
-          await this.sendToChannel(
-            this.channel,
-            `📢 Agent ${comm.fromAgent} needs assistance: ${payload.question}`,
-            { markdown: true }
-          );
         }
         break;
       }
@@ -934,7 +921,20 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
     return this.currentConversationId;
   }
 
-  private saveMessage(message: Message): void {
+  /**
+   * Low-level DB persistence for any message (user or assistant).
+   * Supervisor-specific because it handles conversation lifecycle:
+   * - Calls ensureConversation() to get/create conversationId
+   * - Strips attachment base64 data from metadata
+   * - Calls incrementMessageCount() for auto-naming
+   *
+   * Workers don't need this because their conversationId is set by
+   * supervisor when spawning, and they don't receive user messages.
+   *
+   * For assistant messages, use saveAssistantMessage() which builds
+   * the message with agent metadata and then calls this method.
+   */
+  private saveMessageInternal(message: Message): void {
     try {
       const db = getDb();
       const conversationId = this.ensureConversation(message.role === 'user' ? message.content : undefined);
@@ -966,16 +966,16 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
     }
   }
 
-  private saveAssistantMessage(content: string, reasoningMode?: string, citations?: StoredCitationData): void {
+  protected override saveAssistantMessage(content: string, options?: { citations?: StoredCitationData; reasoningMode?: string }): void {
     const metadata: Record<string, unknown> = {
       agentId: this.identity.id,
       agentName: this.identity.name,
-      ...(reasoningMode && { reasoningMode }),
+      ...(options?.reasoningMode && { reasoningMode: options.reasoningMode }),
     };
 
     // Include citations in metadata if present
-    if (citations && citations.sources.length > 0) {
-      metadata.citations = citations;
+    if (options?.citations && options.citations.sources.length > 0) {
+      metadata.citations = options.citations;
     }
 
     const message: Message = {
@@ -986,7 +986,7 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
       createdAt: new Date(),
     };
     this.conversationHistory.push(message);
-    this.saveMessage(message);
+    this.saveMessageInternal(message);
   }
 
   /**

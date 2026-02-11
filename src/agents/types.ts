@@ -146,7 +146,7 @@ export interface TaskResultPayload {
 }
 
 export interface AgentCommunication {
-  type: 'task_assignment' | 'task_result' | 'status_update' | 'request_help' | 'terminate';
+  type: 'task_assignment' | 'task_result' | 'status_update' | 'terminate';
   fromAgent: string;
   toAgent: string;
   payload: unknown;
@@ -165,8 +165,8 @@ export interface BaseAgent {
 
   // Communication
   handleMessage(message: Message): Promise<void>;
-  sendToChannel(channel: Channel, content: string, options?: { markdown?: boolean }): Promise<void>;
-  sendError(channel: Channel, error: string, details?: string): Promise<void>;
+  sendMessage(content: string, saveOptions?: { citations?: unknown; reasoningMode?: string }): Promise<void>;
+  sendError(error: string, details?: string): Promise<void>;
 
   // Inter-agent communication
   receiveFromAgent(comm: AgentCommunication): Promise<void>;

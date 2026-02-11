@@ -1,8 +1,4 @@
 
-Investigate - decoupled sendToChannel() and saveAssistantMessage()
-
-            await this.sendToChannel(channel, response, { markdown: true });
-            this.saveAssistantMessage(message.channel, response, message.metadata?.reasoningMode as string | undefined);
 
 Investigate - removing currentConversationId from supervisor agent, bad design
 

@@ -69,3 +69,19 @@ export const CITATION_CODE_THRESHOLD = 0.8;
  * Max tokens for citation LLM response.
  */
 export const CITATION_LLM_MAX_TOKENS = 4000;
+
+// ============================================================
+// CONVERSATION HISTORY CONFIGURATION
+// ============================================================
+
+/**
+ * Number of recent messages to include when generating responses.
+ * More messages provide better context but increase token usage.
+ */
+export const CONVERSATION_HISTORY_LIMIT = 10;
+
+/**
+ * Number of recent messages for worker agents (smaller context).
+ * Workers handle focused tasks and need less conversation history.
+ */
+export const WORKER_HISTORY_LIMIT = 5;

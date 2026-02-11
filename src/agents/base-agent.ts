@@ -220,46 +220,58 @@ export abstract class AbstractAgent implements BaseAgent {
 
   abstract handleMessage(message: Message): Promise<void>;
 
-  async sendToChannel(
-    channel: Channel,
-    content: string,
-    options?: { markdown?: boolean }
-  ): Promise<void> {
-    // Create agent-attributed message
-    const agentMessage: AgentMessage = {
-      id: uuid(),
-      role: 'assistant',
-      content,
-      agentId: this.identity.id,
-      agentName: this.identity.name,
-      agentEmoji: this.identity.emoji,
-      createdAt: new Date(),
-    };
+  async sendMessage(content: string, saveOptions?: { citations?: StoredCitationData; reasoningMode?: string }): Promise<void> {
+    if (!this.channel) {
+      console.error(`[${this.identity.name}] Cannot send message: no channel registered`);
+      return;
+    }
 
-    // Send with agent metadata
-    await this.sendAgentMessage(channel, agentMessage, options);
+    // Send with agent metadata (markdown: true is the default)
+    await this.channel.send(content, {
+      markdown: true,
+      agent: {
+        agentId: this.identity.id,
+        agentName: this.identity.name,
+        agentEmoji: this.identity.emoji,
+      },
+    });
+
+    // Save to conversation history and database
+    this.saveAssistantMessage(content, saveOptions);
 
     this._state.lastActivity = new Date();
   }
 
-  protected async sendAgentMessage(
-    channel: Channel,
-    message: AgentMessage,
-    options?: { markdown?: boolean }
-  ): Promise<void> {
-    // Send with agent metadata using the unified send method
-    await channel.send(message.content, {
-      ...options,
-      agent: {
-        agentId: message.agentId,
-        agentName: message.agentName,
-        agentEmoji: message.agentEmoji,
+  /**
+   * Save an assistant message to conversation history and database.
+   * Called automatically by sendMessage(). Can be called directly for streaming
+   * cases where content was already sent chunk by chunk.
+   * Subclasses should override to add agent-specific metadata.
+   */
+  protected saveAssistantMessage(content: string, options?: { citations?: StoredCitationData }): void {
+    // Default implementation just adds to conversation history
+    // Subclasses override to persist to database with agent-specific metadata
+    const message: Message = {
+      id: uuid(),
+      role: 'assistant',
+      content,
+      metadata: {
+        agentId: this.identity.id,
+        agentName: this.identity.name,
+        agentEmoji: this.identity.emoji,
+        ...(options?.citations && { citations: options.citations }),
       },
-    });
+      createdAt: new Date(),
+    };
+    this.conversationHistory.push(message);
   }
 
-  async sendError(channel: Channel, error: string, details?: string): Promise<void> {
-    await channel.sendError(error, details);
+  async sendError(error: string, details?: string): Promise<void> {
+    if (!this.channel) {
+      console.error(`[${this.identity.name}] Cannot send error: no channel registered`);
+      return;
+    }
+    await this.channel.sendError(error, details);
   }
 
   async receiveFromAgent(comm: AgentCommunication): Promise<void> {

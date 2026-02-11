@@ -16,6 +16,7 @@ import { formatToolResultBlocks } from '../utils/index.js';
 import { logSystemPrompt } from '../utils/prompt-logger.js';
 import type { CitationSource, CitationSourceType, StoredCitationData } from '../citations/types.js';
 import { SUB_AGENT_TIMEOUT_MS } from '../deep-research/constants.js';
+import { WORKER_HISTORY_LIMIT } from '../constants.js';
 import { getMessageEventService } from '../services/message-event-service.js';
 
 export class WorkerAgent extends AbstractAgent {
@@ -79,14 +80,13 @@ export class WorkerAgent extends AbstractAgent {
 
     try {
       const response = await this.generateResponse([
-        ...this.conversationHistory.slice(-5),
+        ...this.conversationHistory.slice(-WORKER_HISTORY_LIMIT),
         message,
       ]);
 
-      await this.sendToChannel(this.channel, response, { markdown: true });
-      this.saveAssistantMessage(response);
+      await this.sendMessage(response);
     } catch (error) {
-      await this.sendError(this.channel!, 'Failed to process message', String(error));
+      await this.sendError('Failed to process message', String(error));
     }
 
     this._state.status = 'idle';
@@ -132,8 +132,7 @@ export class WorkerAgent extends AbstractAgent {
         ];
 
         const response = await this.generateResponse(contextMessages);
-        await this.sendToChannel(channel, response, { markdown: true });
-        this.saveAssistantMessage(response);
+        await this.sendMessage(response);
 
         // Report completion
         await this.sendToAgent(this.parentId, {
@@ -149,7 +148,7 @@ export class WorkerAgent extends AbstractAgent {
     } catch (error) {
       console.error(`[${this.identity.name}] Task failed:`, error);
 
-      await this.sendError(channel, `${this.identity.name} encountered an error`, String(error));
+      await this.sendError(`${this.identity.name} encountered an error`, String(error));
 
       // Report failure to supervisor
       await this.sendToAgent(this.parentId, {
@@ -454,7 +453,7 @@ export class WorkerAgent extends AbstractAgent {
       this.endStreamWithCitations(channel, streamId, this.conversationId || undefined, citationData);
 
       // Save and report
-      this.saveAssistantMessage(fullResponse, citationData);
+      this.saveAssistantMessage(fullResponse, { citations: citationData });
       console.log(`[${this.identity.name}] Task done (${iterationCount} iter, ${fullResponse.length} chars)`);
 
       // Pass both citations (matched) and all collected sources to parent
@@ -475,14 +474,6 @@ export class WorkerAgent extends AbstractAgent {
         unsubscribeTool();
       }
     }
-  }
-
-  async requestHelp(question: string): Promise<void> {
-    await this.sendToAgent(this.parentId, {
-      type: 'request_help',
-      toAgent: this.parentId,
-      payload: { question },
-    });
   }
 
   /**
@@ -736,7 +727,7 @@ export class WorkerAgent extends AbstractAgent {
     }
   }
 
-  private saveAssistantMessage(content: string, citations?: StoredCitationData): void {
+  protected override saveAssistantMessage(content: string, options?: { citations?: StoredCitationData }): void {
     const metadata: Record<string, unknown> = {
       agentId: this.identity.id,
       agentName: this.identity.name,
@@ -745,8 +736,8 @@ export class WorkerAgent extends AbstractAgent {
     };
 
     // Include citations in metadata if present
-    if (citations && citations.sources.length > 0) {
-      metadata.citations = citations;
+    if (options?.citations && options.citations.sources.length > 0) {
+      metadata.citations = options.citations;
     }
 
     const message: Message = {

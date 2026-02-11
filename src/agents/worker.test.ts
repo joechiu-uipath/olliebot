@@ -179,7 +179,7 @@ describe('WorkerAgent', () => {
         ],
       };
 
-      (worker as any).saveAssistantMessage('Content with citations', citations);
+      (worker as any).saveAssistantMessage('Content with citations', { citations });
 
       expect(mockMessagesCreate).toHaveBeenCalledWith(
         expect.objectContaining({
