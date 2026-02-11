@@ -64,6 +64,7 @@ export function createMessageHandler(deps) {
     'tool_requested',
     'tool_execution_finished',
     'tool_progress',
+    'tool_resume',
     'delegation',
     'task_run',
   ]);
@@ -128,6 +129,9 @@ export function createMessageHandler(deps) {
         break;
       case 'tool_progress':
         handleToolProgress(data);
+        break;
+      case 'tool_resume':
+        handleToolResume(data);
         break;
       case 'delegation':
         handleDelegation(data);
@@ -358,6 +362,54 @@ export function createMessageHandler(deps) {
         },
       ];
     });
+  }
+
+  /**
+   * Handle tool_resume - restore an in-progress tool when switching back to a conversation
+   */
+  function handleToolResume(data) {
+    const toolId = `tool-${data.requestId}`;
+    setMessages((prev) => {
+      const existingTool = prev.find((m) => m.id === toolId);
+      if (existingTool) {
+        // Tool message already exists - update it with progress if available
+        if (data.progress) {
+          return prev.map((m) =>
+            m.id === toolId
+              ? { ...m, progress: data.progress, status: 'running' }
+              : m
+          );
+        }
+        return prev;
+      }
+
+      // Tool message doesn't exist - create it with progress
+      return [
+        ...prev,
+        {
+          id: toolId,
+          role: 'tool',
+          toolName: data.toolName,
+          source: data.source,
+          parameters: data.parameters,
+          status: 'running',
+          timestamp: data.startTime || data.timestamp,
+          agentId: data.agentId,
+          agentName: data.agentName,
+          agentEmoji: data.agentEmoji,
+          agentType: data.agentType,
+          progress: data.progress,
+        },
+      ];
+    });
+
+    // Mark response as pending since tool is still running
+    setIsResponsePending(true);
+
+    // Scroll to bottom to show the resumed tool
+    if (scrollToBottom) {
+      setTimeout(() => scrollToBottom(), 50);
+    }
   }
 
   function handlePlayAudio(data) {

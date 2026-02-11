@@ -30,6 +30,28 @@ interface ActiveStream {
   startTime: Date;
 }
 
+/**
+ * Tracks an active tool execution for a conversation.
+ * Used to resume tool display when user refreshes or switches back to a conversation.
+ */
+interface ActiveTool {
+  requestId: string;
+  toolName: string;
+  source: string;
+  conversationId: string;
+  parameters?: Record<string, unknown>;
+  agentId?: string;
+  agentName?: string;
+  agentEmoji?: string;
+  agentType?: string;
+  startTime: Date;
+  lastProgress?: {
+    current: number;
+    total?: number;
+    message?: string;
+  };
+}
+
 export class WebSocketChannel implements Channel {
   readonly id: string;
   readonly name = 'web';
@@ -46,6 +68,12 @@ export class WebSocketChannel implements Channel {
    * Allows frontend to resume streaming display when switching back to a conversation.
    */
   private activeStreams: Map<string, ActiveStream> = new Map();
+
+  /**
+   * Tracks active tool executions by requestId.
+   * Allows frontend to resume tool display when refreshing or switching conversations.
+   */
+  private activeTools: Map<string, ActiveTool> = new Map();
 
   constructor(id: string = 'web-default') {
     this.id = id;
@@ -157,8 +185,8 @@ export class WebSocketChannel implements Channel {
   }
 
   /**
-   * Send active stream state to a client when they switch to a conversation.
-   * Allows frontend to resume displaying an in-progress stream.
+   * Send active stream and tool state to a client when they switch to a conversation.
+   * Allows frontend to resume displaying in-progress streams and tools.
    */
   private sendActiveStreamState(clientId: string, conversationId: string): void {
     const activeStream = this.activeStreams.get(conversationId);
@@ -186,6 +214,27 @@ export class WebSocketChannel implements Channel {
         timestamp: new Date().toISOString(),
       });
     }
+
+    // Also send any active tools for this conversation
+    Array.from(this.activeTools.values())
+      .filter(tool => tool.conversationId === conversationId)
+      .forEach(tool => {
+        this.sendToClient(clientId, {
+          type: 'tool_resume',
+          requestId: tool.requestId,
+          toolName: tool.toolName,
+          source: tool.source,
+          conversationId: tool.conversationId,
+          parameters: tool.parameters,
+          agentId: tool.agentId,
+          agentName: tool.agentName,
+          agentEmoji: tool.agentEmoji,
+          agentType: tool.agentType,
+          startTime: tool.startTime.toISOString(),
+          progress: tool.lastProgress,
+          timestamp: new Date().toISOString(),
+        });
+      });
   }
 
   private sendToClient(clientId: string, data: unknown): void {
@@ -344,6 +393,9 @@ export class WebSocketChannel implements Channel {
    * Broadcast data to all connected clients
    */
   broadcast(data: unknown): void {
+    // Track tool events for resume functionality
+    this.trackToolEvent(data);
+
     const message = JSON.stringify(data);
     const closedClients: string[] = [];
     for (const client of this.clients.values()) {
@@ -360,6 +412,54 @@ export class WebSocketChannel implements Channel {
     // Clean up closed clients
     for (const clientId of closedClients) {
       this.clients.delete(clientId);
+    }
+  }
+
+  /**
+   * Track tool events for resume functionality.
+   * Called from broadcast() to intercept tool_requested, tool_progress, and tool_execution_finished.
+   */
+  private trackToolEvent(data: unknown): void {
+    const event = data as {
+      type?: string;
+      requestId?: string;
+      toolName?: string;
+      source?: string;
+      conversationId?: string;
+      parameters?: Record<string, unknown>;
+      agentId?: string;
+      agentName?: string;
+      agentEmoji?: string;
+      agentType?: string;
+      progress?: { current: number; total?: number; message?: string };
+      timestamp?: string;
+    };
+
+    if (!event.type || !event.requestId) return;
+
+    if (event.type === 'tool_requested' && event.conversationId) {
+      // Start tracking this tool
+      this.activeTools.set(event.requestId, {
+        requestId: event.requestId,
+        toolName: event.toolName || 'unknown',
+        source: event.source || 'native',
+        conversationId: event.conversationId,
+        parameters: event.parameters,
+        agentId: event.agentId,
+        agentName: event.agentName,
+        agentEmoji: event.agentEmoji,
+        agentType: event.agentType,
+        startTime: event.timestamp ? new Date(event.timestamp) : new Date(),
+      });
+    } else if (event.type === 'tool_progress') {
+      // Update progress for this tool
+      const tool = this.activeTools.get(event.requestId);
+      if (tool && event.progress) {
+        tool.lastProgress = event.progress;
+      }
+    } else if (event.type === 'tool_execution_finished') {
+      // Stop tracking this tool
+      this.activeTools.delete(event.requestId);
     }
   }
 
@@ -398,6 +498,7 @@ export class WebSocketChannel implements Channel {
     }
     this.clients.clear();
     this.activeStreams.clear();
+    this.activeTools.clear();
     this.connected = false;
   }
 

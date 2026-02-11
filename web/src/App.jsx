@@ -410,6 +410,9 @@ function App() {
             setHasMoreOlder(pagination.hasOlder || false);
             setOldestCursor(pagination.oldestCursor || null);
             setFirstItemIndex(VIRTUOSO_START_INDEX);
+
+            // Request active stream/tool state for this conversation (to resume in-progress displays)
+            sendMessage({ type: 'get-active-stream', conversationId: convId });
           })
           .catch(() => {
             if (fetchId !== messageFetchCounter.current) return;
@@ -420,7 +423,7 @@ function App() {
       }
     }
     // Note: Eval routes are handled by useEvalMode hook in App.Eval.jsx
-  }, [location.pathname, conversations, currentConversationId, transformMessages]);
+  }, [location.pathname, conversations, currentConversationId, transformMessages, sendMessage]);
 
   // Redirect root and /chat to Feed conversation
   useEffect(() => {
@@ -428,6 +431,19 @@ function App() {
       navigate('/chat/feed', { replace: true });
     }
   }, [location.pathname, navigate]);
+
+  // Request active stream/tool state when WebSocket connects (handles page refresh case)
+  const hasRequestedActiveStateRef = useRef(false);
+  useEffect(() => {
+    if (isConnected && currentConversationId && !hasRequestedActiveStateRef.current) {
+      hasRequestedActiveStateRef.current = true;
+      sendMessage({ type: 'get-active-stream', conversationId: currentConversationId });
+    }
+    // Reset when conversation changes so we request again for new conversation
+    if (!isConnected) {
+      hasRequestedActiveStateRef.current = false;
+    }
+  }, [isConnected, currentConversationId, sendMessage]);
 
   // Scroll to bottom handler for Virtuoso
   const scrollToBottom = useCallback(() => {
