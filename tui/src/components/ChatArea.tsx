@@ -55,15 +55,21 @@ export function ChatArea({ messages, width, height, isFocused }: ChatAreaProps) 
       });
 
       if (msg.status === 'running' && msg.progress) {
-        const barWidth = Math.min(20, width - 12);
+        const rawBarWidth = Math.min(20, width - 12);
+        const barWidth = Math.max(0, rawBarWidth);
         const pct = msg.progress.total ? Math.min(1, msg.progress.current / msg.progress.total) : 0;
         const filled = Math.round(pct * barWidth);
-        const empty = barWidth - filled;
+        const empty = Math.max(0, barWidth - filled);
         const bar = '\u2588'.repeat(filled) + '\u2591'.repeat(empty);
         const pctLabel = msg.progress.total ? ` ${Math.round(pct * 100)}%` : '';
         const progressMsg = msg.progress.message || '';
-        const maxMsgLen = width - barWidth - 14;
-        const truncMsg = progressMsg.length > maxMsgLen ? progressMsg.slice(0, maxMsgLen - 3) + '...' : progressMsg;
+        const rawMaxMsgLen = width - barWidth - 14;
+        const maxMsgLen = Math.max(1, rawMaxMsgLen);
+        let truncMsg = progressMsg;
+        if (progressMsg.length > maxMsgLen) {
+          const sliceLen = Math.max(0, maxMsgLen - 3);
+          truncMsg = (sliceLen > 0 ? progressMsg.slice(0, sliceLen) : '') + '...';
+        }
         lines.push({
           text: `    ${bar}${pctLabel} ${truncMsg}`,
           color: 'blue',
