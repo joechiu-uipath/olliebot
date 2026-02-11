@@ -245,7 +245,6 @@ export class ToolRunner {
         toolName: request.toolName,
         success: true,
         output: invokeResult.output,
-        files: invokeResult.files,
         startTime,
         endTime,
         durationMs: endTime.getTime() - startTime.getTime(),
