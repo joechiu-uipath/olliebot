@@ -16,12 +16,6 @@ export interface NativeToolResult {
     size: number;
     mediaType?: string;
   }>;
-  /** Image data for tools that return visual content */
-  image?: {
-    type: 'base64';
-    media_type: 'image/png' | 'image/jpeg' | 'image/webp';
-    data: string;
-  };
   /**
    * When true, the tool's output is displayed to the user via the UI event
    * broadcast but is NOT fed back to the LLM as a tool_result content block.
