@@ -179,7 +179,9 @@ export function App() {
         } : m
       ));
     } else if (data.type === 'tool_progress') {
-      const msg = data as WsMessage & { requestId: string; progress: { current: number; total?: number; message?: string } };
+      const msg = data as WsMessage & { requestId: string; progress: { current: number; total?: number; message?: string }; conversationId?: string };
+      if (msg.conversationId && msg.conversationId !== currentConversationId) return;
+
       const toolId = `tool-${msg.requestId}`;
       pendingProgress.current[toolId] = msg.progress;
 
