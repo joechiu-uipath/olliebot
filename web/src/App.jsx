@@ -439,7 +439,7 @@ function App() {
       hasRequestedActiveStateRef.current = true;
       sendMessage({ type: 'get-active-stream', conversationId: currentConversationId });
     }
-    // Reset when conversation changes so we request again for new conversation
+    // Reset when WebSocket disconnects so we request again after reconnect
     if (!isConnected) {
       hasRequestedActiveStateRef.current = false;
     }
