@@ -59,5 +59,11 @@ export interface NativeTool {
    */
   readonly private?: boolean;
 
+  /**
+   * Execute the tool with the provided parameters.
+   * @param params - The input parameters for the tool, validated against inputSchema
+   * @param context - Optional execution context providing callbacks for progress updates
+   * @returns A promise resolving to the tool execution result
+   */
   execute(params: Record<string, unknown>, context?: ToolExecutionContext): Promise<NativeToolResult>;
 }
