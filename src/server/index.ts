@@ -5,7 +5,7 @@ import { WebSocketServer } from 'ws';
 import { setupVoiceProxy } from './voice-proxy.js';
 import type { SupervisorAgent } from '../agents/types.js';
 import { getAgentRegistry } from '../agents/index.js';
-import { WebChannel } from '../channels/index.js';
+import { WebSocketChannel } from '../channels/index.js';
 import { getDb } from '../db/index.js';
 import { isWellKnownConversation, getWellKnownConversationMeta, WellKnownConversations } from '../db/well-known-conversations.js';
 import type { MCPClient } from '../mcp/index.js';
@@ -55,7 +55,7 @@ export class AssistantServer {
   private server: Server;
   private wss: WebSocketServer;
   private supervisor: SupervisorAgent;
-  private webChannel: WebChannel;
+  private wsChannel: WebSocketChannel;
   private port: number;
   private mcpClient?: MCPClient;
   private skillManager?: SkillManager;
@@ -166,10 +166,10 @@ export class AssistantServer {
     });
 
     // Create and configure web channel
-    this.webChannel = new WebChannel('web-main');
+    this.wsChannel = new WebSocketChannel('web-main');
 
     // Set the web channel on the global MessageEventService so all agents can use it
-    setMessageEventServiceChannel(this.webChannel);
+    setMessageEventServiceChannel(this.wsChannel);
 
     // Setup routes
     this.setupRoutes();
@@ -905,7 +905,7 @@ export class AssistantServer {
 
     // Get connected clients count
     this.app.get('/api/clients', (_req: Request, res: Response) => {
-      res.json({ count: this.webChannel.getConnectedClients() });
+      res.json({ count: this.wsChannel.getConnectedClients() });
     });
 
     // Get active tasks
@@ -1008,10 +1008,42 @@ export class AssistantServer {
       setupEvalRoutes(this.app, {
         llmService: this.llmService,
         toolRunner: this.toolRunner,
-        webChannel: this.webChannel,
+        channel: this.wsChannel,
       });
       console.log('[Server] Evaluation routes enabled');
     }
+
+    // REST endpoints for browser session management
+    this.app.delete('/api/browser/sessions/:id', async (req: Request, res: Response) => {
+      try {
+        const sessionId = req.params.id as string;
+        if (!this.browserManager) {
+          res.status(404).json({ error: 'Browser manager not configured' });
+          return;
+        }
+        await this.browserManager.closeSession(sessionId);
+        res.json({ success: true, sessionId });
+      } catch (error) {
+        console.error('[API] Failed to close browser session:', error);
+        res.status(500).json({ error: 'Failed to close browser session' });
+      }
+    });
+
+    // REST endpoints for desktop session management
+    this.app.delete('/api/desktop/sessions/:id', async (req: Request, res: Response) => {
+      try {
+        const sessionId = req.params.id as string;
+        if (!this.desktopManager) {
+          res.status(404).json({ error: 'Desktop manager not configured' });
+          return;
+        }
+        await this.desktopManager.closeSession(sessionId);
+        res.json({ success: true, sessionId });
+      } catch (error) {
+        console.error('[API] Failed to close desktop session:', error);
+        res.status(500).json({ error: 'Failed to close desktop session' });
+      }
+    });
 
     // Setup RAG project routes
     if (this.ragProjectService) {
@@ -1037,46 +1069,28 @@ export class AssistantServer {
     });
 
     // Initialize web channel and attach to WebSocket server
-    await this.webChannel.init();
-    this.webChannel.attachToServer(this.wss);
+    await this.wsChannel.init();
+    this.wsChannel.attachToServer(this.wss);
 
     // Register web channel with supervisor
-    this.supervisor.registerChannel(this.webChannel);
+    this.supervisor.registerChannel(this.wsChannel);
 
-    // Attach web channel to browser manager if present
+    // Attach channel to browser manager if present (for event broadcasting)
     if (this.browserManager) {
-      this.browserManager.attachWebChannel(this.webChannel);
-
-      // Handle browser actions from web clients
-      this.webChannel.onBrowserAction(async (action, sessionId) => {
-        console.log(`[Server] Browser action: ${action} for session ${sessionId}`);
-        if (action === 'close' && this.browserManager) {
-          await this.browserManager.closeSession(sessionId);
-        }
-      });
+      this.browserManager.attachChannel(this.wsChannel);
+      // Session close actions are handled via REST endpoint: DELETE /api/browser/sessions/:id
     }
 
-    // Attach web channel to desktop manager if present
+    // Attach channel to desktop manager if present (for event broadcasting)
     if (this.desktopManager) {
-      this.desktopManager.attachWebChannel(this.webChannel);
-
-      // Handle desktop actions from web clients
-      this.webChannel.onDesktopAction(async (action, sessionId) => {
-        console.log(`[Server] Desktop action: ${action} for session ${sessionId}`);
-        if (action === 'close' && this.desktopManager) {
-          try {
-            await this.desktopManager.closeSession(sessionId);
-          } catch (error) {
-            console.error(`[Server] Error closing desktop session ${sessionId}:`, error);
-          }
-        }
-      });
+      this.desktopManager.attachChannel(this.wsChannel);
+      // Session close actions are handled via REST endpoint: DELETE /api/desktop/sessions/:id
     }
 
     // Listen for task updates and broadcast to frontend
     if (this.taskManager) {
       this.taskManager.on('task:updated', ({ task }) => {
-        this.webChannel.broadcast({
+        this.wsChannel.broadcast({
           type: 'task_updated',
           task,
         });
@@ -1094,7 +1108,7 @@ export class AssistantServer {
           error: 'rag_indexing_error',
         };
 
-        this.webChannel.broadcast({
+        this.wsChannel.broadcast({
           type: eventTypeMap[progress.status] || 'rag_indexing_progress',
           projectId: progress.projectId,
           totalDocuments: progress.totalDocuments,
@@ -1107,7 +1121,7 @@ export class AssistantServer {
 
       // Listen for project changes
       this.ragProjectService.on('projects_changed', () => {
-        this.webChannel.broadcast({
+        this.wsChannel.broadcast({
           type: 'rag_projects_changed',
           timestamp: new Date().toISOString(),
         });

@@ -1,7 +1,7 @@
 /**
  * Unit Tests for MessageEventService
  *
- * Tests that the service properly broadcasts events to WebChannel
+ * Tests that the service properly broadcasts events to clients
  * AND persists them to the database.
  */
 
@@ -11,7 +11,7 @@ import type { ToolEvent } from '../tools/types.js';
 
 // Create mock DB that persists across calls
 const mockMessagesCreate = vi.fn();
-const mockMessagesFindById = vi.fn(() => null);
+const mockMessagesFindById = vi.fn().mockReturnValue(null);
 
 // Mock the database module
 vi.mock('../db/index.js', () => ({
@@ -31,15 +31,15 @@ vi.mock('uuid', () => ({
 describe('MessageEventService', () => {
   let service: MessageEventService;
   let mockBroadcast: ReturnType<typeof vi.fn>;
-  let mockWebChannel: { broadcast: ReturnType<typeof vi.fn> };
+  let mockChannel: { broadcast: ReturnType<typeof vi.fn> };
 
   beforeEach(() => {
     vi.clearAllMocks();
 
     mockBroadcast = vi.fn();
-    mockWebChannel = { broadcast: mockBroadcast };
+    mockChannel = { broadcast: mockBroadcast };
 
-    service = new MessageEventService(mockWebChannel as any);
+    service = new MessageEventService(mockChannel as any);
   });
 
   describe('emitToolEvent', () => {
@@ -64,7 +64,7 @@ describe('MessageEventService', () => {
       type: 'researcher',
     };
 
-    it('broadcasts tool event to WebChannel', () => {
+    it('broadcasts tool event to clients', () => {
       service.emitToolEvent(baseEvent, 'conv-123', 'web', agentInfo);
 
       expect(mockBroadcast).toHaveBeenCalledTimes(1);
@@ -99,10 +99,10 @@ describe('MessageEventService', () => {
       );
     });
 
-    it('does NOT persist non-finished events (e.g., tool_execution_started)', () => {
+    it('does NOT persist non-finished events (e.g., tool_requested)', () => {
       const startEvent: ToolEvent = {
         ...baseEvent,
-        type: 'tool_execution_started',
+        type: 'tool_requested',
       };
 
       service.emitToolEvent(startEvent, 'conv-123', 'web', agentInfo);
@@ -196,7 +196,7 @@ describe('MessageEventService', () => {
       rationale: 'User asked about quantum topics',
     };
 
-    it('broadcasts delegation event to WebChannel', () => {
+    it('broadcasts delegation event to clients', () => {
       service.emitDelegationEvent(delegationData, 'conv-123', 'web');
 
       expect(mockBroadcast).toHaveBeenCalledWith(
@@ -294,7 +294,7 @@ describe('MessageEventService', () => {
       details: 'Too many requests in the last minute',
     };
 
-    it('broadcasts error event to WebChannel', () => {
+    it('broadcasts error event to clients', () => {
       service.emitErrorEvent(errorData, 'conv-123', 'web');
 
       expect(mockBroadcast).toHaveBeenCalledWith(
@@ -323,19 +323,20 @@ describe('MessageEventService', () => {
     });
   });
 
-  describe('setWebChannel', () => {
-    it('allows setting WebChannel after construction', () => {
+  describe('setChannel', () => {
+    it('allows setting channel after construction', () => {
       const serviceWithoutChannel = new MessageEventService();
       const newChannel = { broadcast: vi.fn() };
 
-      serviceWithoutChannel.setWebChannel(newChannel as any);
+      serviceWithoutChannel.setChannel(newChannel as any);
 
       const event: ToolEvent = {
-        type: 'tool_execution_started',
+        type: 'tool_requested',
         toolName: 'test',
         source: 'native',
         requestId: 'req-1',
         timestamp: new Date(),
+        parameters: {},
       };
 
       serviceWithoutChannel.emitToolEvent(event, 'conv-1', 'web', {

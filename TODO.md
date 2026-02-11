@@ -1,4 +1,3 @@
-Investigate - backend has channel awareness instead of different frontend (TUI, Console, web) adapts the same websocket messages. There should be only 1 kind of channel.
 
 Investigate - tool result => storage & display test
 

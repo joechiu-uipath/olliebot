@@ -48,6 +48,7 @@ import {
 // Import Computer Use provider factory (reuse from browser module)
 import { createComputerUseProvider } from '../browser/strategies/computer-use/providers/index';
 import type { ComputerUseProvider } from '../browser/types';
+import type { Channel } from '../channels/types';
 
 const execAsync = promisify(exec);
 const fsPromises = fs.promises;
@@ -66,16 +67,9 @@ const SANDBOX_MAPPED_DIR = 'C:\\Users\\WDAGUtilityAccount\\Desktop\\OllieBot';
  */
 const DESKTOP_SESSIONS_PARENT = 'olliebot-desktop';
 
-/**
- * Interface for WebChannel-like broadcast capability.
- */
-export interface IBroadcaster {
-  broadcast(data: unknown): void;
-}
-
 export interface DesktopSessionManagerConfig {
-  /** WebChannel for broadcasting events */
-  webChannel?: IBroadcaster;
+  /** Channel for sending events to clients */
+  channel?: Channel;
   /** Default sandbox configuration */
   defaultSandbox?: Partial<SandboxConfig>;
   /** Default VNC configuration */
@@ -113,13 +107,13 @@ export class DesktopSessionManager {
   private sessionTempDirs: Map<string, string> = new Map(); // session ID -> temp dir path
   private sessionAbortControllers: Map<string, AbortController> = new Map(); // for cancelling in-progress provisioning
   private creationLock: Promise<void> = Promise.resolve(); // serializes createSession calls
-  private webChannel?: IBroadcaster;
+  private channel?: Channel;
   private config: DesktopSessionManagerConfig;
   private sandboxConfigPath: string;
 
   constructor(config: DesktopSessionManagerConfig = {}) {
     this.config = config;
-    this.webChannel = config.webChannel;
+    this.channel = config.channel;
     // Path to source sandbox scripts (in the project)
     this.sandboxConfigPath = config.sandboxConfigPath || path.join(__dirname, '../../sandbox');
   }
@@ -848,11 +842,11 @@ export class DesktopSessionManager {
   // ===========================================================================
 
   /**
-   * Attaches a WebChannel for broadcasting events.
+   * Attaches a channel for sending events to clients.
    */
-  attachWebChannel(webChannel: IBroadcaster): void {
-    this.webChannel = webChannel;
-    console.log('[Desktop] WebChannel attached');
+  attachChannel(channel: Channel): void {
+    this.channel = channel;
+    console.log('[Desktop] Channel attached');
   }
 
   // ===========================================================================
@@ -1495,11 +1489,11 @@ Write-Log "Password: ${vncPassword}"
   }
 
   /**
-   * Broadcasts an event to WebChannel.
+   * Broadcasts an event to connected clients.
    */
   private broadcast(event: DesktopEvent): void {
-    if (this.webChannel) {
-      this.webChannel.broadcast(event);
+    if (this.channel) {
+      this.channel.broadcast(event);
     }
   }
 }

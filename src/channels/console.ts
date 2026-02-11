@@ -1,7 +1,7 @@
 import { select, search } from '@inquirer/prompts';
 import { v4 as uuid } from 'uuid';
 import * as readline from 'readline';
-import type { Channel, Message, SendOptions } from './types.js';
+import type { Channel, Message, SendOptions, StreamStartOptions, StreamEndOptions } from './types.js';
 import { SUPERVISOR_ICON, SUPERVISOR_NAME } from '../constants.js';
 
 export interface Conversation {
@@ -653,7 +653,12 @@ export class ConsoleChannel implements Channel {
       output = this.stripMarkdown(output);
     }
 
-    console.log(`\n${SUPERVISOR_ICON} ${SUPERVISOR_NAME}: ${output}\n`);
+    // Use agent metadata if provided, otherwise use default supervisor
+    const agentLabel = options?.agent?.agentEmoji && options?.agent?.agentName
+      ? `${options.agent.agentEmoji} ${options.agent.agentName}`
+      : `${SUPERVISOR_ICON} ${SUPERVISOR_NAME}`;
+
+    console.log(`\n${agentLabel}: ${output}\n`);
 
     // Show action buttons if provided
     if (options?.buttons && options.buttons.length > 0) {
@@ -690,11 +695,11 @@ export class ConsoleChannel implements Channel {
   }
 
   // Streaming support
-  startStream(streamId: string, agentInfo?: { agentId?: string; agentName?: string; agentEmoji?: string }): void {
-    const agentLabel = agentInfo?.agentEmoji && agentInfo?.agentName
-      ? `${agentInfo.agentEmoji} ${agentInfo.agentName}`
+  startStream(streamId: string, options?: StreamStartOptions): void {
+    const agentLabel = options?.agentEmoji && options?.agentName
+      ? `${options.agentEmoji} ${options.agentName}`
       : `${SUPERVISOR_ICON} ${SUPERVISOR_NAME}`;
-    this.activeStreams.set(streamId, { agentName: agentInfo?.agentName, agentEmoji: agentInfo?.agentEmoji });
+    this.activeStreams.set(streamId, { agentName: options?.agentName, agentEmoji: options?.agentEmoji });
     process.stdout.write(`\n${agentLabel}: `);
   }
 
@@ -704,7 +709,7 @@ export class ConsoleChannel implements Channel {
     }
   }
 
-  endStream(streamId: string): void {
+  endStream(streamId: string, _options?: StreamEndOptions): void {
     if (this.activeStreams.has(streamId)) {
       this.activeStreams.delete(streamId);
       process.stdout.write('\n\n');
@@ -738,5 +743,10 @@ export class ConsoleChannel implements Channel {
     if (this.rl) {
       this.rl.close();
     }
+  }
+
+  // No-op for console channel - no connected clients to broadcast to
+  broadcast(_data: unknown): void {
+    // Console has no connected clients, nothing to broadcast
   }
 }

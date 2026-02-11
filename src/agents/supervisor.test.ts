@@ -9,12 +9,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Create mock DB that persists across calls
 const mockMessagesCreate = vi.fn();
-const mockMessagesFindById = vi.fn(() => null);
-const mockMessagesFindByConversationId = vi.fn(() => []);
+const mockMessagesFindById = vi.fn().mockReturnValue(null);
+const mockMessagesFindByConversationId = vi.fn().mockReturnValue([]);
 const mockConversationsCreate = vi.fn();
 const mockConversationsUpdate = vi.fn();
-const mockConversationsFindById = vi.fn(() => null);
-const mockConversationsFindRecent = vi.fn(() => null);
+const mockConversationsFindById = vi.fn().mockReturnValue(null);
+const mockConversationsFindRecent = vi.fn().mockReturnValue(null);
 
 // Mock dependencies BEFORE importing the module under test
 vi.mock('../db/index.js', () => ({
@@ -39,7 +39,7 @@ vi.mock('../db/well-known-conversations.js', () => ({
 
 vi.mock('../services/message-event-service.js', () => ({
   getMessageEventService: vi.fn(() => ({
-    setWebChannel: vi.fn(),
+    setChannel: vi.fn(),
     emitToolEvent: vi.fn(),
     emitDelegationEvent: vi.fn(),
     emitTaskRunEvent: vi.fn(() => 'task-run-id'),

@@ -14,7 +14,7 @@ export * from './events';
 // Core classes
 export { VNCClient } from './vnc-client';
 export { DesktopSessionInstance } from './session';
-export { DesktopSessionManager, type IBroadcaster, type DesktopSessionManagerConfig } from './manager';
+export { DesktopSessionManager, type DesktopSessionManagerConfig } from './manager';
 
 // Tools
 export { DesktopSessionTool, DesktopActionTool, DesktopScreenshotTool } from './tools';

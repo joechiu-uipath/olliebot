@@ -15,7 +15,7 @@
 
 import { v4 as uuid } from 'uuid';
 import { getDb } from '../db/index.js';
-import type { WebChannel } from '../channels/web.js';
+import type { Channel } from '../channels/types.js';
 import type { ToolEvent } from '../tools/types.js';
 
 export interface AgentInfo {
@@ -48,13 +48,17 @@ export interface ErrorEventData {
 }
 
 export class MessageEventService {
-  constructor(private webChannel: WebChannel | null = null) {}
+  private channel: Channel | null = null;
+
+  constructor(channel: Channel | null = null) {
+    this.channel = channel;
+  }
 
   /**
-   * Set/update the WebChannel (can be set after construction)
+   * Set/update the channel (can be set after construction)
    */
-  setWebChannel(channel: WebChannel): void {
-    this.webChannel = channel;
+  setChannel(channel: Channel): void {
+    this.channel = channel;
   }
 
   /**
@@ -105,7 +109,7 @@ export class MessageEventService {
     turnId?: string
   ): void {
     // Broadcast to UI
-    if (this.webChannel && typeof this.webChannel.broadcast === 'function') {
+    if (this.channel && typeof this.channel.broadcast === 'function') {
       // Check if result contains audio data - if so, broadcast play_audio event
       // Audio can be in result.audio (legacy) or result.output.audio (nested from native tools)
       if (event.type === 'tool_execution_finished' && event.result !== undefined) {
@@ -136,7 +140,7 @@ export class MessageEventService {
 
         if (audioData) {
           // Broadcast play_audio event for immediate playback
-          this.webChannel.broadcast({
+          this.channel.broadcast({
             type: 'play_audio',
             audio: audioData,
             mimeType: mimeType || 'audio/pcm;rate=24000',
@@ -166,7 +170,7 @@ export class MessageEventService {
         }
       }
 
-      this.webChannel.broadcast({
+      this.channel.broadcast({
         ...event,
         result: resultForBroadcast,
         conversationId: conversationId || undefined,
@@ -265,8 +269,8 @@ export class MessageEventService {
     const timestamp = new Date().toISOString();
 
     // Broadcast to UI
-    if (this.webChannel && typeof this.webChannel.broadcast === 'function') {
-      this.webChannel.broadcast({
+    if (this.channel && typeof this.channel.broadcast === 'function') {
+      this.channel.broadcast({
         type: 'delegation',
         agentId: data.agentId,
         agentName: data.agentName,
@@ -342,8 +346,8 @@ export class MessageEventService {
     const turnId = messageId;
 
     // Broadcast to UI
-    if (this.webChannel && typeof this.webChannel.broadcast === 'function') {
-      this.webChannel.broadcast({
+    if (this.channel && typeof this.channel.broadcast === 'function') {
+      this.channel.broadcast({
         type: 'task_run',
         taskId: data.taskId,
         taskName: data.taskName,
@@ -405,8 +409,8 @@ export class MessageEventService {
     const messageId = `error-${uuid()}`;
 
     // Broadcast to UI
-    if (this.webChannel && typeof this.webChannel.broadcast === 'function') {
-      this.webChannel.broadcast({
+    if (this.channel && typeof this.channel.broadcast === 'function') {
+      this.channel.broadcast({
         type: 'error',
         id: messageId,
         error: data.error,
@@ -456,6 +460,6 @@ export function getMessageEventService(): MessageEventService {
   return globalMessageEventService;
 }
 
-export function setMessageEventServiceChannel(channel: WebChannel): void {
-  getMessageEventService().setWebChannel(channel);
+export function setMessageEventServiceChannel(channel: Channel): void {
+  getMessageEventService().setChannel(channel);
 }

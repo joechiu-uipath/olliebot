@@ -12,7 +12,6 @@ import type { Channel, Message } from '../channels/types.js';
 import type { LLMService } from '../llm/service.js';
 import type { LLMMessage } from '../llm/types.js';
 import { getDb } from '../db/index.js';
-import type { WebChannel } from '../channels/web.js';
 import { formatToolResultBlocks } from '../utils/index.js';
 import { logSystemPrompt } from '../utils/prompt-logger.js';
 import type { CitationSource, CitationSourceType, StoredCitationData } from '../citations/types.js';
@@ -212,9 +211,8 @@ export class WorkerAgent extends AbstractAgent {
           return; // This event is for a different agent
         }
 
-        const webChannel = channel as WebChannel;
         const messageEventService = getMessageEventService();
-        messageEventService.setWebChannel(webChannel);
+        messageEventService.setChannel(channel as Channel);
 
         // Use centralized service that broadcasts AND persists
         messageEventService.emitToolEvent(event, this.conversationId, channel.id, {
@@ -401,9 +399,8 @@ export class WorkerAgent extends AbstractAgent {
                   if (event.callerId && event.callerId !== this.identity.id) {
                     return; // This event is for a different agent
                   }
-                  const webChannel = channel as WebChannel;
                   const messageEventService = getMessageEventService();
-                  messageEventService.setWebChannel(webChannel);
+                  messageEventService.setChannel(channel as Channel);
                   messageEventService.emitToolEvent(event, this.conversationId, channel.id, {
                     id: this.identity.id,
                     name: this.identity.name,
@@ -574,9 +571,8 @@ export class WorkerAgent extends AbstractAgent {
     this.agentRegistry.registerAgent(subAgent);
 
     // Emit delegation event via MessageEventService (broadcasts AND persists)
-    const webChannel = channel as WebChannel;
     const messageEventService = getMessageEventService();
-    messageEventService.setWebChannel(webChannel);
+    messageEventService.setChannel(channel as Channel);
     messageEventService.emitDelegationEvent(
       {
         agentId: subAgent.identity.id,

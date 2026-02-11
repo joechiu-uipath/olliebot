@@ -23,7 +23,7 @@ vi.mock('../db/index.js', () => ({
 
 vi.mock('../services/message-event-service.js', () => ({
   getMessageEventService: vi.fn(() => ({
-    setWebChannel: vi.fn(),
+    setChannel: vi.fn(),
     emitToolEvent: vi.fn(),
     emitDelegationEvent: vi.fn(),
   })),

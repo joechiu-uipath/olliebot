@@ -228,18 +228,12 @@ export function App() {
     let cancelled = false;
     const loadMessages = async () => {
       try {
-        const url = `${API_URL}/api/conversations/${currentConversationId}/messages`;
+        const url = `${API_URL}/api/conversations/${currentConversationId}/messages?limit=100`;
         const res = await fetch(url);
-        // Debug: log response status
-        process.stderr.write(`[TUI] Fetch ${url} -> ${res.status}\n`);
         if (res.ok && !cancelled) {
-          const data = await res.json() as Array<Record<string, unknown>>;
-          // Debug: log message count and first few messages for Feed
-          process.stderr.write(`[TUI] Loaded ${data.length} messages for ${currentConversationId}\n`);
-          if (currentConversationId === 'feed' && data.length > 0) {
-            process.stderr.write(`[TUI] Feed sample: ${JSON.stringify(data[0], null, 2)}\n`);
-          }
-          setMessages(data.map((msg) => ({
+          const data = await res.json() as { items: Array<Record<string, unknown>>; pagination: unknown };
+          const messages = data.items || [];
+          setMessages(messages.map((msg) => ({
             id: msg.id as string,
             role: (msg.messageType === 'tool_event' ? 'tool' :
                   msg.messageType === 'delegation' ? 'delegation' :

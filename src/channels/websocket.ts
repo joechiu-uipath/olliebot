@@ -1,19 +1,26 @@
 import { WebSocket, WebSocketServer } from 'ws';
 import { v4 as uuid } from 'uuid';
-import type { Channel, Message, SendOptions, ActionButton } from './types.js';
+import type {
+  Channel,
+  Message,
+  SendOptions,
+  ActionButton,
+  StreamStartOptions,
+  StreamEndOptions,
+} from './types.js';
 
-interface WebClient {
+interface WebSocketClient {
   ws: WebSocket;
   id: string;
   connectedAt: Date;
 }
 
-export class WebChannel implements Channel {
+export class WebSocketChannel implements Channel {
   readonly id: string;
   readonly name = 'web';
 
   private wss: WebSocketServer | null = null;
-  private clients: Map<string, WebClient> = new Map();
+  private clients: Map<string, WebSocketClient> = new Map();
   private messageHandler: ((message: Message) => Promise<void>) | null = null;
   private actionHandler: ((action: string, data: unknown) => Promise<void>) | null = null;
   private interactionHandler: ((requestId: string, response: unknown, conversationId?: string) => Promise<void>) | null = null;
@@ -33,7 +40,7 @@ export class WebChannel implements Channel {
 
     this.wss.on('connection', (ws: WebSocket) => {
       const clientId = uuid();
-      const client: WebClient = {
+      const client: WebSocketClient = {
         ws,
         id: clientId,
         connectedAt: new Date(),
@@ -45,7 +52,7 @@ export class WebChannel implements Channel {
           const parsed = JSON.parse(data.toString());
           await this.handleClientMessage(clientId, parsed);
         } catch (error) {
-          console.error('[WebChannel] Failed to parse message:', error);
+          console.error('[WebSocketChannel] Failed to parse message:', error);
         }
       });
 
@@ -54,7 +61,7 @@ export class WebChannel implements Channel {
       });
 
       ws.on('error', (error) => {
-        console.error(`[WebChannel] Client error (${clientId}):`, error);
+        console.error(`[WebSocketChannel] Client error (${clientId}):`, error);
         this.clients.delete(clientId);
       });
 
@@ -133,7 +140,7 @@ export class WebChannel implements Channel {
         client.ws.send(JSON.stringify(data));
       } catch (error) {
         // Socket may have been closed between readyState check and send
-        console.warn(`[WebChannel] Failed to send to client ${clientId}:`, (error as Error).message);
+        console.warn(`[WebSocketChannel] Failed to send to client ${clientId}:`, (error as Error).message);
         this.clients.delete(clientId);
       }
     }
@@ -147,6 +154,9 @@ export class WebChannel implements Channel {
       markdown: boolean;
       html: boolean;
       buttons?: ActionButton[];
+      agentId?: string;
+      agentName?: string;
+      agentEmoji?: string;
       timestamp: string;
     } = {
       type: 'message',
@@ -159,6 +169,13 @@ export class WebChannel implements Channel {
 
     if (options?.buttons) {
       payload.buttons = options.buttons;
+    }
+
+    // Add agent metadata if provided
+    if (options?.agent) {
+      payload.agentId = options.agent.agentId;
+      payload.agentName = options.agent.agentName;
+      payload.agentEmoji = options.agent.agentEmoji;
     }
 
     // Broadcast to all connected clients
@@ -203,17 +220,11 @@ export class WebChannel implements Channel {
   }
 
   // Streaming support
-  startStream(streamId: string, agentInfo?: {
-    agentId?: string;
-    agentName?: string;
-    agentEmoji?: string;
-    agentType?: string;
-    conversationId?: string;
-  }): void {
+  startStream(streamId: string, options?: StreamStartOptions): void {
     const payload = {
       type: 'stream_start',
       id: streamId,
-      ...agentInfo,
+      ...options,
       timestamp: new Date().toISOString(),
     };
     this.broadcast(payload);
@@ -229,7 +240,7 @@ export class WebChannel implements Channel {
     this.broadcast(payload);
   }
 
-  endStream(streamId: string, conversationId?: string, citations?: { sources: unknown[]; references: unknown[] }): void {
+  endStream(streamId: string, options?: StreamEndOptions): void {
     const payload: {
       type: string;
       streamId: string;
@@ -239,13 +250,13 @@ export class WebChannel implements Channel {
     } = {
       type: 'stream_end',
       streamId,
-      conversationId,
+      conversationId: options?.conversationId,
       timestamp: new Date().toISOString(),
     };
 
     // Include citations if provided
-    if (citations && citations.sources.length > 0) {
-      payload.citations = citations;
+    if (options?.citations && options.citations.sources.length > 0) {
+      payload.citations = options.citations;
     }
 
     this.broadcast(payload);
@@ -263,7 +274,7 @@ export class WebChannel implements Channel {
           client.ws.send(message);
         } catch (error) {
           // Socket may have been closed between readyState check and send
-          console.warn(`[WebChannel] Failed to broadcast to client ${client.id}:`, (error as Error).message);
+          console.warn(`[WebSocketChannel] Failed to broadcast to client ${client.id}:`, (error as Error).message);
           closedClients.push(client.id);
         }
       }

@@ -9,12 +9,12 @@ import { join } from 'path';
 import type { LLMService } from '../llm/service.js';
 import type { ToolRunner } from '../tools/runner.js';
 import { EvaluationManager } from '../evaluation/index.js';
-import type { WebChannel } from '../channels/web.js';
+import type { Channel } from '../channels/types.js';
 
 export interface EvalRoutesConfig {
   llmService: LLMService;
   toolRunner: ToolRunner;
-  webChannel?: WebChannel;
+  channel?: Channel;
 }
 
 // Store for active evaluation jobs
@@ -37,10 +37,10 @@ export function setupEvalRoutes(app: Express, config: EvalRoutesConfig): Evaluat
   });
 
   // Subscribe to evaluation events and broadcast via WebSocket
-  if (config.webChannel) {
+  if (config.channel) {
     manager.onEvent((event) => {
       console.log('[EvalAPI] Broadcasting event:', event.type, 'jobId:', event.jobId);
-      config.webChannel!.broadcast(event);
+      config.channel!.broadcast(event);
 
       // Update job status
       if (event.type === 'eval_complete') {
@@ -121,8 +121,8 @@ export function setupEvalRoutes(app: Express, config: EvalRoutesConfig): Evaluat
           job.error = String(error);
         }
         // Broadcast error event
-        if (config.webChannel) {
-          config.webChannel.broadcast({
+        if (config.channel) {
+          config.channel.broadcast({
             type: 'eval_error',
             jobId,
             error: String(error),
@@ -171,8 +171,8 @@ export function setupEvalRoutes(app: Express, config: EvalRoutesConfig): Evaluat
           job.error = String(error);
         }
         // Broadcast error event
-        if (config.webChannel) {
-          config.webChannel.broadcast({
+        if (config.channel) {
+          config.channel.broadcast({
             type: 'eval_error',
             jobId,
             error: String(error),

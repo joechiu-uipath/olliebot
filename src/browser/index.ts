@@ -19,7 +19,7 @@ export * from './events.js';
 
 // Session management
 export { BrowserSessionInstance } from './session.js';
-export { BrowserSessionManager, type IBroadcaster, type ILLMService } from './manager.js';
+export { BrowserSessionManager, type ILLMService } from './manager.js';
 
 // Strategies
 export {

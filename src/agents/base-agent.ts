@@ -18,7 +18,6 @@ import type { SkillManager } from '../skills/manager.js';
 import type { RagDataManager } from '../rag-projects/data-manager.js';
 import { generatePostHocCitations, toStoredCitationData } from '../citations/generator.js';
 import type { CitationSource, StoredCitationData } from '../citations/types.js';
-import type { WebChannel } from '../channels/web.js';
 
 export abstract class AbstractAgent implements BaseAgent {
   readonly identity: AgentIdentity;
@@ -249,20 +248,15 @@ export abstract class AbstractAgent implements BaseAgent {
     message: AgentMessage,
     options?: { markdown?: boolean }
   ): Promise<void> {
-    // Check if channel supports agent-attributed messages
-    const extendedChannel = channel as ExtendedChannel;
-
-    if (typeof extendedChannel.sendAsAgent === 'function') {
-      await extendedChannel.sendAsAgent(message.content, {
-        ...options,
+    // Send with agent metadata using the unified send method
+    await channel.send(message.content, {
+      ...options,
+      agent: {
         agentId: message.agentId,
         agentName: message.agentName,
         agentEmoji: message.agentEmoji,
-      });
-    } else {
-      // Fallback to regular send
-      await channel.send(message.content, options);
-    }
+      },
+    });
   }
 
   async sendError(channel: Channel, error: string, details?: string): Promise<void> {
@@ -412,23 +406,13 @@ export abstract class AbstractAgent implements BaseAgent {
     conversationId: string | undefined,
     citationData: StoredCitationData | undefined
   ): void {
-    const webChannel = channel as WebChannel;
-    webChannel.endStream(streamId, conversationId, citationData);
+    channel.endStream(streamId, {
+      conversationId,
+      citations: citationData,
+    });
   }
 }
 
-// Extended channel interface for agent-attributed messages
-export interface ExtendedChannel extends Channel {
-  sendAsAgent(
-    content: string,
-    options?: {
-      markdown?: boolean;
-      agentId?: string;
-      agentName?: string;
-      agentEmoji?: string;
-    }
-  ): Promise<void>;
-}
 
 // Specialist template type
 export interface SpecialistTemplate {

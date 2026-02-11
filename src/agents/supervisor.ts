@@ -13,11 +13,9 @@ import type {
 import { WorkerAgent } from './worker.js';
 import type { Channel, Message } from '../channels/types.js';
 import type { LLMService } from '../llm/service.js';
-import type { LLMMessage, LLMToolUse } from '../llm/types.js';
+import type { LLMMessage } from '../llm/types.js';
 import { getDb } from '../db/index.js';
 import { isWellKnownConversation } from '../db/well-known-conversations.js';
-import type { WebChannel } from '../channels/web.js';
-import type { ToolEvent } from '../tools/types.js';
 import { formatToolResultBlocks } from '../utils/index.js';
 import { logSystemPrompt } from '../utils/prompt-logger.js';
 import type { CitationSource, StoredCitationData } from '../citations/types.js';
@@ -228,9 +226,8 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
           return; // This event is for a different agent
         }
 
-        const webChannel = channel as WebChannel;
         const messageEventService = getMessageEventService();
-        messageEventService.setWebChannel(webChannel);
+        messageEventService.setChannel(channel as Channel);
 
         // Use centralized service that broadcasts AND persists
         messageEventService.emitToolEvent(event, this.currentConversationId, message.channel, {
@@ -502,9 +499,8 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
       agent.turnId = this.currentTurnId;
 
       // Emit delegation event via MessageEventService (broadcasts AND persists)
-      const webChannel = channel as WebChannel;
       const messageEventService = getMessageEventService();
-      messageEventService.setWebChannel(webChannel);
+      messageEventService.setChannel(channel as Channel);
       messageEventService.emitDelegationEvent(
         {
           agentId: agent.identity.id,
@@ -587,9 +583,8 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
       agent.turnId = this.currentTurnId;
 
       // Emit delegation event via MessageEventService (broadcasts AND persists)
-      const webChannel = channel as WebChannel;
       const messageEventService = getMessageEventService();
-      messageEventService.setWebChannel(webChannel);
+      messageEventService.setChannel(channel as Channel);
       messageEventService.emitDelegationEvent(
         {
           agentId: agent.identity.id,
@@ -820,9 +815,9 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
             updatedAt: new Date().toISOString(),
           });
           // Notify frontend about the title update
-          const webChannel = this.channels.get(channel) as WebChannel | undefined;
-          if (webChannel && typeof webChannel.broadcast === 'function') {
-            webChannel.broadcast({
+          const ch = this.channels.get(channel);
+          if (ch) {
+            ch.broadcast({
               type: 'conversation_updated',
               conversation: { id: this.currentConversationId, title: newTitle, updatedAt: new Date().toISOString() },
             });
@@ -848,9 +843,9 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
             updatedAt: new Date().toISOString(),
           });
           // Notify frontend about the title update
-          const webChannel = this.channels.get(channel) as WebChannel | undefined;
-          if (webChannel && typeof webChannel.broadcast === 'function') {
-            webChannel.broadcast({
+          const ch = this.channels.get(channel);
+          if (ch) {
+            ch.broadcast({
               type: 'conversation_updated',
               conversation: { id: this.currentConversationId, title: newTitle, updatedAt: new Date().toISOString() },
             });
@@ -881,9 +876,9 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
     this.currentConversationId = id;
 
     // Notify frontend about the new conversation
-    const webChannel = this.channels.get(channel) as WebChannel | undefined;
-    if (webChannel && typeof webChannel.broadcast === 'function') {
-      webChannel.broadcast({
+    const ch = this.channels.get(channel);
+    if (ch) {
+      ch.broadcast({
         type: 'conversation_created',
         conversation: {
           id,
@@ -1053,9 +1048,9 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
         db.conversations.update(conversationId, { title, updatedAt: now });
 
         // Notify frontend about the updated title
-        const webChannel = this.channels.get(channelId) as WebChannel | undefined;
-        if (webChannel && typeof webChannel.broadcast === 'function') {
-          webChannel.broadcast({
+        const ch = this.channels.get(channelId);
+        if (ch) {
+          ch.broadcast({
             type: 'conversation_updated',
             conversation: {
               id: conversationId,
