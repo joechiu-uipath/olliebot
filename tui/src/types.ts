@@ -92,6 +92,7 @@ export type WsMessageType =
   | 'tool_requested'
   | 'tool_execution_finished'
   | 'tool_progress'
+  | 'tool_resume'
   | 'delegation'
   | 'task_run'
   | 'conversation_created'
