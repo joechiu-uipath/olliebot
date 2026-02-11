@@ -125,6 +125,9 @@ export function createMessageHandler(deps) {
       case 'tool_execution_finished':
         handleToolFinished(data);
         break;
+      case 'tool_progress':
+        handleToolProgress(data);
+        break;
       case 'delegation':
         handleDelegation(data);
         break;
@@ -362,10 +365,20 @@ export function createMessageHandler(deps) {
     }
   }
 
+  const progressDebounceTimers = {};
+  const pendingProgress = {};
+
   function handleToolFinished(data) {
+    const toolId = `tool-${data.requestId}`;
+    // Clear any pending progress debounce
+    if (progressDebounceTimers[toolId]) {
+      clearTimeout(progressDebounceTimers[toolId]);
+      delete progressDebounceTimers[toolId];
+      delete pendingProgress[toolId];
+    }
     setMessages((prev) =>
       prev.map((m) =>
-        m.id === `tool-${data.requestId}`
+        m.id === toolId
           ? {
               ...m,
               status: data.success ? 'completed' : 'failed',
@@ -373,10 +386,33 @@ export function createMessageHandler(deps) {
               error: data.error,
               parameters: data.parameters,
               result: data.result,
+              progress: undefined,
             }
           : m
       )
     );
+  }
+
+  function handleToolProgress(data) {
+    const toolId = `tool-${data.requestId}`;
+    pendingProgress[toolId] = data.progress;
+
+    if (progressDebounceTimers[toolId]) return;
+
+    progressDebounceTimers[toolId] = setTimeout(() => {
+      const progress = pendingProgress[toolId];
+      delete progressDebounceTimers[toolId];
+      delete pendingProgress[toolId];
+      if (!progress) return;
+
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === toolId && m.status === 'running'
+            ? { ...m, progress }
+            : m
+        )
+      );
+    }, 500);
   }
 
   function handleDelegation(data) {

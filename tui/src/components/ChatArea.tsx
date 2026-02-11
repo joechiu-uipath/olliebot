@@ -54,6 +54,23 @@ export function ChatArea({ messages, width, height, isFocused }: ChatAreaProps) 
         dim: true
       });
 
+      if (msg.status === 'running' && msg.progress) {
+        const barWidth = Math.min(20, width - 12);
+        const pct = msg.progress.total ? Math.min(1, msg.progress.current / msg.progress.total) : 0;
+        const filled = Math.round(pct * barWidth);
+        const empty = barWidth - filled;
+        const bar = '\u2588'.repeat(filled) + '\u2591'.repeat(empty);
+        const pctLabel = msg.progress.total ? ` ${Math.round(pct * 100)}%` : '';
+        const progressMsg = msg.progress.message || '';
+        const maxMsgLen = width - barWidth - 14;
+        const truncMsg = progressMsg.length > maxMsgLen ? progressMsg.slice(0, maxMsgLen - 3) + '...' : progressMsg;
+        lines.push({
+          text: `    ${bar}${pctLabel} ${truncMsg}`,
+          color: 'blue',
+          dim: true
+        });
+      }
+
       if (isExpanded && msg.parameters) {
         lines.push({ text: '    Parameters:', color: 'gray', dim: true });
         const paramStr = JSON.stringify(msg.parameters, null, 2);

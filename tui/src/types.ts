@@ -16,6 +16,7 @@ export interface Message {
   parameters?: Record<string, unknown>;
   result?: unknown;
   error?: string;
+  progress?: { current: number; total?: number; message?: string };
   // Delegation fields
   agentType?: string;
   mission?: string;
@@ -90,6 +91,7 @@ export type WsMessageType =
   | 'connected'
   | 'tool_requested'
   | 'tool_execution_finished'
+  | 'tool_progress'
   | 'delegation'
   | 'task_run'
   | 'conversation_created'

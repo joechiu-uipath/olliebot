@@ -1457,6 +1457,19 @@ function App() {
               {expandedTools.has(msg.id) ? '▼' : '▶'}
             </span>
           </div>
+          {msg.status === 'running' && msg.progress && (
+            <div className="tool-progress">
+              <div className="tool-progress-bar">
+                <div
+                  className="tool-progress-fill"
+                  style={{ width: msg.progress.total ? `${Math.min(100, (msg.progress.current / msg.progress.total) * 100)}%` : '0%' }}
+                />
+              </div>
+              {msg.progress.message && (
+                <span className="tool-progress-message">{msg.progress.message}</span>
+              )}
+            </div>
+          )}
           {expandedTools.has(msg.id) && (
             <div className="tool-details">
               {(msg.agentName || msg.agentEmoji) && (
