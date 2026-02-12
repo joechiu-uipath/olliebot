@@ -2,7 +2,7 @@
 
 ## Overview
 
-Expose OllieBot's internal functionality as an MCP (Model Context Protocol) server, primarily for development diagnostics. This allows external MCP clients (Claude Desktop, Claude Code, other LLM tools) to inspect, query, and interact with a running OllieBot instance.
+Expose OllieBot's internal functionality as an MCP (Model Context Protocol) server, primarily for development diagnostics. This allows external MCP clients (Claude Desktop, Claude Code, other LLM tools) to inspect, query, and interact with an **already-running** OllieBot instance.
 
 ---
 
@@ -62,72 +62,86 @@ Expose OllieBot's internal functionality as an MCP (Model Context Protocol) serv
 
 ## Architecture
 
-### In-Process MCP Server
+### In-Process, HTTP Endpoint on the Running Server
 
-The MCP server runs **inside the OllieBot process**, not as a separate proxy.
+The MCP server runs **inside the already-running OllieBot process** as an additional HTTP endpoint — not as a separate mode or separate process.
+
+This is the same pattern as GitHub MCP: GitHub is already running, the MCP client connects to it. OllieBot is already running during development; the MCP endpoint is just another route alongside `/api/*`.
+
+```
+  ┌──────────────────────────────────────────────────────┐
+  │              OllieBot Process (already running)       │
+  │                                                      │
+  │   Express Server (localhost:3000)                     │
+  │   ├── /api/*            ← REST API (existing)        │
+  │   ├── /ws               ← WebSocket (existing)       │
+  │   └── /mcp              ← MCP Streamable HTTP (new)  │
+  │            │                                          │
+  │            ▼                                          │
+  │   ┌─────────────────────┐                             │
+  │   │  OllieBotMCPServer  │                             │
+  │   │                     │                             │
+  │   │  Tool Handlers ─────┼──▶ ToolRunner               │
+  │   │  server_log ────────┼──▶ LogBuffer                │
+  │   │  db_query ──────────┼──▶ AlaSQL (getDb)           │
+  │   │  list_* ────────────┼──▶ DB Repositories          │
+  │   │  run_tool ──────────┼──▶ ToolRunner               │
+  │   │  send_message ──────┼──▶ SupervisorAgent          │
+  │   │  health ────────────┼──▶ process.memoryUsage      │
+  │   └─────────────────────┘                             │
+  │                                                      │
+  │   Web UI ──WebSocket──▶ AssistantServer               │
+  └──────────────────────────────────────────────────────┘
+        ▲
+        │ HTTP POST / SSE
+        │
+  Claude Code / Claude Desktop / any MCP client
+```
 
 Rationale:
+- OllieBot is already running during development — no need to start a second instance.
 - `server_log` requires intercepting `console.*` in the same process.
-- Direct access to `ToolRunner`, `MCPClient`, `db`, agent registry avoids HTTP overhead.
-- Can expose internal state (memory usage, agent internals) that REST APIs don't cover.
-- Simpler deployment — no extra process to manage.
+- Direct access to `ToolRunner`, `MCPClient`, `db`, agent registry — no HTTP-to-HTTP proxy overhead.
+- The MCP endpoint is wired up during normal `AssistantServer` initialization, just like the existing REST routes.
 
-```
-                           ┌─────────────────────────────────────┐
-                           │         OllieBot Process            │
-                           │                                     │
-  Claude Desktop ──stdio──▶│  ┌───────────────────────┐         │
-  Claude Code    ──stdio──▶│  │   OllieBotMCPServer   │         │
-                           │  │                       │         │
-                           │  │  ┌─────────────────┐  │         │
-                           │  │  │  Tool Handlers   │──┼────────▶ ToolRunner
-                           │  │  │                 │  │         │
-                           │  │  │  server_log ────│──┼────────▶ LogBuffer
-                           │  │  │  db_query ──────│──┼────────▶ AlaSQL (getDb)
-                           │  │  │  list_* ────────│──┼────────▶ DB Repositories
-                           │  │  │  run_tool ──────│──┼────────▶ ToolRunner
-                           │  │  │  send_message ──│──┼────────▶ SupervisorAgent
-                           │  │  │  health ────────│──┼────────▶ process.memoryUsage
-                           │  │  └─────────────────┘  │         │
-                           │  └───────────────────────┘         │
-                           │                                     │
-  Web UI ──WebSocket──────▶│  AssistantServer (Express)          │
-                           └─────────────────────────────────────┘
-```
+### Transport: Streamable HTTP (Primary)
 
-### Transport: Stdio
+The MCP spec defines a **Streamable HTTP** transport. The server exposes an HTTP endpoint; the client POSTs JSON-RPC requests and receives JSON responses. For server-initiated messages (notifications, progress), Server-Sent Events (SSE) are used.
 
-The MCP server exposes a **stdio** transport. OllieBot launches a child stdin/stdout pipe internally, or external clients connect via a wrapper command:
+This is the right transport for "connect to an already-running server":
 
 ```bash
-# Usage from Claude Desktop or other MCP clients:
-node dist/mcp-server.js
+# Claude Code connects to running OllieBot:
+claude mcp add --transport http olliebot http://localhost:3000/mcp
 ```
 
-This is a thin entry point that:
-1. Connects to the running OllieBot instance via a local IPC mechanism (Unix socket or named pipe), OR
-2. Runs as an embedded part of OllieBot started with a flag: `node dist/index.js --mcp-server`
+**How it works:**
+- `POST /mcp` — Client sends JSON-RPC request (`initialize`, `tools/list`, `tools/call`). Server responds with JSON.
+- `GET /mcp` — SSE stream for server-to-client notifications (optional, for progress/streaming).
+- `DELETE /mcp` — Session teardown (optional).
 
-**Recommended approach: Flag-based embedded mode** (`--mcp-server`).
+This uses the same Express server and port that's already running. No new ports, no new processes.
 
-When `--mcp-server` is passed:
-- OllieBot initializes normally (DB, tools, agents, etc.)
-- Instead of starting the HTTP server, it starts the MCP stdio server.
-- The stdio server reads JSON-RPC from stdin, writes to stdout.
-- Console logs are redirected to stderr (so they don't corrupt the JSON-RPC stream).
+### Transport: Stdio Shim (Secondary, for compatibility)
 
-This keeps the MCP server as a first-class mode alongside `server` and `console`.
-
-### Standalone Entry Point
-
-Additionally, provide `src/mcp-server/standalone.ts` — a **lightweight REST-proxy mode** that connects to a running OllieBot HTTP server. This covers the case where OllieBot is already running and a developer wants to attach an MCP client to it:
+Some MCP clients (certain Claude Desktop configs) only support stdio. For those, provide a thin **stdio-to-HTTP proxy**:
 
 ```bash
-# Attach to running OllieBot:
-OLLIEBOT_URL=http://localhost:3000 node dist/mcp-server/standalone.js
+# Thin shim: reads JSON-RPC from stdin, POSTs to running OllieBot, writes response to stdout
+OLLIEBOT_URL=http://localhost:3000 node dist/mcp-server/stdio-shim.js
 ```
 
-In this mode, `server_log` and `web_log` are unavailable (no process access), but all REST-backed tools work. The standalone entry point is secondary and can be deferred to a later phase.
+This is ~50 lines of code — just a pipe between stdin/stdout and `fetch()` calls to `/mcp`. It can be added later if needed.
+
+### Why NOT a Separate Startup Mode
+
+A separate `--mcp-server` or `mcp-server` startup mode would:
+- Spin up an entirely new OllieBot instance (DB, LLM, tools, agents) just for MCP.
+- Not see the state of the instance you're actually developing/debugging.
+- Compete for the same port and database file.
+- Defeat the purpose of diagnostics — you want to inspect the running instance, not a parallel one.
+
+The embedded HTTP endpoint avoids all of these issues.
 
 ---
 
@@ -136,8 +150,8 @@ In this mode, `server_log` and `web_log` are unavailable (no process access), bu
 ```
 src/mcp-server/
 ├── index.ts                 # OllieBotMCPServer class — main orchestrator
-├── server.ts                # MCP protocol handler (JSON-RPC over stdio)
-├── tools/                   # One file per tool (or per category)
+├── handler.ts               # Streamable HTTP request handler (JSON-RPC dispatch)
+├── tools/                   # One file per tool category
 │   ├── logs.ts              # server_log, web_log, health
 │   ├── data.ts              # db_query, list_conversations, list_messages
 │   ├── tools.ts             # list_tools, get_tool_schema, run_tool
@@ -148,11 +162,62 @@ src/mcp-server/
 └── types.ts                 # Shared types
 ```
 
+### Integration Point
+
+In `src/server/index.ts` (AssistantServer), the MCP server is mounted during `start()`:
+
+```typescript
+import { OllieBotMCPServer } from '../mcp-server/index.js';
+
+// Inside AssistantServer.start():
+const mcpServer = new OllieBotMCPServer({
+  toolRunner: this.toolRunner,
+  mcpClient: this.mcpClient,
+  supervisor: this.supervisor,
+  skillManager: this.skillManager,
+  taskManager: this.taskManager,
+  logBuffer,   // installed early in startup
+  // ... other service references
+});
+
+// Mount the MCP endpoint
+mcpServer.mountRoutes(this.app);  // adds POST/GET/DELETE /mcp
+```
+
 ---
 
 ## Key Implementation Details
 
-### 1. Log Capture (`log-buffer.ts`)
+### 1. Streamable HTTP Handler (`handler.ts`)
+
+Implements the MCP Streamable HTTP transport spec:
+
+```typescript
+class StreamableHTTPHandler {
+  /** Handle POST /mcp — JSON-RPC request/response */
+  async handlePost(req: Request, res: Response): Promise<void>;
+
+  /** Handle GET /mcp — SSE stream for notifications (optional) */
+  async handleGet(req: Request, res: Response): Promise<void>;
+
+  /** Handle DELETE /mcp — Session cleanup (optional) */
+  async handleDelete(req: Request, res: Response): Promise<void>;
+}
+```
+
+**POST /mcp flow:**
+1. Parse JSON-RPC request from body.
+2. Dispatch by method:
+   - `initialize` → return server info + capabilities (tools).
+   - `tools/list` → return all 18 tool definitions with JSON schemas.
+   - `tools/call` → look up handler by tool name, execute, return result.
+3. Return JSON-RPC response.
+
+For tool calls that take a long time (e.g., `send_message`, `run_tool`), the response simply blocks until complete. MCP clients handle this naturally.
+
+**No SDK dependency.** The codebase already implements MCP JSON-RPC in `src/mcp/client.ts` without the official SDK. The server-side handler follows the same custom approach for consistency. The protocol surface is small — just 3 methods to handle.
+
+### 2. Log Capture (`log-buffer.ts`)
 
 ```typescript
 class LogBuffer {
@@ -176,17 +241,16 @@ interface LogEntry {
   timestamp: string;      // ISO 8601
   level: 'log' | 'warn' | 'error';
   message: string;        // Joined args as string
-  source: 'server';       // or 'web' for web_log
+  source: 'server' | 'web';
 }
 ```
 
 **Console interception strategy:**
 - Wrap `console.log`, `console.warn`, `console.error` with proxies.
-- Proxy calls the original function (so output still appears in terminal/stderr) AND pushes to the circular buffer.
-- In `--mcp-server` mode, original output goes to **stderr** (stdout reserved for JSON-RPC).
-- Installed early in the startup sequence, before any other initialization.
+- Proxy calls the original function (terminal output unchanged) AND pushes to the circular buffer.
+- Installed early in the startup sequence, before any other initialization, so all boot logs are captured.
 
-### 2. Web Log Forwarding
+### 3. Web Log Forwarding
 
 The frontend sends browser console logs to the backend via a new WebSocket message type:
 
@@ -201,7 +265,7 @@ The `web_log` MCP tool queries the buffer filtered by `source === 'web'`.
 
 **Frontend change:** A small console interceptor script in the web app that forwards `console.log/warn/error` over the existing WebSocket connection. Gated behind a `DEBUG` flag to avoid noise in production.
 
-### 3. db_query Safety
+### 4. db_query Safety
 
 ```typescript
 // Only allow SELECT statements
@@ -222,7 +286,7 @@ function validateQuery(sql: string): void {
 
 Additional safety: execute in a try-catch with a result row limit (default 100) to prevent accidentally dumping the entire message table.
 
-### 4. run_tool Execution
+### 5. run_tool Execution
 
 ```typescript
 // Direct ToolRunner invocation, bypassing the agent loop
@@ -230,7 +294,6 @@ async function runTool(params: {
   tool_name: string;
   parameters: Record<string, unknown>;
 }): Promise<ToolResult> {
-  const { source, name } = toolRunner.parseToolName(params.tool_name);
   return toolRunner.executeTool({
     id: crypto.randomUUID(),
     toolName: params.tool_name,
@@ -241,7 +304,7 @@ async function runTool(params: {
 
 This gives raw access to any registered tool. The caller provides the full tool name (e.g., `web_search`, `user.my_tool`, `mcp.github__list_repos`).
 
-### 5. send_message Flow
+### 6. send_message Flow
 
 ```typescript
 async function sendMessage(params: {
@@ -271,81 +334,38 @@ async function sendMessage(params: {
 
 This is synchronous from the MCP client's perspective — the tool call blocks until the agent responds. For long-running agent tasks, the MCP client will wait (MCP supports long-running tool calls).
 
-### 6. MCP Protocol Handling (`server.ts`)
-
-Use a **custom lightweight implementation** consistent with the existing `src/mcp/client.ts` style (the codebase already implements MCP JSON-RPC without the official SDK).
-
-```typescript
-class MCPServerTransport {
-  /** Read JSON-RPC requests from stdin, dispatch to tool handlers */
-  async start(): Promise<void>;
-
-  /** Register a tool with its handler */
-  registerTool(definition: MCPToolDefinition, handler: ToolHandler): void;
-
-  /** Send JSON-RPC response to stdout */
-  private respond(id: number, result: unknown): void;
-
-  /** Handle initialize, tools/list, tools/call */
-  private dispatch(method: string, params: unknown, id: number): Promise<void>;
-}
-```
-
-Supports the MCP methods:
-- `initialize` — returns server info and capabilities
-- `tools/list` — returns all 18 tool definitions with JSON schemas
-- `tools/call` — dispatches to the appropriate handler
-
-This mirrors the protocol the existing client speaks, keeping the codebase consistent.
-
-**Alternative:** Use `@modelcontextprotocol/sdk` package. The tradeoff is an additional dependency vs. a few hundred lines of custom code. Given the codebase already implements custom MCP JSON-RPC, staying consistent is preferable. We can revisit if the protocol evolves significantly.
-
----
-
-## Startup Modes
-
-After this change, `src/index.ts` supports three modes:
-
-| Command | Mode | Description |
-|---------|------|-------------|
-| `node dist/index.js` | `server` | HTTP + WebSocket (default, current behavior) |
-| `node dist/index.js console` | `console` | Terminal CLI (current behavior) |
-| `node dist/index.js mcp-server` | `mcp-server` | MCP stdio server (new) |
-
-In `mcp-server` mode:
-1. Initialize DB, LLM, tools, agents (same as other modes).
-2. Redirect console output to stderr.
-3. Install `LogBuffer` console interception.
-4. Create `OllieBotMCPServer` with references to all services.
-5. Start the stdio JSON-RPC listener on stdin/stdout.
-6. Handle graceful shutdown on SIGINT/SIGTERM.
-
 ---
 
 ## MCP Client Configuration
 
-To connect to OllieBot from Claude Desktop:
+### Claude Code (primary use case)
+
+```bash
+claude mcp add --transport http olliebot http://localhost:3000/mcp
+```
+
+That's it. OllieBot is already running on port 3000; Claude Code connects to it.
+
+### Claude Desktop (via stdio shim, if needed)
 
 ```json
 {
   "mcpServers": {
     "olliebot": {
       "command": "node",
-      "args": ["dist/index.js", "mcp-server"],
+      "args": ["dist/mcp-server/stdio-shim.js"],
       "cwd": "/path/to/olliebot",
       "env": {
-        "ANTHROPIC_API_KEY": "...",
-        "DB_PATH": "user/data/olliebot.db"
+        "OLLIEBOT_URL": "http://localhost:3000"
       }
     }
   }
 }
 ```
 
-Or from Claude Code:
-```bash
-claude mcp add olliebot -- node /path/to/olliebot/dist/index.js mcp-server
-```
+### Other MCP Clients (HTTP-capable)
+
+Any MCP client that supports Streamable HTTP can connect directly to `http://localhost:3000/mcp`.
 
 ---
 
@@ -433,20 +453,21 @@ claude mcp add olliebot -- node /path/to/olliebot/dist/index.js mcp-server
 ## Phasing
 
 ### Phase 1 — Core (this PR)
-- `LogBuffer` with console interception
-- MCP stdio server protocol handler
-- `--mcp-server` startup mode
+- `LogBuffer` with console interception (installed at startup)
+- Streamable HTTP handler mounted at `POST /mcp`
 - Tools: `server_log`, `health`, `db_query`, `list_conversations`, `list_messages`, `list_tools`, `get_tool_schema`, `run_tool`
 - 8 tools, all backed by in-process state
+- Claude Code integration tested
 
 ### Phase 2 — Agent & Config tools
 - Tools: `list_agents`, `get_agent_state`, `list_mcp_servers`, `toggle_mcp_server`, `list_tasks`, `run_task`, `list_skills`, `get_config`
-- 8 more tools, primarily thin wrappers over existing APIs
+- 8 more tools, primarily thin wrappers over existing service layer
 
 ### Phase 3 — Interaction & Web logs
 - `send_message` (requires careful handling of async agent responses)
 - `web_log` (requires frontend console interceptor + WebSocket forwarding)
-- Standalone REST-proxy mode (`standalone.ts`)
+- Stdio shim for Claude Desktop compatibility
+- SSE support for streaming tool progress
 
 ---
 
@@ -460,4 +481,4 @@ claude mcp add olliebot -- node /path/to/olliebot/dist/index.js mcp-server
 
 4. **Log buffer size:** Default 1000 entries. Should this be configurable via env var?
 
-5. **Authentication:** The MCP server currently has no auth (stdio is inherently local). If we add HTTP/SSE transport later, we'll need token-based auth. Defer to Phase 3?
+5. **CORS:** The MCP endpoint will need to allow requests from Claude Code's origin (or `localhost`). The existing CORS config whitelists `localhost:5173` and `localhost:3000`. Claude Code likely connects from a different context — may need to add its origin or use a permissive policy for `/mcp` specifically.
