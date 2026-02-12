@@ -18,43 +18,43 @@ Expose OllieBot's internal functionality as an MCP (Model Context Protocol) serv
 
 ### Category 2: Data Inspection
 
-| Tool | Description | Wraps |
-|------|-------------|-------|
-| `db_query` | Execute a read-only AlaSQL query and return results as JSON. Write queries rejected. | New — direct AlaSQL access |
-| `list_conversations` | List conversations with id, title, createdAt, updatedAt, message count. Supports limit param. | `GET /api/conversations` |
-| `list_messages` | Paginated messages for a conversation. Params: conversationId, limit, before/after cursor. | `GET /api/conversations/:id/messages` |
+| Tool | Description | Internal Service |
+|------|-------------|-----------------|
+| `db_query` | Execute a read-only AlaSQL query and return results as JSON. Write queries rejected. | `getDb()` — direct AlaSQL access |
+| `list_conversations` | List conversations with id, title, createdAt, updatedAt, message count. Supports limit param. | `db.conversations` repository |
+| `list_messages` | Paginated messages for a conversation. Params: conversationId, limit, before/after cursor. | `db.messages` repository |
 
 ### Category 3: Tool System
 
-| Tool | Description | Wraps |
-|------|-------------|-------|
-| `list_tools` | All available tools organized by source (native, user, MCP) with name, description, and input schema. | `GET /api/tools` |
+| Tool | Description | Internal Service |
+|------|-------------|-----------------|
+| `list_tools` | All available tools organized by source (native, user, MCP) with name, description, and input schema. | `ToolRunner.getToolDefinitions()` |
 | `get_tool_schema` | Detailed JSON Schema for a single tool's input parameters. | `ToolRunner.getToolDefinitions()` |
 | `run_tool` | Execute any tool (native, user, or MCP) with a given parameter object. Returns the raw tool result. Intended for debugging — bypasses the agent loop. | `ToolRunner.executeTool()` |
 
 ### Category 4: Agent System
 
-| Tool | Description | Wraps |
-|------|-------------|-------|
-| `list_agents` | Active agents — id, name, emoji, role, parent, status. | `GET /api/agents` |
-| `get_agent_state` | Supervisor state snapshot — currently processing, conversation context, active workers. | `GET /api/state` |
+| Tool | Description | Internal Service |
+|------|-------------|-----------------|
+| `list_agents` | Active agents — id, name, emoji, role, parent, status. | `AgentRegistry.getActiveAgents()` |
+| `get_agent_state` | Supervisor state snapshot — currently processing, conversation context, active workers. | `SupervisorAgent.getState()` |
 
 ### Category 5: Configuration & Management
 
-| Tool | Description | Wraps |
-|------|-------------|-------|
-| `list_mcp_servers` | Connected MCP servers with id, name, enabled, transport type, tool count. | `GET /api/mcps` |
-| `toggle_mcp_server` | Enable or disable an MCP server at runtime. | `PATCH /api/mcps/:id` |
-| `list_tasks` | Scheduled tasks with id, name, description, cron schedule, status, lastRun, nextRun. | `GET /api/tasks` |
-| `run_task` | Trigger a scheduled task immediately. | `POST /api/tasks/:id/run` |
-| `list_skills` | Available skills with metadata (name, description, source). | `GET /api/skills` |
-| `get_config` | Runtime configuration snapshot (providers, models, enabled features). API keys redacted. | New — reads from CONFIG + env |
+| Tool | Description | Internal Service |
+|------|-------------|-----------------|
+| `list_mcp_servers` | Connected MCP servers with id, name, enabled, transport type, tool count. | `MCPClient.getServers()` |
+| `toggle_mcp_server` | Enable or disable an MCP server at runtime. | `MCPClient.setServerEnabled()` |
+| `list_tasks` | Scheduled tasks with id, name, description, cron schedule, status, lastRun, nextRun. | `db.tasks` repository |
+| `run_task` | Trigger a scheduled task immediately. | `TaskManager.runTask()` |
+| `list_skills` | Available skills with metadata (name, description, source). | `SkillManager.getSkillsMetadata()` |
+| `get_config` | Runtime configuration snapshot (providers, models, enabled features). API keys redacted. | CONFIG object + env |
 
 ### Category 6: Interaction
 
-| Tool | Description | Wraps |
-|------|-------------|-------|
-| `send_message` | Send a user message to OllieBot and receive the agent's response. Params: content, conversationId (optional). Synchronous — waits for the full response. | `POST /api/messages` / supervisor.handleMessage |
+| Tool | Description | Internal Service |
+|------|-------------|-----------------|
+| `send_message` | Send a user message to OllieBot and receive the agent's response. Params: content, conversationId (optional). Synchronous — waits for the full response. | `SupervisorAgent.handleMessage()` |
 
 **Total: 18 tools** (7 requested + 11 suggested)
 
@@ -62,53 +62,59 @@ Expose OllieBot's internal functionality as an MCP (Model Context Protocol) serv
 
 ## Architecture
 
-### In-Process, HTTP Endpoint on the Running Server
+### Design Principle: `/mcp` Is an Isolated Surface
 
-The MCP server runs **inside the already-running OllieBot process** as an additional HTTP endpoint — not as a separate mode or separate process.
+The MCP server is a **self-contained boundary** behind `/mcp`. It does not expose or proxy the raw REST API (`/api/*`). MCP tool handlers talk directly to internal services (ToolRunner, DB repositories, agent registry), not to REST endpoints.
 
-This is the same pattern as GitHub MCP: GitHub is already running, the MCP client connects to it. OllieBot is already running during development; the MCP endpoint is just another route alongside `/api/*`.
+This means:
+- **No leakage.** `/api/*` routes are never visible to MCP clients. Renaming or removing a REST endpoint has zero impact on MCP.
+- **Constrain or enhance.** Each MCP tool handler controls exactly what it exposes. `db_query` enforces read-only even though the DB supports writes. `list_messages` could return richer metadata than the REST API does. `run_tool` can add guardrails the REST API doesn't have.
+- **Independent evolution.** The MCP tool interface can change shape, add fields, or tighten validation without touching the REST API — and vice versa.
+- **Single security boundary.** Auth, rate limiting, or access control for MCP is applied at `/mcp` in one place. It doesn't inherit REST API middleware or CORS config.
 
 ```
-  ┌──────────────────────────────────────────────────────┐
-  │              OllieBot Process (already running)       │
-  │                                                      │
-  │   Express Server (localhost:3000)                     │
-  │   ├── /api/*            ← REST API (existing)        │
-  │   ├── /ws               ← WebSocket (existing)       │
-  │   └── /mcp              ← MCP Streamable HTTP (new)  │
-  │            │                                          │
-  │            ▼                                          │
-  │   ┌─────────────────────┐                             │
-  │   │  OllieBotMCPServer  │                             │
-  │   │                     │                             │
-  │   │  Tool Handlers ─────┼──▶ ToolRunner               │
-  │   │  server_log ────────┼──▶ LogBuffer                │
-  │   │  db_query ──────────┼──▶ AlaSQL (getDb)           │
-  │   │  list_* ────────────┼──▶ DB Repositories          │
-  │   │  run_tool ──────────┼──▶ ToolRunner               │
-  │   │  send_message ──────┼──▶ SupervisorAgent          │
-  │   │  health ────────────┼──▶ process.memoryUsage      │
-  │   └─────────────────────┘                             │
-  │                                                      │
-  │   Web UI ──WebSocket──▶ AssistantServer               │
-  └──────────────────────────────────────────────────────┘
-        ▲
-        │ HTTP POST / SSE
-        │
-  Claude Code / Claude Desktop / any MCP client
+  Express Server (localhost:3000)
+  │
+  ├── /api/*    ← REST API for web frontend (existing, unchanged)
+  ├── /ws       ← WebSocket for web frontend (existing, unchanged)
+  │
+  └── /mcp      ← MCP Streamable HTTP (new, isolated)
+       │
+       │  All MCP traffic goes through this single route.
+       │  POST, GET (SSE), DELETE — all on /mcp.
+       │  No sub-routes, no /mcp/tools, no /mcp/api.
+       │  Tool dispatch is internal via JSON-RPC method routing.
+       │
+       ▼
+  ┌─────────────────────────┐
+  │   OllieBotMCPServer     │
+  │                         │
+  │   Tool handlers call    │
+  │   internal services     │──▶ ToolRunner (not /api/tools)
+  │   directly, NOT the     │──▶ getDb() (not /api/conversations)
+  │   REST API.             │──▶ AgentRegistry (not /api/agents)
+  │                         │──▶ LogBuffer (not exposed via REST at all)
+  │                         │──▶ SupervisorAgent (not /api/messages)
+  └─────────────────────────┘
 ```
+
+### In-Process, on the Running Server
+
+The MCP server runs **inside the already-running OllieBot process** — not as a separate mode or separate process.
+
+This is the same pattern as GitHub MCP: GitHub is already running, the MCP client connects to it. OllieBot is already running during development; the MCP endpoint is mounted alongside (but isolated from) `/api/*`.
 
 Rationale:
 - OllieBot is already running during development — no need to start a second instance.
 - `server_log` requires intercepting `console.*` in the same process.
-- Direct access to `ToolRunner`, `MCPClient`, `db`, agent registry — no HTTP-to-HTTP proxy overhead.
-- The MCP endpoint is wired up during normal `AssistantServer` initialization, just like the existing REST routes.
+- Direct access to internal services — no HTTP-to-HTTP proxy overhead.
+- The MCP endpoint is wired up during normal `AssistantServer` initialization, but its handlers are entirely independent of the REST routes.
 
 ### Transport: Streamable HTTP (Primary)
 
 The MCP spec defines a **Streamable HTTP** transport. The server exposes an HTTP endpoint; the client POSTs JSON-RPC requests and receives JSON responses. For server-initiated messages (notifications, progress), Server-Sent Events (SSE) are used.
 
-This is the right transport for "connect to an already-running server":
+Everything goes through `/mcp` — a single route, three HTTP verbs:
 
 ```bash
 # Claude Code connects to running OllieBot:
@@ -120,7 +126,7 @@ claude mcp add --transport http olliebot http://localhost:3000/mcp
 - `GET /mcp` — SSE stream for server-to-client notifications (optional, for progress/streaming).
 - `DELETE /mcp` — Session teardown (optional).
 
-This uses the same Express server and port that's already running. No new ports, no new processes.
+This uses the same Express server and port that's already running. No new ports, no new processes. But the `/mcp` route has its own middleware stack — it does not share CORS, auth, or error handling with `/api/*`.
 
 ### Transport: Stdio Shim (Secondary, for compatibility)
 
@@ -180,9 +186,12 @@ const mcpServer = new OllieBotMCPServer({
   // ... other service references
 });
 
-// Mount the MCP endpoint
+// Mount the MCP endpoint — isolated from /api/* routes
+// Gets its own middleware stack (no shared CORS, auth, or error handling)
 mcpServer.mountRoutes(this.app);  // adds POST/GET/DELETE /mcp
 ```
+
+**Important:** `mountRoutes` registers handlers only on `/mcp`. It does NOT register any middleware on the root app or `/api/*`. The MCP route has its own error handling and does not inherit the REST API's CORS configuration. This keeps the two surfaces fully independent.
 
 ---
 
