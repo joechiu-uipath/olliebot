@@ -43,7 +43,7 @@ export function useLogsMode() {
     try {
       const params = new URLSearchParams({ limit: '50' });
       if (statusFilter) params.set('status', statusFilter);
-      const res = await fetch(`${API_BASE}/api/logs/traces?${params}`);
+      const res = await fetch(`${API_BASE}/api/traces/traces?${params}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setTraces(data);
@@ -56,7 +56,7 @@ export function useLogsMode() {
     try {
       const params = new URLSearchParams({ limit: '50' });
       if (workloadFilter) params.set('workload', workloadFilter);
-      const res = await fetch(`${API_BASE}/api/logs/llm-calls?${params}`);
+      const res = await fetch(`${API_BASE}/api/traces/llm-calls?${params}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setLlmCalls(data);
@@ -67,7 +67,7 @@ export function useLogsMode() {
 
   const fetchStats = useCallback(async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/logs/stats`);
+      const res = await fetch(`${API_BASE}/api/traces/stats`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setStats(data);
@@ -80,7 +80,7 @@ export function useLogsMode() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`${API_BASE}/api/logs/traces/${traceId}`);
+      const res = await fetch(`${API_BASE}/api/traces/traces/${traceId}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setSelectedTrace(data);
@@ -96,7 +96,7 @@ export function useLogsMode() {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch(`${API_BASE}/api/logs/llm-calls/${callId}`);
+      const res = await fetch(`${API_BASE}/api/traces/llm-calls/${callId}`);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setSelectedLlmCall(data);

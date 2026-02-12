@@ -1075,13 +1075,13 @@ export class AssistantServer {
     });
 
     // ================================================================
-    // Logs / Tracing API routes
+    // Traces API routes
     // ================================================================
     if (this.traceStore) {
       const traceStore = this.traceStore;
 
       // Get traces (list)
-      this.app.get('/api/logs/traces', (req: Request, res: Response) => {
+      this.app.get('/api/traces/traces', (req: Request, res: Response) => {
         try {
           const limit = parseInt(req.query.limit as string) || 50;
           const conversationId = req.query.conversationId as string | undefined;
@@ -1095,7 +1095,7 @@ export class AssistantServer {
       });
 
       // Get single trace with all children
-      this.app.get('/api/logs/traces/:traceId', (req: Request, res: Response) => {
+      this.app.get('/api/traces/traces/:traceId', (req: Request, res: Response) => {
         try {
           const traceId = req.params.traceId as string;
           const result = traceStore.getFullTrace(traceId);
@@ -1111,7 +1111,7 @@ export class AssistantServer {
       });
 
       // Get LLM calls (list)
-      this.app.get('/api/logs/llm-calls', (req: Request, res: Response) => {
+      this.app.get('/api/traces/llm-calls', (req: Request, res: Response) => {
         try {
           const limit = parseInt(req.query.limit as string) || 50;
           const traceId = req.query.traceId as string | undefined;
@@ -1132,7 +1132,7 @@ export class AssistantServer {
       });
 
       // Get single LLM call
-      this.app.get('/api/logs/llm-calls/:callId', (req: Request, res: Response) => {
+      this.app.get('/api/traces/llm-calls/:callId', (req: Request, res: Response) => {
         try {
           const callId = req.params.callId as string;
           const call = traceStore.getLlmCallById(callId);
@@ -1148,7 +1148,7 @@ export class AssistantServer {
       });
 
       // Get tool calls (list)
-      this.app.get('/api/logs/tool-calls', (req: Request, res: Response) => {
+      this.app.get('/api/traces/tool-calls', (req: Request, res: Response) => {
         try {
           const limit = parseInt(req.query.limit as string) || 50;
           const traceId = req.query.traceId as string | undefined;
@@ -1162,7 +1162,7 @@ export class AssistantServer {
       });
 
       // Get stats
-      this.app.get('/api/logs/stats', (req: Request, res: Response) => {
+      this.app.get('/api/traces/stats', (req: Request, res: Response) => {
         try {
           const since = req.query.since as string | undefined;
           res.json(traceStore.getStats(since));
@@ -1172,7 +1172,7 @@ export class AssistantServer {
         }
       });
 
-      console.log('[Server] Logs/tracing routes enabled');
+      console.log('[Server] Traces API routes enabled');
     }
 
     // Setup RAG project routes
