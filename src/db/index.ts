@@ -568,7 +568,7 @@ class Database {
       },
 
       findByConversationIdPaginated: (conversationId: string, options?: MessageQueryOptions): PaginatedResult<Message> => {
-        const limit = Math.min(Math.max(options?.limit ?? DEFAULT_TASKS_LIMIT, 1), MAX_QUERY_LIMIT);
+        const limit = Math.min(Math.max(options?.limit ?? DEFAULT_MESSAGES_LIMIT, 1), MAX_QUERY_LIMIT);
         const beforeCursor = options?.before ? decodeCursor(options.before) : null;
         const afterCursor = options?.after ? decodeCursor(options.after) : null;
 
