@@ -1,4 +1,5 @@
 import type { LLMProvider, LLMMessage, LLMOptions, LLMResponse } from './types.js';
+import { LLM_DEFAULT_MAX_TOKENS } from '../constants.js';
 
 /**
  * Google Gemini LLM Provider
@@ -31,7 +32,7 @@ export class GoogleProvider implements LLMProvider {
     const requestBody: Record<string, unknown> = {
       contents,
       generationConfig: {
-        maxOutputTokens: options?.maxTokens ?? 4096,
+        maxOutputTokens: options?.maxTokens ?? LLM_DEFAULT_MAX_TOKENS,
         temperature: options?.temperature ?? 0.7,
         stopSequences: options?.stopSequences,
       },

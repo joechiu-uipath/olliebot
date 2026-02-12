@@ -86,11 +86,15 @@ export function App() {
         m.id === msg.streamId ? { ...m, content: m.content + msg.chunk } : m
       ));
     } else if (data.type === 'stream_end') {
-      const msg = data as WsMessage & { streamId: string; conversationId?: string };
+      const msg = data as WsMessage & {
+        streamId: string;
+        conversationId?: string;
+        usage?: { inputTokens: number; outputTokens: number; llmDurationMs: number; modelId?: string };
+      };
       if (msg.conversationId && msg.conversationId !== currentConversationId) return;
 
       setMessages(prev => prev.map(m =>
-        m.id === msg.streamId ? { ...m, isStreaming: false } : m
+        m.id === msg.streamId ? { ...m, isStreaming: false, usage: msg.usage } : m
       ));
       setIsResponsePending(false);
     } else if (data.type === 'stream_resume') {

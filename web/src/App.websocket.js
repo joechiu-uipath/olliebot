@@ -268,7 +268,7 @@ export function createMessageHandler(deps) {
     setMessages((prev) =>
       prev.map((m) =>
         m.id === data.streamId
-          ? { ...m, isStreaming: false, citations: data.citations }
+          ? { ...m, isStreaming: false, citations: data.citations, usage: data.usage }
           : m
       )
     );

@@ -7,7 +7,7 @@ import type {
   StreamCallbacks,
 } from './types.js';
 import { DATA_SIZE_THRESHOLDS } from './types.js';
-import type { AnthropicProvider } from './anthropic.js';
+import { LLM_SUMMARIZE_MAX_TOKENS, LLM_TASK_CONFIG_MAX_TOKENS } from '../constants.js';
 
 export interface LLMServiceConfig {
   main: LLMProvider;
@@ -59,7 +59,7 @@ export class LLMService {
 
     const response = await this.fast.complete(
       [{ role: 'user', content: text }],
-      { systemPrompt, maxTokens: 1500 }
+      { systemPrompt, maxTokens: LLM_SUMMARIZE_MAX_TOKENS }
     );
 
     return response.content;
@@ -86,10 +86,9 @@ export class LLMService {
     const toolCount = options?.tools?.length || 0;
 
     // Check if provider supports tool use
-    const provider = this.main as unknown as { completeWithTools?: typeof AnthropicProvider.prototype.completeWithTools };
-    if (typeof provider.completeWithTools === 'function') {
+    if (typeof this.main.completeWithTools === 'function') {
       const startTime = Date.now();
-      const response = await provider.completeWithTools(messages, options);
+      const response = await this.main.completeWithTools(messages, options);
       const duration = Date.now() - startTime;
 
       // Log LLM API call details
@@ -219,7 +218,7 @@ Only output valid JSON, no explanations.`;
 
     const response = await this.main.complete(
       [{ role: 'user', content: userMessage }],
-      { systemPrompt, maxTokens: 2000 }
+      { systemPrompt, maxTokens: LLM_TASK_CONFIG_MAX_TOKENS }
     );
 
     // Extract JSON from response (handle potential markdown code blocks)

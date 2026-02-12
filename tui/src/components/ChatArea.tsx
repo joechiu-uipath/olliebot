@@ -39,6 +39,21 @@ export function ChatArea({ messages, width, height, isFocused }: ChatAreaProps) 
       if (msg.isStreaming) {
         lines.push({ text: '  [...]', color: 'yellow' });
       }
+
+      // Usage footer
+      if (msg.usage && !msg.isStreaming) {
+        const formatTokens = (n: number) => n < 1000 ? String(n) : `${(n / 1000).toFixed(1)}k`;
+        const tokPerSec = msg.usage.llmDurationMs > 0
+          ? (msg.usage.outputTokens / (msg.usage.llmDurationMs / 1000)).toFixed(0)
+          : '?';
+        const durationSec = (msg.usage.llmDurationMs / 1000).toFixed(1);
+        const modelLabel = msg.usage.modelId ? ` · ${msg.usage.modelId}` : '';
+        lines.push({
+          text: `  ${formatTokens(msg.usage.inputTokens)} in / ${formatTokens(msg.usage.outputTokens)} out · ${tokPerSec} tok/s · ${durationSec}s${modelLabel}`,
+          color: 'gray',
+          dim: true,
+        });
+      }
     } else if (msg.role === 'tool') {
       const statusIcon = msg.status === 'running' ? '[...]' :
                         msg.status === 'completed' ? '[OK]' : '[ERR]';

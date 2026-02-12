@@ -9,6 +9,7 @@ import type {
   TaskAssignment,
   TaskResultPayload,
   AgentIdentity,
+  AgentTurnUsage,
 } from './types.js';
 import { WorkerAgent } from './worker.js';
 import type { Channel, Message } from '../channels/types.js';
@@ -22,7 +23,21 @@ import type { CitationSource, StoredCitationData } from '../citations/types.js';
 import { DEEP_RESEARCH_WORKFLOW_ID, AGENT_IDS } from '../deep-research/constants.js';
 import { SELF_CODING_WORKFLOW_ID, AGENT_IDS as CODING_AGENT_IDS } from '../self-coding/constants.js';
 import { getMessageEventService } from '../services/message-event-service.js';
-import { SUPERVISOR_ICON, SUPERVISOR_NAME, CONVERSATION_HISTORY_LIMIT } from '../constants.js';
+import {
+  SUPERVISOR_ICON,
+  SUPERVISOR_NAME,
+  CONVERSATION_HISTORY_LIMIT,
+  AGENT_MAX_TOOL_ITERATIONS,
+  SUPERVISOR_MAX_CONCURRENT_TASKS,
+  MESSAGE_DEDUP_WINDOW_MS,
+  RECENT_CONVERSATION_WINDOW_MS,
+  AUTO_NAME_MESSAGE_THRESHOLD,
+  AUTO_NAME_MESSAGES_TO_LOAD,
+  AUTO_NAME_CONTENT_PREVIEW_LENGTH,
+  AUTO_NAME_LLM_MAX_TOKENS,
+  CONVERSATION_TITLE_MAX_LENGTH,
+  CONVERSATION_TITLE_PREVIEW_LENGTH,
+} from '../constants.js';
 
 export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAgent {
   private subAgents: Map<string, WorkerAgent> = new Map();
@@ -49,7 +64,7 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
         canSpawnAgents: true,
         canAccessTools: ['*'], // Private tools (self-coding) are auto-excluded for supervisors unless delegating
         canUseChannels: ['*'],
-        maxConcurrentTasks: 10,
+        maxConcurrentTasks: SUPERVISOR_MAX_CONCURRENT_TASKS,
       },
       systemPrompt: registry.loadAgentPrompt('supervisor'),
     };
@@ -206,7 +221,7 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
       setTimeout(() => {
         this.processingMessages.delete(message.id);
         this.delegatedMessages.delete(message.id);
-      }, 300000); // Keep in set for 5 minutes to prevent retries during long tasks
+      }, MESSAGE_DEDUP_WINDOW_MS); // Keep in set to prevent retries during long tasks
     }
 
     this._state.status = 'idle';
@@ -223,6 +238,14 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
 
     // Citation tracking - sources collected from tool executions
     const collectedSources: CitationSource[] = [];
+
+    // Usage tracking - accumulated across tool iterations
+    const turnUsage: AgentTurnUsage = {
+      inputTokens: 0,
+      outputTokens: 0,
+      llmDurationMs: 0,
+      modelId: undefined,
+    };
 
     // Refresh RAG data cache before generating response
     await this.refreshRagDataCache();
@@ -241,7 +264,7 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
         }
 
         const messageEventService = getMessageEventService();
-        messageEventService.setChannel(channel as Channel);
+        messageEventService.setChannel(channel);
 
         // Use centralized service that broadcasts AND persists
         messageEventService.emitToolEvent(event, conversationId ?? null, {
@@ -254,7 +277,7 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
 
     try {
       // Start stream with agent info and conversation context
-      channel.startStream!(streamId, {
+      channel.startStream(streamId, {
         agentId: this.identity.id,
         agentName: this.identity.name,
         agentEmoji: this.identity.emoji,
@@ -314,19 +337,18 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
       // Tool execution loop - continues until LLM stops requesting tools
       let continueLoop = true;
       let iterationCount = 0;
-      const maxIterations = 10; // Prevent infinite loops
-
-      while (continueLoop && iterationCount < maxIterations) {
+      while (continueLoop && iterationCount < AGENT_MAX_TOOL_ITERATIONS) {
         iterationCount++;
 
         if (tools.length > 0 && this.toolRunner) {
           // Use tool-enabled streaming generation
+          const llmStartTime = Date.now();
           const response = await this.llmService.generateWithToolsStream(
             llmMessages,
             {
               onChunk: (chunk: string) => {
                 fullResponse += chunk;
-                channel.sendStreamChunk!(streamId, chunk, conversationId);
+                channel.sendStreamChunk(streamId, chunk, conversationId);
               },
               onComplete: () => {
                 // Stream complete
@@ -337,6 +359,15 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
             },
             { tools }
           );
+          const llmDuration = Date.now() - llmStartTime;
+
+          // Accumulate usage
+          turnUsage.llmDurationMs += llmDuration;
+          turnUsage.inputTokens += response.usage?.inputTokens ?? 0;
+          turnUsage.outputTokens += response.usage?.outputTokens ?? 0;
+          if (response.model && !turnUsage.modelId) {
+            turnUsage.modelId = response.model;
+          }
 
           // Check if LLM requested tool use
           if (response.toolUse && response.toolUse.length > 0) {
@@ -360,7 +391,7 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
               if (this.delegatedMessages.has(message.id)) {
                 console.log(`[${this.identity.name}] Already delegated for message ${message.id}, skipping`);
                 // End stream and return without re-delegating
-                this.endStreamWithCitations(channel, streamId, conversationId, undefined);
+                this.endStreamWithCitations(channel, streamId, conversationId, undefined, turnUsage);
                 if (unsubscribeTool) {
                   unsubscribeTool();
                 }
@@ -379,13 +410,13 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
                 customEmoji?: string;
               };
 
-              // End the stream before delegation (no citations for delegated tasks)
-              this.endStreamWithCitations(channel, streamId, conversationId, undefined);
+              // End the stream before delegation (no citations for delegated tasks, but include usage)
+              this.endStreamWithCitations(channel, streamId, conversationId, undefined, turnUsage);
 
               // Save any response content before delegation
               const reasoningMode = message.metadata?.reasoningMode as string | undefined;
               if (fullResponse.trim() && conversationId && turnId) {
-                this.saveAssistantMessageWithContext(fullResponse.trim(), conversationId, turnId, { reasoningMode });
+                this.saveAssistantMessageWithContext(fullResponse.trim(), conversationId, turnId, { reasoningMode, usage: turnUsage });
               }
 
               // Delegation logging handled by handleDelegationFromTool
@@ -425,15 +456,23 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
           }
         } else {
           // No tools available, use regular streaming
+          const llmStartTime = Date.now();
           await this.llmService.generateStream(
             llmMessages,
             {
               onChunk: (chunk) => {
                 fullResponse += chunk;
-                channel.sendStreamChunk!(streamId, chunk, conversationId);
+                channel.sendStreamChunk(streamId, chunk, conversationId);
               },
-              onComplete: () => {
-                // Stream complete
+              onComplete: (response) => {
+                // Stream complete - capture usage if available
+                const llmDuration = Date.now() - llmStartTime;
+                turnUsage.llmDurationMs += llmDuration;
+                turnUsage.inputTokens += response.usage?.inputTokens ?? 0;
+                turnUsage.outputTokens += response.usage?.outputTokens ?? 0;
+                if (response.model && !turnUsage.modelId) {
+                  turnUsage.modelId = response.model;
+                }
               },
               onError: (error) => {
                 throw error;
@@ -447,13 +486,13 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
       // Generate citations using post-hoc analysis
       const citationData = await this.buildCitationData(fullResponse, collectedSources);
 
-      // End stream with citations
-      this.endStreamWithCitations(channel, streamId, conversationId, citationData);
+      // End stream with citations and usage
+      this.endStreamWithCitations(channel, streamId, conversationId, citationData, turnUsage);
 
       // Save the response (delegation is now handled via tool use, not markdown blocks)
       const reasoningMode = message.metadata?.reasoningMode as string | undefined;
       if (fullResponse.trim() && conversationId && turnId) {
-        this.saveAssistantMessageWithContext(fullResponse, conversationId, turnId, { reasoningMode, citations: citationData });
+        this.saveAssistantMessageWithContext(fullResponse, conversationId, turnId, { reasoningMode, citations: citationData, usage: turnUsage });
       }
     } catch (error) {
       this.endStreamWithCitations(channel, streamId, conversationId, undefined);
@@ -512,7 +551,7 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
 
       // Emit delegation event via MessageEventService (broadcasts AND persists)
       const messageEventService = getMessageEventService();
-      messageEventService.setChannel(channel as Channel);
+      messageEventService.setChannel(channel);
       messageEventService.emitDelegationEvent(
         {
           agentId: agent.identity.id,
@@ -592,7 +631,7 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
 
       // Emit delegation event via MessageEventService (broadcasts AND persists)
       const messageEventService = getMessageEventService();
-      messageEventService.setChannel(channel as Channel);
+      messageEventService.setChannel(channel);
       messageEventService.emitDelegationEvent(
         {
           agentId: agent.identity.id,
@@ -803,7 +842,7 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
           ? (content as Array<{ type: string; text?: string }>).filter((b) => b.type === 'text').map((b) => b.text).join(' ')
           : '';
       if (!textContent) return null;
-      return textContent.substring(0, 30).trim() + (textContent.length > 30 ? '...' : '');
+      return textContent.substring(0, CONVERSATION_TITLE_PREVIEW_LENGTH).trim() + (textContent.length > CONVERSATION_TITLE_PREVIEW_LENGTH ? '...' : '');
     };
 
     // If we have a conversation, update its timestamp and return it
@@ -831,8 +870,8 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
       return currentConversationId;
     }
 
-    // Check for recent conversation (within last hour)
-    const recentConversation = db.conversations.findRecent(60 * 60 * 1000);
+    // Check for recent conversation
+    const recentConversation = db.conversations.findRecent(RECENT_CONVERSATION_WINDOW_MS);
 
     if (recentConversation) {
       const recentId = recentConversation.id;
@@ -990,7 +1029,7 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
     content: string,
     conversationId: string,
     turnId: string,
-    options?: { citations?: StoredCitationData; reasoningMode?: string }
+    options?: { citations?: StoredCitationData; reasoningMode?: string; usage?: AgentTurnUsage }
   ): void {
     const metadata: Record<string, unknown> = {
       agentId: this.identity.id,
@@ -1001,6 +1040,11 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
     // Include citations in metadata if present
     if (options?.citations && options.citations.sources.length > 0) {
       metadata.citations = options.citations;
+    }
+
+    // Include usage in metadata if present
+    if (options?.usage) {
+      metadata.usage = options.usage;
     }
 
     const message: Message = {
@@ -1053,13 +1097,13 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
         return;
       }
 
-      const messages = db.messages.findByConversationId(conversationId, { limit: 5 });
+      const messages = db.messages.findByConversationId(conversationId, { limit: AUTO_NAME_MESSAGES_TO_LOAD });
 
-      if (messages.length < 3) return;
+      if (messages.length < AUTO_NAME_MESSAGE_THRESHOLD) return;
 
       // Build context from messages (database messages always have string content)
       const context = messages
-        .map((m) => `${m.role}: ${m.content.substring(0, 200)}`)
+        .map((m) => `${m.role}: ${m.content.substring(0, AUTO_NAME_CONTENT_PREVIEW_LENGTH)}`)
         .join('\n');
 
       // Use fast LLM to generate a title
@@ -1070,10 +1114,10 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
             content: `Generate a short, descriptive title (3-6 words max) for a conversation that starts like this:\n\n${context}\n\nRespond with ONLY the title, no quotes or punctuation.`,
           },
         ],
-        { maxTokens: 20 }
+        { maxTokens: AUTO_NAME_LLM_MAX_TOKENS }
       );
 
-      const title = response.content.trim().substring(0, 60);
+      const title = response.content.trim().substring(0, CONVERSATION_TITLE_MAX_LENGTH);
 
       if (title) {
         const now = new Date().toISOString();
@@ -1102,8 +1146,8 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
     const count = (this.conversationMessageCount.get(conversationId) || 0) + 1;
     this.conversationMessageCount.set(conversationId, count);
 
-    // Auto-name after exactly 3 messages
-    if (count === 3) {
+    // Auto-name after reaching message threshold
+    if (count === AUTO_NAME_MESSAGE_THRESHOLD) {
       // Run async without blocking
       this.autoNameConversation(conversationId).catch((err) => {
         console.error(`[${this.identity.name}] Auto-naming error:`, err);

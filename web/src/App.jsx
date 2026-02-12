@@ -1252,6 +1252,13 @@ function App() {
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
 
+  // Format token count with k shorthand
+  const formatTokenCount = (tokens) => {
+    if (!tokens && tokens !== 0) return '0';
+    if (tokens < 1000) return String(tokens);
+    return `${(tokens / 1000).toFixed(1)}k`;
+  };
+
   // Toggle accordion - memoized since it only uses state setter
   const toggleAccordion = useCallback((key) => {
     setExpandedAccordions((prev) => ({
@@ -1583,6 +1590,11 @@ function App() {
                 {msg.role === 'assistant' && msg.citations && !msg.isStreaming && (
                   <CitationPanel citations={msg.citations} messageId={msg.id} />
                 )}
+                {msg.role === 'assistant' && msg.usage && !msg.isStreaming && (
+                  <div className="message-usage-footer">
+                    {formatTokenCount(msg.usage.inputTokens)} in / {formatTokenCount(msg.usage.outputTokens)} out · {msg.usage.llmDurationMs > 0 ? Math.round(msg.usage.outputTokens / (msg.usage.llmDurationMs / 1000)) : '?'} tok/s · {(msg.usage.llmDurationMs / 1000).toFixed(1)}s{msg.usage.modelId ? ` · ${msg.usage.modelId}` : ''}
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -1603,6 +1615,11 @@ function App() {
           <MessageContent content={msg.content} html={msg.html} isStreaming={msg.isStreaming} citations={msg.citations} messageId={msg.id} />
           {msg.role === 'assistant' && msg.citations && !msg.isStreaming && (
             <CitationPanel citations={msg.citations} messageId={msg.id} />
+          )}
+          {msg.role === 'assistant' && msg.usage && !msg.isStreaming && (
+            <div className="message-usage-footer">
+              {formatTokenCount(msg.usage.inputTokens)} in / {formatTokenCount(msg.usage.outputTokens)} out · {msg.usage.llmDurationMs > 0 ? Math.round(msg.usage.outputTokens / (msg.usage.llmDurationMs / 1000)) : '?'} tok/s · {(msg.usage.llmDurationMs / 1000).toFixed(1)}s{msg.usage.modelId ? ` · ${msg.usage.modelId}` : ''}
+            </div>
           )}
           {msg.attachments && msg.attachments.length > 0 && (
             <div className="message-attachments">

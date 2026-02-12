@@ -9,6 +9,7 @@ import { existsSync, mkdirSync, statSync } from 'fs';
 import { copyFile, unlink } from 'fs/promises';
 import { join, extname, basename } from 'path';
 import type { RAGProjectService } from './service.js';
+import { MAX_FILE_UPLOAD_SIZE_BYTES, RAG_DEFAULT_TOP_K } from '../constants.js';
 
 // Supported file extensions for upload
 const SUPPORTED_UPLOAD_EXTENSIONS = new Set(['.pdf', '.txt', '.md', '.json', '.csv', '.html']);
@@ -17,7 +18,7 @@ const SUPPORTED_UPLOAD_EXTENSIONS = new Set(['.pdf', '.txt', '.md', '.json', '.c
 const upload = multer({
   dest: 'uploads/',
   limits: {
-    fileSize: 50 * 1024 * 1024, // 50MB limit
+    fileSize: MAX_FILE_UPLOAD_SIZE_BYTES,
   },
   fileFilter: (_req, file, cb) => {
     const ext = extname(file.originalname).toLowerCase();
@@ -130,7 +131,7 @@ export function createRAGProjectRoutes(ragService: RAGProjectService): Router {
 
       const response = await ragService.queryProject(projectId, {
         query,
-        topK: typeof topK === 'number' ? topK : 10,
+        topK: typeof topK === 'number' ? topK : RAG_DEFAULT_TOP_K,
         minScore: typeof minScore === 'number' ? minScore : 0,
         contentType: contentType || 'all',
       });

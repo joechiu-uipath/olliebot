@@ -28,15 +28,14 @@ import {
 import { createStrategy } from './strategies/index.js';
 import type { IBrowserStrategy } from './strategies/types.js';
 import type { Channel } from '../channels/types.js';
+import type { LLMMessage, LLMOptions, LLMResponse } from '../llm/types.js';
 
 /**
  * Interface for LLM service (needed by strategies).
+ * Uses proper types from llm/types.ts for type safety.
  */
 export interface ILLMService {
-  generate(
-    messages: Array<{ role: string; content: string | unknown[] }>,
-    options?: { systemPrompt?: string; maxTokens?: number }
-  ): Promise<{ content: string }>;
+  generate(messages: LLMMessage[], options?: LLMOptions): Promise<LLMResponse>;
 }
 
 export interface BrowserSessionManagerConfig {

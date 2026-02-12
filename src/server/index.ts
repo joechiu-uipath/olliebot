@@ -255,6 +255,8 @@ export class AssistantServer {
             agentCommand: m.metadata?.agentCommand,
             // Citations
             citations: m.metadata?.citations,
+            // Token usage stats
+            usage: m.metadata?.usage,
           })),
           pagination: paginatedResult.pagination,
         };
@@ -690,6 +692,8 @@ export class AssistantServer {
             citations: m.metadata?.citations,
             // Agent command (e.g., Deep Research, Modify)
             agentCommand: m.metadata?.agentCommand,
+            // Token usage stats
+            usage: m.metadata?.usage,
           };
         };
 

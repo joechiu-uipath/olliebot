@@ -3,6 +3,8 @@
  * Types and interfaces for the RAG (Retrieval-Augmented Generation) project system.
  */
 
+import { RAG_DEFAULT_CHUNK_SIZE, RAG_DEFAULT_CHUNK_OVERLAP } from '../constants.js';
+
 /**
  * Status of a document in the indexing pipeline.
  */
@@ -52,8 +54,8 @@ export interface ProjectSettings {
  * Default project settings.
  */
 export const DEFAULT_PROJECT_SETTINGS: ProjectSettings = {
-  chunkSize: 1000,
-  chunkOverlap: 100,
+  chunkSize: RAG_DEFAULT_CHUNK_SIZE,
+  chunkOverlap: RAG_DEFAULT_CHUNK_OVERLAP,
   embeddingModel: 'default',
   indexImages: false,
 };

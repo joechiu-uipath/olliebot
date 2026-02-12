@@ -17,6 +17,7 @@ import { v4 as uuid } from 'uuid';
 import { getDb } from '../db/index.js';
 import type { Channel } from '../channels/types.js';
 import type { ToolEvent } from '../tools/types.js';
+import { TOOL_RESULT_MEDIA_LIMIT_BYTES, TOOL_RESULT_TEXT_LIMIT_BYTES } from '../constants.js';
 
 export interface AgentInfo {
   id: string;
@@ -175,13 +176,12 @@ export class MessageEventService {
       if (event.type === 'tool_execution_finished' && event.result !== undefined) {
         try {
           const fullResult = JSON.stringify(event.result);
-          const limit = 10000;
           // For media content or small results, pass object directly
           // For large non-media results, truncate
-          if (this.hasMediaContent(event.result) || fullResult.length <= limit) {
+          if (this.hasMediaContent(event.result) || fullResult.length <= TOOL_RESULT_TEXT_LIMIT_BYTES) {
             resultForBroadcast = event.result; // Pass object directly
           } else {
-            resultForBroadcast = fullResult.substring(0, limit) + '...(truncated)';
+            resultForBroadcast = fullResult.substring(0, TOOL_RESULT_TEXT_LIMIT_BYTES) + '...(truncated)';
           }
         } catch {
           resultForBroadcast = String(event.result);
@@ -231,9 +231,9 @@ export class MessageEventService {
       if (event.result !== undefined) {
         try {
           const fullResult = JSON.stringify(event.result);
-          // Media content gets a much higher limit (5MB) to preserve images, audio, etc.
-          // Non-media content is limited to 10KB to avoid database bloat
-          const limit = this.hasMediaContent(event.result) ? 5000000 : 10000;
+          // Media content gets a much higher limit to preserve images, audio, etc.
+          // Non-media content is limited to avoid database bloat
+          const limit = this.hasMediaContent(event.result) ? TOOL_RESULT_MEDIA_LIMIT_BYTES : TOOL_RESULT_TEXT_LIMIT_BYTES;
           // For media content or small results, store object directly
           // For large non-media results, store truncated string
           if (fullResult.length <= limit) {

@@ -9,6 +9,7 @@ import type {
   AgentConfig,
   AgentCommunication,
   AgentMessage,
+  AgentTurnUsage,
 } from './types.js';
 import type { Channel, Message } from '../channels/types.js';
 import type { LLMService } from '../llm/service.js';
@@ -18,6 +19,7 @@ import type { SkillManager } from '../skills/manager.js';
 import type { RagDataManager } from '../rag-projects/data-manager.js';
 import { generatePostHocCitations, toStoredCitationData } from '../citations/generator.js';
 import type { CitationSource, StoredCitationData } from '../citations/types.js';
+import { RAG_CACHE_TTL_MS } from '../constants.js';
 
 export abstract class AbstractAgent implements BaseAgent {
   readonly identity: AgentIdentity;
@@ -116,16 +118,16 @@ export abstract class AbstractAgent implements BaseAgent {
   /**
    * Refresh the RAG data cache if the agent has query tool access.
    * Call this before generating responses to ensure fresh data.
-   * Cache expires after 60 seconds.
+   * Cache expires after RAG_CACHE_TTL_MS.
    */
   async refreshRagDataCache(): Promise<void> {
     if (!this.ragDataManager) {
       return;
     }
 
-    // Check if cache is still valid (60 second TTL)
+    // Check if cache is still valid
     const now = Date.now();
-    if (this.ragDataCache !== null && now - this.ragDataCacheTime < 60000) {
+    if (this.ragDataCache !== null && now - this.ragDataCacheTime < RAG_CACHE_TTL_MS) {
       return;
     }
 
@@ -253,7 +255,7 @@ export abstract class AbstractAgent implements BaseAgent {
    * cases where content was already sent chunk by chunk.
    * Subclasses should override to add agent-specific metadata.
    */
-  protected saveAssistantMessage(content: string, options?: { citations?: StoredCitationData }): void {
+  protected saveAssistantMessage(content: string, options?: { citations?: StoredCitationData; usage?: AgentTurnUsage }): void {
     // Default implementation just adds to conversation history
     // Subclasses override to persist to database with agent-specific metadata
     const message: Message = {
@@ -265,6 +267,7 @@ export abstract class AbstractAgent implements BaseAgent {
         agentName: this.identity.name,
         agentEmoji: this.identity.emoji,
         ...(options?.citations && { citations: options.citations }),
+        ...(options?.usage && { usage: options.usage }),
       },
       createdAt: new Date(),
     };
@@ -414,17 +417,19 @@ export abstract class AbstractAgent implements BaseAgent {
   }
 
   /**
-   * End a stream with citation data
+   * End a stream with citation data and optional usage metrics
    */
   protected endStreamWithCitations(
     channel: Channel,
     streamId: string,
     conversationId: string | undefined,
-    citationData: StoredCitationData | undefined
+    citationData: StoredCitationData | undefined,
+    usage?: AgentTurnUsage
   ): void {
     channel.endStream(streamId, {
       conversationId,
       citations: citationData,
+      usage,
     });
   }
 }

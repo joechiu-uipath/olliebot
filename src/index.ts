@@ -435,7 +435,7 @@ async function main(): Promise<void> {
   const browserConfig = loadBrowserConfig();
   const browserManager = new BrowserSessionManager({
     defaultConfig: browserConfig,
-    llmService: llmService as unknown as import('./browser/manager.js').ILLMService,
+    llmService,
   });
 
   // Register browser tools

@@ -8,6 +8,12 @@
 import alasql from 'alasql';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { dirname } from 'path';
+import {
+  DEFAULT_CONVERSATIONS_LIMIT,
+  DEFAULT_MESSAGES_LIMIT,
+  DEFAULT_TASKS_LIMIT,
+  MAX_QUERY_LIMIT,
+} from '../constants.js';
 
 // ============================================================================
 // Types
@@ -332,7 +338,7 @@ class Database {
       },
 
       findAll: (options?: { limit?: number; includeDeleted?: boolean }): Conversation[] => {
-        const limit = options?.limit ?? 50;
+        const limit = options?.limit ?? DEFAULT_CONVERSATIONS_LIMIT;
         const includeDeleted = options?.includeDeleted ?? false;
         if (includeDeleted) {
           return alasql(`SELECT * FROM conversations ORDER BY updatedAt DESC LIMIT ${limit}`) as Conversation[];
@@ -408,7 +414,7 @@ class Database {
       },
 
       findByConversationId: (conversationId: string, options?: { limit?: number }): Message[] => {
-        const limit = options?.limit ?? 100;
+        const limit = options?.limit ?? DEFAULT_MESSAGES_LIMIT;
         const rows = alasql(
           `SELECT * FROM messages WHERE conversationId = ? ORDER BY createdAt ASC LIMIT ${limit}`,
           [conversationId]
@@ -417,7 +423,7 @@ class Database {
       },
 
       findByConversationIdPaginated: (conversationId: string, options?: MessageQueryOptions): PaginatedResult<Message> => {
-        const limit = Math.min(Math.max(options?.limit ?? 20, 1), 100);
+        const limit = Math.min(Math.max(options?.limit ?? DEFAULT_TASKS_LIMIT, 1), MAX_QUERY_LIMIT);
         const beforeCursor = options?.before ? decodeCursor(options.before) : null;
         const afterCursor = options?.after ? decodeCursor(options.after) : null;
 
@@ -542,7 +548,7 @@ class Database {
       },
 
       findAll: (options?: { limit?: number; status?: Task['status'] }): Task[] => {
-        const limit = options?.limit ?? 20;
+        const limit = options?.limit ?? DEFAULT_TASKS_LIMIT;
         let rows: Array<Record<string, unknown>>;
         if (options?.status) {
           rows = alasql(

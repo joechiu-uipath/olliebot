@@ -7,6 +7,7 @@ import type {
   AgentCommunication,
   AgentIdentity,
   TaskResultPayload,
+  AgentTurnUsage,
 } from './types.js';
 import type { Channel, Message } from '../channels/types.js';
 import type { LLMService } from '../llm/service.js';
@@ -16,7 +17,7 @@ import { formatToolResultBlocks } from '../utils/index.js';
 import { logSystemPrompt } from '../utils/prompt-logger.js';
 import type { CitationSource, CitationSourceType, StoredCitationData } from '../citations/types.js';
 import { SUB_AGENT_TIMEOUT_MS } from '../deep-research/constants.js';
-import { WORKER_HISTORY_LIMIT } from '../constants.js';
+import { WORKER_HISTORY_LIMIT, AGENT_MAX_TOOL_ITERATIONS } from '../constants.js';
 import { getMessageEventService } from '../services/message-event-service.js';
 
 export class WorkerAgent extends AbstractAgent {
@@ -181,6 +182,14 @@ export class WorkerAgent extends AbstractAgent {
     // Citation tracking - sources collected from tool executions
     const collectedSources: CitationSource[] = [];
 
+    // Usage tracking - accumulated across tool iterations
+    const turnUsage: AgentTurnUsage = {
+      inputTokens: 0,
+      outputTokens: 0,
+      llmDurationMs: 0,
+      modelId: undefined,
+    };
+
     // Log tools and skills info
     const toolInfo = tools.length < 5
       ? `tools: ${tools.map(t => t.name).join(', ')}`
@@ -209,7 +218,7 @@ export class WorkerAgent extends AbstractAgent {
         }
 
         const messageEventService = getMessageEventService();
-        messageEventService.setChannel(channel as Channel);
+        messageEventService.setChannel(channel);
 
         // Use centralized service that broadcasts AND persists
         messageEventService.emitToolEvent(event, this.conversationId, {
@@ -249,9 +258,8 @@ export class WorkerAgent extends AbstractAgent {
       // Tool execution loop
       let continueLoop = true;
       let iterationCount = 0;
-      const maxIterations = 10;
 
-      while (continueLoop && iterationCount < maxIterations) {
+      while (continueLoop && iterationCount < AGENT_MAX_TOOL_ITERATIONS) {
         iterationCount++;
 
         const llmStartTime = Date.now();
@@ -277,6 +285,15 @@ export class WorkerAgent extends AbstractAgent {
         );
 
         const llmDuration = Date.now() - llmStartTime;
+
+        // Accumulate usage
+        turnUsage.llmDurationMs += llmDuration;
+        turnUsage.inputTokens += response.usage?.inputTokens ?? 0;
+        turnUsage.outputTokens += response.usage?.outputTokens ?? 0;
+        if (response.model && !turnUsage.modelId) {
+          turnUsage.modelId = response.model;
+        }
+
         const toolCount = response.toolUse?.length || 0;
         const toolNames = response.toolUse?.map(t => t.name).join(', ') || '';
         // Log LLM response: duration, whether it requested tools or finished with text
@@ -397,7 +414,7 @@ export class WorkerAgent extends AbstractAgent {
                     return; // This event is for a different agent
                   }
                   const messageEventService = getMessageEventService();
-                  messageEventService.setChannel(channel as Channel);
+                  messageEventService.setChannel(channel);
                   messageEventService.emitToolEvent(event, this.conversationId, {
                     id: this.identity.id,
                     name: this.identity.name,
@@ -430,8 +447,8 @@ export class WorkerAgent extends AbstractAgent {
         }
       }
 
-      if (iterationCount >= maxIterations) {
-        console.warn(`[${this.identity.name}] Max iterations reached`);
+      if (iterationCount >= AGENT_MAX_TOOL_ITERATIONS) {
+        console.warn(`[${this.identity.name}] Max iterations (${AGENT_MAX_TOOL_ITERATIONS}) reached`);
       }
 
       // Merge citations from sub-agents into collected sources
@@ -449,11 +466,11 @@ export class WorkerAgent extends AbstractAgent {
       // Generate citations using post-hoc analysis
       const citationData = await this.buildCitationData(fullResponse, collectedSources);
 
-      // End stream with citations
-      this.endStreamWithCitations(channel, streamId, this.conversationId || undefined, citationData);
+      // End stream with citations and usage
+      this.endStreamWithCitations(channel, streamId, this.conversationId || undefined, citationData, turnUsage);
 
       // Save and report
-      this.saveAssistantMessage(fullResponse, { citations: citationData });
+      this.saveAssistantMessage(fullResponse, { citations: citationData, usage: turnUsage });
       console.log(`[${this.identity.name}] Task done (${iterationCount} iter, ${fullResponse.length} chars)`);
 
       // Pass both citations (matched) and all collected sources to parent
@@ -561,7 +578,7 @@ export class WorkerAgent extends AbstractAgent {
 
     // Emit delegation event via MessageEventService (broadcasts AND persists)
     const messageEventService = getMessageEventService();
-    messageEventService.setChannel(channel as Channel);
+    messageEventService.setChannel(channel);
     messageEventService.emitDelegationEvent(
       {
         agentId: subAgent.identity.id,
@@ -727,7 +744,7 @@ export class WorkerAgent extends AbstractAgent {
     }
   }
 
-  protected override saveAssistantMessage(content: string, options?: { citations?: StoredCitationData }): void {
+  protected override saveAssistantMessage(content: string, options?: { citations?: StoredCitationData; usage?: AgentTurnUsage }): void {
     const metadata: Record<string, unknown> = {
       agentId: this.identity.id,
       agentName: this.identity.name,
@@ -738,6 +755,11 @@ export class WorkerAgent extends AbstractAgent {
     // Include citations in metadata if present
     if (options?.citations && options.citations.sources.length > 0) {
       metadata.citations = options.citations;
+    }
+
+    // Include usage in metadata if present
+    if (options?.usage) {
+      metadata.usage = options.usage;
     }
 
     const message: Message = {

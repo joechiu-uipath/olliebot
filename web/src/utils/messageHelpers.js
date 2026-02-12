@@ -40,6 +40,7 @@ export function transformMessages(data) {
       messageType: msg.messageType,
       agentCommand: msg.agentCommand,
       citations: msg.citations,
+      usage: msg.usage,
     };
   });
 }

@@ -5,6 +5,21 @@ import type { LLMService } from '../llm/service.js';
 import type { CitationSource, StoredCitationData } from '../citations/types.js';
 
 // ============================================================
+// AGENT TURN USAGE TRACKING
+// ============================================================
+
+/**
+ * Token usage metrics for an agent's turn (response).
+ * Accumulated across multiple LLM iterations (tool use loops).
+ */
+export interface AgentTurnUsage {
+  inputTokens: number;
+  outputTokens: number;
+  llmDurationMs: number;
+  modelId?: string;
+}
+
+// ============================================================
 // AGENT DELEGATION CONFIGURATION
 // ============================================================
 

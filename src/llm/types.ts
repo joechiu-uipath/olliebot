@@ -83,10 +83,13 @@ export interface LLMProvider {
   // Generate a completion
   complete(messages: LLMMessage[], options?: LLMOptions): Promise<LLMResponse>;
 
-  // Generate a streaming completion
+  // Generate a completion with tool use support (optional)
+  completeWithTools?(messages: LLMMessage[], options?: LLMOptions): Promise<LLMResponseWithTools>;
+
+  // Generate a streaming completion (optional)
   stream?(messages: LLMMessage[], callbacks: StreamCallbacks, options?: LLMOptions): Promise<void>;
 
-  // Generate streaming completion with tool use support
+  // Generate streaming completion with tool use support (optional)
   streamWithTools?(
     messages: LLMMessage[],
     callbacks: StreamCallbacks & { onToolUse?: (toolUse: LLMToolUse[]) => void },

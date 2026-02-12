@@ -794,7 +794,7 @@ html, body {
 
 /* Message items inside Virtuoso need padding */
 .virtuoso-scroller > div > div {
-  padding: 0 1rem;
+  padding: 0 1rem 1rem 1rem;
 }
 
 /* Add gap between items via margin */
@@ -973,6 +973,16 @@ html, body {
   margin-bottom: 0.25rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
+}
+
+/* Usage footer for token metrics */
+.message-usage-footer {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  margin-top: 0.5rem;
+  padding-top: 0.25rem;
+  opacity: 0.7;
+  text-align: right;
 }
 
 /* Message attachment chips */

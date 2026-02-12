@@ -368,6 +368,7 @@ export class WebSocketChannel implements Channel {
       streamId: string;
       conversationId?: string;
       citations?: { sources: unknown[]; references: unknown[] };
+      usage?: { inputTokens: number; outputTokens: number; llmDurationMs: number; modelId?: string };
       timestamp: string;
     } = {
       type: 'stream_end',
@@ -379,6 +380,12 @@ export class WebSocketChannel implements Channel {
     // Include citations if provided
     if (options?.citations && options.citations.sources.length > 0) {
       payload.citations = options.citations;
+    }
+
+    // Include usage if provided
+    if (options?.usage) {
+      payload.usage = options.usage;
+      console.log(`[WebSocketChannel] stream_end with usage: ${options.usage.inputTokens} in / ${options.usage.outputTokens} out / ${options.usage.llmDurationMs}ms / ${options.usage.modelId || 'no model'}`);
     }
 
     this.broadcast(payload);

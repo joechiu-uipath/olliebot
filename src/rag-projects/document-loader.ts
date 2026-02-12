@@ -6,6 +6,7 @@
 import { readFile } from 'fs/promises';
 import { extname } from 'path';
 import type { DocumentChunk } from './types.js';
+import { RAG_DEFAULT_CHUNK_SIZE, RAG_DEFAULT_CHUNK_OVERLAP } from '../constants.js';
 
 /**
  * Supported file extensions and their MIME types.
@@ -50,8 +51,8 @@ export interface ChunkOptions {
 }
 
 const DEFAULT_CHUNK_OPTIONS: ChunkOptions = {
-  chunkSize: 1000,
-  chunkOverlap: 100,
+  chunkSize: RAG_DEFAULT_CHUNK_SIZE,
+  chunkOverlap: RAG_DEFAULT_CHUNK_OVERLAP,
   preserveParagraphs: true,
 };
 

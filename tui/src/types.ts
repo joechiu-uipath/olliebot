@@ -24,6 +24,13 @@ export interface Message {
   taskId?: string;
   taskName?: string;
   taskDescription?: string;
+  // LLM usage metrics
+  usage?: {
+    inputTokens: number;
+    outputTokens: number;
+    llmDurationMs: number;
+    modelId?: string;
+  };
 }
 
 // Conversation types
