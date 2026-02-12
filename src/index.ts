@@ -67,6 +67,7 @@ import {
   DesktopScreenshotTool,
 } from './desktop/index.js';
 import { getUserSettingsService } from './settings/index.js';
+import { LogBuffer } from './mcp-server/index.js';
 
 /**
  * Parse MCP server configurations from various formats.
@@ -161,6 +162,9 @@ const CONFIG = {
   // MCP Configuration (JSON string of server configs)
   mcpServers: process.env.MCP_SERVERS || '[]',
 
+  // MCP Server (OllieBot as MCP server) — disabled by default
+  mcpServerEnabled: process.env.MCP_SERVER_ENABLED === 'true',
+
   // Native tool API keys
   imageGenProvider: (process.env.IMAGE_GEN_PROVIDER || 'openai') as 'openai' | 'azure_openai',
   imageGenModel: process.env.IMAGE_GEN_MODEL || 'dall-e-3',
@@ -243,6 +247,12 @@ function createEmbeddingProvider() {
 
 
 async function main(): Promise<void> {
+  // Install log buffer early so all boot logs are captured (before any console.log)
+  const logBuffer = new LogBuffer();
+  if (CONFIG.mcpServerEnabled) {
+    logBuffer.install();
+  }
+
   console.log(`${SUPERVISOR_ICON} ${SUPERVISOR_NAME} Starting...\n`);
 
   // Validate at least one API key is available
@@ -692,6 +702,11 @@ async function main(): Promise<void> {
       azureOpenaiEndpoint: CONFIG.azureOpenaiEndpoint,
       azureOpenaiApiVersion: CONFIG.azureOpenaiApiVersion,
       openaiApiKey: CONFIG.openaiApiKey,
+      // MCP Server configuration
+      mcpServerEnabled: CONFIG.mcpServerEnabled,
+      logBuffer,
+      fastProvider: CONFIG.fastProvider,
+      fastModel: CONFIG.fastModel,
     });
     await server.start();
 

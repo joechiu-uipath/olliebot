@@ -20,6 +20,8 @@ import type { TaskManager } from '../tasks/index.js';
 import { type RAGProjectService, createRAGProjectRoutes, type IndexingProgress } from '../rag-projects/index.js';
 import { getMessageEventService, setMessageEventServiceChannel } from '../services/message-event-service.js';
 import { getUserSettingsService } from '../settings/index.js';
+import { OllieBotMCPServer } from '../mcp-server/index.js';
+import type { LogBuffer } from '../mcp-server/index.js';
 
 export interface ServerConfig {
   port: number;
@@ -48,6 +50,11 @@ export interface ServerConfig {
   bindAddress?: string;
   // Security: Allowed CORS origins (default: localhost dev servers)
   allowedOrigins?: string[];
+  // MCP Server (OllieBot as MCP server)
+  mcpServerEnabled?: boolean;
+  logBuffer?: LogBuffer;
+  fastProvider?: string;
+  fastModel?: string;
 }
 
 export class AssistantServer {
@@ -76,6 +83,10 @@ export class AssistantServer {
   private bindAddress: string;
   private allowedOrigins: string[];
   private voiceWss: WebSocketServer;
+  private mcpServerEnabled: boolean;
+  private logBuffer?: LogBuffer;
+  private fastProvider?: string;
+  private fastModel?: string;
 
   constructor(config: ServerConfig) {
     this.port = config.port;
@@ -96,6 +107,10 @@ export class AssistantServer {
     this.azureOpenaiEndpoint = config.azureOpenaiEndpoint;
     this.azureOpenaiApiVersion = config.azureOpenaiApiVersion;
     this.openaiApiKey = config.openaiApiKey;
+    this.mcpServerEnabled = config.mcpServerEnabled ?? false;
+    this.logBuffer = config.logBuffer;
+    this.fastProvider = config.fastProvider;
+    this.fastModel = config.fastModel;
 
     // Security: Default to localhost-only binding (Layer 1: Network Binding)
     this.bindAddress = config.bindAddress ?? '127.0.0.1';
@@ -1125,6 +1140,28 @@ export class AssistantServer {
           timestamp: new Date().toISOString(),
         });
       });
+    }
+
+    // Mount MCP server endpoint if enabled
+    if (this.mcpServerEnabled && this.logBuffer && this.toolRunner) {
+      const mcpServer = new OllieBotMCPServer({
+        toolRunner: this.toolRunner,
+        mcpClient: this.mcpClient,
+        logBuffer: this.logBuffer,
+        startTime: new Date(),
+        getClientCount: () => this.wsChannel.getConnectedClients(),
+        runtimeConfig: {
+          mainProvider: this.mainProvider || '',
+          mainModel: this.mainModel || '',
+          fastProvider: this.fastProvider || '',
+          fastModel: this.fastModel || '',
+          port: this.port,
+        },
+      });
+
+      mcpServer.mountRoutes(this.app);
+    } else if (this.mcpServerEnabled) {
+      console.warn('[MCP Server] Enabled but toolRunner not available — skipping mount');
     }
 
     // Start listening on configured bind address (default: localhost only)

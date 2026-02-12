@@ -459,10 +459,24 @@ Any MCP client that supports Streamable HTTP can connect directly to `http://loc
 
 ---
 
+## Environment Toggle
+
+The MCP server is **disabled by default**. Enable it in `.env`:
+
+```env
+MCP_SERVER_ENABLED=false     # default — MCP endpoint not mounted
+MCP_SERVER_ENABLED=true      # enables POST/GET/DELETE /mcp
+```
+
+When disabled, no LogBuffer interception is installed and `/mcp` is not registered. Zero overhead.
+
+---
+
 ## Phasing
 
 ### Phase 1 — Core (this PR)
-- `LogBuffer` with console interception (installed at startup)
+- `MCP_SERVER_ENABLED` env toggle (default: disabled)
+- `LogBuffer` with console interception (installed at startup when enabled)
 - Streamable HTTP handler mounted at `POST /mcp`
 - Tools: `server_log`, `health`, `db_query`, `list_conversations`, `list_messages`, `list_tools`, `get_tool_schema`, `run_tool`
 - 8 tools, all backed by in-process state
