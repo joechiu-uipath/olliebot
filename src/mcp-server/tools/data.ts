@@ -4,7 +4,6 @@
  * Tools: db_query, list_conversations, list_messages
  */
 
-import alasql from 'alasql';
 import { getDb } from '../../db/index.js';
 import type { RegisteredTool, MCPToolCallResult } from '../types.js';
 
@@ -28,7 +27,7 @@ export function createDataTools(): RegisteredTool[] {
       definition: {
         name: 'db_query',
         description:
-          'Execute SQL queries against the OllieBot database (AlaSQL). Full access: SELECT, INSERT, UPDATE, DELETE. Tables: conversations, messages, tasks, embeddings.',
+          'Execute SQL queries against the OllieBot database (SQLite). Full access: SELECT, INSERT, UPDATE, DELETE. Tables: conversations, messages, tasks, embeddings. JSON fields (metadata, jsonConfig) can be queried with json_extract(). Full-text search available via messages_fts table.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -52,19 +51,16 @@ export function createDataTools(): RegisteredTool[] {
         );
 
         try {
-          // Ensure DB is initialized
-          getDb();
+          const db = getDb();
 
-          const result = alasql(sql) as unknown;
-
-          // For non-SELECT queries, result is typically affected row count
+          // For non-SELECT queries, use rawRun which returns affected row count
           if (!sql.trim().toUpperCase().startsWith('SELECT')) {
-            const affected = typeof result === 'number' ? result : 1;
+            const affected = db.rawRun(sql);
             return textResult(`Query executed successfully. Affected rows: ${affected}`);
           }
 
           // SELECT query — return rows
-          const rows = result as unknown[];
+          const rows = db.rawQuery(sql);
           const truncated = rows.slice(0, limit);
 
           // Deserialize JSON string fields for readability
