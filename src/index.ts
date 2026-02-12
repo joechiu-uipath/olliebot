@@ -164,6 +164,9 @@ const CONFIG = {
 
   // MCP Server (OllieBot as MCP server) — disabled by default
   mcpServerEnabled: process.env.MCP_SERVER_ENABLED === 'true',
+  // MCP Server authentication
+  mcpServerSecret: process.env.MCP_SERVER_SECRET || '',
+  mcpServerAuthDisabled: process.env.MCP_SERVER_AUTH_DISABLED === 'true',
 
   // Native tool API keys
   imageGenProvider: (process.env.IMAGE_GEN_PROVIDER || 'openai') as 'openai' | 'azure_openai',
@@ -704,6 +707,8 @@ async function main(): Promise<void> {
       openaiApiKey: CONFIG.openaiApiKey,
       // MCP Server configuration
       mcpServerEnabled: CONFIG.mcpServerEnabled,
+      mcpServerSecret: CONFIG.mcpServerSecret,
+      mcpServerAuthDisabled: CONFIG.mcpServerAuthDisabled,
       logBuffer,
       fastProvider: CONFIG.fastProvider,
       fastModel: CONFIG.fastModel,

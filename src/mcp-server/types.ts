@@ -120,4 +120,11 @@ export interface MCPServerDependencies {
     fastModel: string;
     port: number;
   };
+  /** Authentication configuration (optional) */
+  auth?: {
+    /** Shared secret for bearer token auth (64-char hex recommended) */
+    secret?: string;
+    /** Disable auth entirely (only for isolated dev environments) */
+    disabled?: boolean;
+  };
 }

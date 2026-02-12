@@ -20,7 +20,7 @@ Expose OllieBot's internal functionality as an MCP (Model Context Protocol) serv
 
 | Tool | Description | Internal Service |
 |------|-------------|-----------------|
-| `db_query` | Execute a read-only AlaSQL query and return results as JSON. Write queries rejected. | `getDb()` — direct AlaSQL access |
+| `db_query` | Execute SQL queries against the OllieBot database (AlaSQL). Full access for debugging — SELECT, INSERT, UPDATE, DELETE all allowed. | `getDb()` — direct AlaSQL access |
 | `list_conversations` | List conversations with id, title, createdAt, updatedAt, message count. Supports limit param. | `db.conversations` repository |
 | `list_messages` | Paginated messages for a conversation. Params: conversationId, limit, before/after cursor. | `db.messages` repository |
 
@@ -68,9 +68,9 @@ The MCP server is a **self-contained boundary** behind `/mcp`. It does not expos
 
 This means:
 - **No leakage.** `/api/*` routes are never visible to MCP clients. Renaming or removing a REST endpoint has zero impact on MCP.
-- **Constrain or enhance.** Each MCP tool handler controls exactly what it exposes. `db_query` enforces read-only even though the DB supports writes. `list_messages` could return richer metadata than the REST API does. `run_tool` can add guardrails the REST API doesn't have.
+- **Full debugging access.** Each MCP tool handler provides deep access for debugging. `db_query` allows full SQL (SELECT, INSERT, UPDATE, DELETE). `run_tool` executes any registered tool. This is intentional — it's a debugger, not a production API.
 - **Independent evolution.** The MCP tool interface can change shape, add fields, or tighten validation without touching the REST API — and vice versa.
-- **Single security boundary.** Auth, rate limiting, or access control for MCP is applied at `/mcp` in one place. It doesn't inherit REST API middleware or CORS config.
+- **Single security boundary.** Bearer token authentication is applied at `/mcp` in one place. It doesn't inherit REST API middleware or CORS config.
 
 ```
   Express Server (localhost:3000)
@@ -82,7 +82,7 @@ This means:
        │
        │  All MCP traffic goes through this single route.
        │  POST, GET (SSE), DELETE — all on /mcp.
-       │  No sub-routes, no /mcp/tools, no /mcp/api.
+       │  Bearer token authentication on all requests.
        │  Tool dispatch is internal via JSON-RPC method routing.
        │
        ▼
@@ -91,7 +91,7 @@ This means:
   │                         │
   │   Tool handlers call    │
   │   internal services     │──▶ ToolRunner (not /api/tools)
-  │   directly, NOT the     │──▶ getDb() (not /api/conversations)
+  │   directly, NOT the     │──▶ getDb() (full SQL access)
   │   REST API.             │──▶ AgentRegistry (not /api/agents)
   │                         │──▶ LogBuffer (not exposed via REST at all)
   │                         │──▶ SupervisorAgent (not /api/messages)
@@ -274,26 +274,32 @@ The `web_log` MCP tool queries the buffer filtered by `source === 'web'`.
 
 **Frontend change:** A small console interceptor script in the web app that forwards `console.log/warn/error` over the existing WebSocket connection. Gated behind a `DEBUG` flag to avoid noise in production.
 
-### 4. db_query Safety
+### 4. db_query: Full Database Access
 
-```typescript
-// Only allow SELECT statements
-function validateQuery(sql: string): void {
-  const normalized = sql.trim().toUpperCase();
-  if (!normalized.startsWith('SELECT')) {
-    throw new Error('Only SELECT queries are allowed');
-  }
-  // Block common injection patterns
-  const blocked = ['DROP', 'DELETE', 'INSERT', 'UPDATE', 'ALTER', 'CREATE', 'TRUNCATE'];
-  for (const keyword of blocked) {
-    if (normalized.includes(keyword)) {
-      throw new Error(`Query contains blocked keyword: ${keyword}`);
-    }
-  }
-}
+The `db_query` tool provides **unrestricted SQL access** — SELECT, INSERT, UPDATE, DELETE are all allowed. This is intentional: the MCP server is a debugger-like tool for developers, not a production API.
+
+**Use cases:**
+- Inspect internal state during debugging
+- Simulate failure conditions by corrupting data
+- Clean up test data after experiments
+- Modify agent state for testing edge cases
+
+**Example queries:**
+```sql
+-- Inspect recent messages
+SELECT * FROM messages ORDER BY createdAt DESC LIMIT 10
+
+-- Find orphaned records
+SELECT * FROM messages WHERE conversationId NOT IN (SELECT id FROM conversations)
+
+-- Delete test data
+DELETE FROM messages WHERE content LIKE '%test%'
+
+-- Simulate corrupted state
+UPDATE conversations SET title = NULL WHERE id = 'some-id'
 ```
 
-Additional safety: execute in a try-catch with a result row limit (default 100) to prevent accidentally dumping the entire message table.
+**Safety note:** A result row limit (default 100) prevents accidentally dumping large tables, but there are no other restrictions. The bearer token authentication is the security boundary.
 
 ### 5. run_tool Execution
 
@@ -347,15 +353,36 @@ This is synchronous from the MCP client's perspective — the tool call blocks u
 
 ## MCP Client Configuration
 
-### Claude Code (primary use case)
+### Step 1: Generate a Token
 
 ```bash
-claude mcp add --transport http olliebot http://localhost:3000/mcp
+# Linux/Mac
+openssl rand -hex 32
+
+# PowerShell
+-join ((1..32) | ForEach-Object { "{0:x2}" -f (Get-Random -Max 256) })
 ```
 
-That's it. OllieBot is already running on port 3000; Claude Code connects to it.
+Add the token to your `.env`:
+```env
+MCP_SERVER_ENABLED=true
+MCP_SERVER_SECRET=your-64-char-hex-token-here
+```
 
-### Claude Desktop (via stdio shim, if needed)
+### Step 2: Connect Your Client
+
+#### Claude Code (primary use case)
+
+```bash
+claude mcp add --transport http olliebot http://localhost:3000/mcp \
+  --header "Authorization: Bearer <your-token>"
+```
+
+OllieBot must already be running on port 3000.
+
+#### Claude Desktop (via stdio shim)
+
+The stdio shim reads the token from an environment variable and adds the header automatically:
 
 ```json
 {
@@ -365,16 +392,26 @@ That's it. OllieBot is already running on port 3000; Claude Code connects to it.
       "args": ["dist/mcp-server/stdio-shim.js"],
       "cwd": "/path/to/olliebot",
       "env": {
-        "OLLIEBOT_URL": "http://localhost:3000"
+        "OLLIEBOT_URL": "http://localhost:3000",
+        "OLLIEBOT_TOKEN": "your-64-char-hex-token-here"
       }
     }
   }
 }
 ```
 
-### Other MCP Clients (HTTP-capable)
+#### Testing with curl
 
-Any MCP client that supports Streamable HTTP can connect directly to `http://localhost:3000/mcp`.
+```bash
+curl -X POST http://localhost:3000/mcp \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <your-token>" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+```
+
+#### Other MCP Clients
+
+Any MCP client that supports Streamable HTTP can connect to `http://localhost:3000/mcp` with the `Authorization: Bearer <token>` header.
 
 ---
 
@@ -416,17 +453,17 @@ Any MCP client that supports Streamable HTTP can connect directly to `http://loc
 ```json
 {
   "name": "db_query",
-  "description": "Execute a read-only SQL query against the OllieBot database (AlaSQL). Only SELECT statements allowed. Tables: conversations, messages, tasks, embeddings.",
+  "description": "Execute SQL queries against the OllieBot database (AlaSQL). Full access: SELECT, INSERT, UPDATE, DELETE. Tables: conversations, messages, tasks, embeddings.",
   "inputSchema": {
     "type": "object",
     "properties": {
       "query": {
         "type": "string",
-        "description": "SQL SELECT query to execute."
+        "description": "SQL query to execute (SELECT, INSERT, UPDATE, DELETE)."
       },
       "limit": {
         "type": "number",
-        "description": "Max rows to return. Default 100, max 1000."
+        "description": "Max rows to return for SELECT queries. Default 100, max 1000."
       }
     },
     "required": ["query"]
@@ -464,11 +501,21 @@ Any MCP client that supports Streamable HTTP can connect directly to `http://loc
 The MCP server is **disabled by default**. Enable it in `.env`:
 
 ```env
+# Enable/disable the MCP server endpoint
 MCP_SERVER_ENABLED=false     # default — MCP endpoint not mounted
 MCP_SERVER_ENABLED=true      # enables POST/GET/DELETE /mcp
+
+# Authentication (required when enabled)
+MCP_SERVER_SECRET=           # 64-char hex token (openssl rand -hex 32)
+
+# DANGER: Only for completely isolated dev environments
+MCP_SERVER_AUTH_DISABLED=false  # default — auth required
+MCP_SERVER_AUTH_DISABLED=true   # disables auth entirely
 ```
 
 When disabled, no LogBuffer interception is installed and `/mcp` is not registered. Zero overhead.
+
+When enabled without a secret (and auth not disabled), all requests return 500 "Server misconfigured".
 
 ---
 
@@ -494,6 +541,61 @@ When disabled, no LogBuffer interception is installed and `/mcp` is not register
 
 ---
 
+## Security
+
+### Defense-in-Depth Layers
+
+1. **Network Binding** — Server binds to `127.0.0.1` by default (localhost only). Remote connections are rejected at the TCP level.
+
+2. **Bearer Token Authentication** — All `/mcp` routes require `Authorization: Bearer <token>` header. Token is validated via constant-time comparison to prevent timing attacks.
+
+3. **Localhost-Only Middleware** — Additional check at the Express route level to reject non-localhost requests.
+
+### Token Authentication
+
+The MCP server uses standard HTTP bearer token authentication:
+
+```
+Authorization: Bearer <64-char-hex-token>
+```
+
+**Token generation:**
+```bash
+openssl rand -hex 32
+```
+
+**Validation:**
+- Missing/invalid header → 401 Unauthorized
+- Server misconfigured (no secret) → 500 Internal Error
+- Valid token → request proceeds
+
+**Constant-time comparison** prevents timing attacks — attackers cannot determine how many characters match by measuring response time.
+
+### Security Philosophy
+
+The OllieBot MCP server is a **debugger-like diagnostic tool**, not a production API:
+
+- **Full database access** — `db_query` allows SELECT, INSERT, UPDATE, DELETE
+- **Tool execution** — `run_tool` can execute any registered tool
+- **System inspection** — logs, config, agent state all visible
+
+This is intentional. The security model is:
+1. Never enable in production
+2. Always use a strong token, even on localhost
+3. Treat the token like SSH credentials for the machine
+
+### Disabling Authentication
+
+For completely isolated environments (containers, VMs with no network), auth can be disabled:
+
+```env
+MCP_SERVER_AUTH_DISABLED=true
+```
+
+**Warning:** This allows anyone who can reach the port to query/modify your database. Only use when the environment itself provides isolation.
+
+---
+
 ## Open Questions
 
 1. **SDK vs custom:** The design proposes a custom JSON-RPC handler to match the existing codebase style. Should we adopt `@modelcontextprotocol/sdk` instead for future-proofing?
@@ -504,4 +606,4 @@ When disabled, no LogBuffer interception is installed and `/mcp` is not register
 
 4. **Log buffer size:** Default 1000 entries. Should this be configurable via env var?
 
-5. **CORS:** The MCP endpoint will need to allow requests from Claude Code's origin (or `localhost`). The existing CORS config whitelists `localhost:5173` and `localhost:3000`. Claude Code likely connects from a different context — may need to add its origin or use a permissive policy for `/mcp` specifically.
+5. ~~**CORS:**~~ **RESOLVED** — CORS is not applicable to native MCP clients (Claude Code, Claude Desktop). They make direct HTTP requests without browser same-origin restrictions. The `/mcp` endpoint has its own isolated middleware stack and does not inherit the REST API's CORS config.
