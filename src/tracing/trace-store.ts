@@ -2,19 +2,18 @@
  * TraceStore - Central service for managing execution traces.
  *
  * Handles the lifecycle of traces, spans, LLM calls, and tool calls.
- * Persists data to AlaSQL tables following the existing DB pattern.
+ * Persists data to the shared better-sqlite3 database.
  * Provides query methods for the API layer.
  */
 
 import { v4 as uuid } from 'uuid';
-import alasql from 'alasql';
+import { getDb } from '../db/index.js';
 import type {
   TraceRecord,
   TraceSpan,
   LlmCallRecord,
   ToolCallRecord,
   LlmWorkload,
-  TraceContext,
   TraceQueryOptions,
   LlmCallQueryOptions,
   ToolCallQueryOptions,
@@ -43,103 +42,119 @@ export class TraceStore {
   }
 
   /**
-   * Initialize AlaSQL tables for tracing data.
+   * Initialize SQLite tables for tracing data.
    * Called during app startup after DB init.
    */
   init(): void {
     if (this.initialized) return;
 
-    alasql(`
+    const db = getDb();
+
+    db.rawRun(`
       CREATE TABLE IF NOT EXISTS traces (
-        id STRING,
-        conversationId STRING,
-        turnId STRING,
-        triggerType STRING,
-        triggerContent STRING,
-        startedAt STRING,
-        completedAt STRING,
-        durationMs INT,
-        llmCallCount INT,
-        toolCallCount INT,
-        agentCount INT,
-        totalInputTokens INT,
-        totalOutputTokens INT,
-        status STRING
+        id TEXT PRIMARY KEY,
+        conversationId TEXT,
+        turnId TEXT,
+        triggerType TEXT NOT NULL,
+        triggerContent TEXT,
+        startedAt TEXT NOT NULL,
+        completedAt TEXT,
+        durationMs INTEGER,
+        llmCallCount INTEGER NOT NULL DEFAULT 0,
+        toolCallCount INTEGER NOT NULL DEFAULT 0,
+        agentCount INTEGER NOT NULL DEFAULT 0,
+        totalInputTokens INTEGER NOT NULL DEFAULT 0,
+        totalOutputTokens INTEGER NOT NULL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'running'
       )
     `);
 
-    alasql(`
+    db.rawRun(`
       CREATE TABLE IF NOT EXISTS trace_spans (
-        id STRING,
-        traceId STRING,
-        parentSpanId STRING,
-        agentId STRING,
-        agentName STRING,
-        agentEmoji STRING,
-        agentType STRING,
-        agentRole STRING,
-        mission STRING,
-        startedAt STRING,
-        completedAt STRING,
-        durationMs INT,
-        llmCallCount INT,
-        toolCallCount INT,
-        status STRING,
-        error STRING
+        id TEXT PRIMARY KEY,
+        traceId TEXT NOT NULL,
+        parentSpanId TEXT,
+        agentId TEXT NOT NULL,
+        agentName TEXT NOT NULL,
+        agentEmoji TEXT,
+        agentType TEXT,
+        agentRole TEXT,
+        mission TEXT,
+        startedAt TEXT NOT NULL,
+        completedAt TEXT,
+        durationMs INTEGER,
+        llmCallCount INTEGER NOT NULL DEFAULT 0,
+        toolCallCount INTEGER NOT NULL DEFAULT 0,
+        status TEXT NOT NULL DEFAULT 'running',
+        error TEXT
       )
     `);
 
-    alasql(`
+    db.rawRun(`
       CREATE TABLE IF NOT EXISTS llm_calls (
-        id STRING,
-        traceId STRING,
-        spanId STRING,
-        workload STRING,
-        provider STRING,
-        model STRING,
-        messagesJson STRING,
-        systemPrompt STRING,
-        toolsJson STRING,
-        toolChoice STRING,
-        maxTokens INT,
-        temperature FLOAT,
-        reasoningEffort STRING,
-        responseContent STRING,
-        responseToolUseJson STRING,
-        stopReason STRING,
-        inputTokens INT,
-        outputTokens INT,
-        streamChunksJson STRING,
-        startedAt STRING,
-        completedAt STRING,
-        durationMs INT,
-        callerAgentId STRING,
-        callerAgentName STRING,
-        callerPurpose STRING,
-        conversationId STRING,
-        status STRING,
-        error STRING
+        id TEXT PRIMARY KEY,
+        traceId TEXT,
+        spanId TEXT,
+        workload TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        model TEXT NOT NULL,
+        messagesJson TEXT,
+        systemPrompt TEXT,
+        toolsJson TEXT,
+        toolChoice TEXT,
+        maxTokens INTEGER,
+        temperature REAL,
+        reasoningEffort TEXT,
+        responseContent TEXT,
+        responseToolUseJson TEXT,
+        stopReason TEXT,
+        inputTokens INTEGER,
+        outputTokens INTEGER,
+        streamChunksJson TEXT,
+        startedAt TEXT NOT NULL,
+        completedAt TEXT,
+        durationMs INTEGER,
+        callerAgentId TEXT,
+        callerAgentName TEXT,
+        callerPurpose TEXT,
+        conversationId TEXT,
+        status TEXT NOT NULL DEFAULT 'pending',
+        error TEXT
       )
     `);
 
-    alasql(`
+    db.rawRun(`
       CREATE TABLE IF NOT EXISTS tool_calls (
-        id STRING,
-        traceId STRING,
-        spanId STRING,
-        llmCallId STRING,
-        toolName STRING,
-        source STRING,
-        parametersJson STRING,
-        resultJson STRING,
-        success INT,
-        error STRING,
-        startedAt STRING,
-        completedAt STRING,
-        durationMs INT,
-        callerAgentId STRING,
-        callerAgentName STRING
+        id TEXT PRIMARY KEY,
+        traceId TEXT,
+        spanId TEXT,
+        llmCallId TEXT,
+        toolName TEXT NOT NULL,
+        source TEXT NOT NULL,
+        parametersJson TEXT,
+        resultJson TEXT,
+        success INTEGER,
+        error TEXT,
+        startedAt TEXT NOT NULL,
+        completedAt TEXT,
+        durationMs INTEGER,
+        callerAgentId TEXT,
+        callerAgentName TEXT
       )
+    `);
+
+    // Indexes for frequent query patterns
+    db.rawRun(`
+      CREATE INDEX IF NOT EXISTS idx_traces_started ON traces(startedAt DESC);
+      CREATE INDEX IF NOT EXISTS idx_traces_status ON traces(status);
+      CREATE INDEX IF NOT EXISTS idx_traces_conversation ON traces(conversationId);
+      CREATE INDEX IF NOT EXISTS idx_trace_spans_trace ON trace_spans(traceId);
+      CREATE INDEX IF NOT EXISTS idx_llm_calls_trace ON llm_calls(traceId);
+      CREATE INDEX IF NOT EXISTS idx_llm_calls_span ON llm_calls(spanId);
+      CREATE INDEX IF NOT EXISTS idx_llm_calls_started ON llm_calls(startedAt DESC);
+      CREATE INDEX IF NOT EXISTS idx_llm_calls_workload ON llm_calls(workload);
+      CREATE INDEX IF NOT EXISTS idx_tool_calls_trace ON tool_calls(traceId);
+      CREATE INDEX IF NOT EXISTS idx_tool_calls_span ON tool_calls(spanId);
     `);
 
     this.initialized = true;
@@ -166,32 +181,20 @@ export class TraceStore {
     const id = uuid();
     const now = new Date().toISOString();
 
-    const record: TraceRecord = {
-      id,
-      conversationId: opts.conversationId || null,
-      turnId: opts.turnId || null,
-      triggerType: opts.triggerType,
-      triggerContent: opts.triggerContent?.substring(0, 200) || null,
-      startedAt: now,
-      completedAt: null,
-      durationMs: null,
-      llmCallCount: 0,
-      toolCallCount: 0,
-      agentCount: 0,
-      totalInputTokens: 0,
-      totalOutputTokens: 0,
-      status: 'running',
-    };
-
-    alasql('INSERT INTO traces VALUES ?', [record]);
+    const db = getDb();
+    db.rawRun(
+      `INSERT INTO traces (id, conversationId, turnId, triggerType, triggerContent, startedAt, completedAt, durationMs, llmCallCount, toolCallCount, agentCount, totalInputTokens, totalOutputTokens, status)
+       VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, 0, 0, 0, 0, 0, 'running')`,
+      [id, opts.conversationId || null, opts.turnId || null, opts.triggerType, opts.triggerContent?.substring(0, 200) || null, now]
+    );
 
     // Broadcast
     this.broadcast({
       type: 'log_trace_start',
       traceId: id,
       triggerType: opts.triggerType,
-      triggerContent: record.triggerContent,
-      conversationId: record.conversationId,
+      triggerContent: opts.triggerContent?.substring(0, 200) || null,
+      conversationId: opts.conversationId || null,
       timestamp: now,
     });
 
@@ -205,7 +208,8 @@ export class TraceStore {
     const now = new Date().toISOString();
     const durationMs = new Date(now).getTime() - new Date(trace.startedAt).getTime();
 
-    alasql(
+    const db = getDb();
+    db.rawRun(
       'UPDATE traces SET completedAt = ?, durationMs = ?, status = ? WHERE id = ?',
       [now, durationMs, status, traceId]
     );
@@ -245,29 +249,15 @@ export class TraceStore {
     const id = uuid();
     const now = new Date().toISOString();
 
-    const span: TraceSpan = {
-      id,
-      traceId: opts.traceId,
-      parentSpanId: opts.parentSpanId || null,
-      agentId: opts.agentId,
-      agentName: opts.agentName,
-      agentEmoji: opts.agentEmoji,
-      agentType: opts.agentType,
-      agentRole: opts.agentRole,
-      mission: opts.mission || null,
-      startedAt: now,
-      completedAt: null,
-      durationMs: null,
-      llmCallCount: 0,
-      toolCallCount: 0,
-      status: 'running',
-      error: null,
-    };
-
-    alasql('INSERT INTO trace_spans VALUES ?', [span]);
+    const db = getDb();
+    db.rawRun(
+      `INSERT INTO trace_spans (id, traceId, parentSpanId, agentId, agentName, agentEmoji, agentType, agentRole, mission, startedAt, completedAt, durationMs, llmCallCount, toolCallCount, status, error)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, 0, 0, 'running', NULL)`,
+      [id, opts.traceId, opts.parentSpanId || null, opts.agentId, opts.agentName, opts.agentEmoji, opts.agentType, opts.agentRole, opts.mission || null, now]
+    );
 
     // Increment trace agent count
-    alasql('UPDATE traces SET agentCount = agentCount + 1 WHERE id = ?', [opts.traceId]);
+    db.rawRun('UPDATE traces SET agentCount = agentCount + 1 WHERE id = ?', [opts.traceId]);
 
     // Broadcast
     this.broadcast({
@@ -291,7 +281,8 @@ export class TraceStore {
     const now = new Date().toISOString();
     const durationMs = new Date(now).getTime() - new Date(span.startedAt).getTime();
 
-    alasql(
+    const db = getDb();
+    db.rawRun(
       'UPDATE trace_spans SET completedAt = ?, durationMs = ?, status = ?, error = ? WHERE id = ?',
       [now, durationMs, status, error || null, spanId]
     );
@@ -364,45 +355,38 @@ export class TraceStore {
       }
     }
 
-    const record: LlmCallRecord = {
-      id: opts.id,
-      traceId: opts.traceId || null,
-      spanId: opts.spanId || null,
-      workload: opts.workload,
-      provider: opts.provider,
-      model: opts.model,
-      messagesJson,
-      systemPrompt,
-      toolsJson,
-      toolChoice: opts.toolChoice || null,
-      maxTokens: opts.maxTokens || null,
-      temperature: opts.temperature ?? null,
-      reasoningEffort: opts.reasoningEffort || null,
-      responseContent: null,
-      responseToolUseJson: null,
-      stopReason: null,
-      inputTokens: null,
-      outputTokens: null,
-      streamChunksJson: null,
-      startedAt: now,
-      completedAt: null,
-      durationMs: null,
-      callerAgentId: opts.callerAgentId || null,
-      callerAgentName: opts.callerAgentName || null,
-      callerPurpose: opts.callerPurpose || null,
-      conversationId: opts.conversationId || null,
-      status: 'pending',
-      error: null,
-    };
-
-    alasql('INSERT INTO llm_calls VALUES ?', [record]);
+    const db = getDb();
+    db.rawRun(
+      `INSERT INTO llm_calls (id, traceId, spanId, workload, provider, model, messagesJson, systemPrompt, toolsJson, toolChoice, maxTokens, temperature, reasoningEffort, responseContent, responseToolUseJson, stopReason, inputTokens, outputTokens, streamChunksJson, startedAt, completedAt, durationMs, callerAgentId, callerAgentName, callerPurpose, conversationId, status, error)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, NULL, NULL, NULL, ?, NULL, NULL, ?, ?, ?, ?, 'pending', NULL)`,
+      [
+        opts.id,
+        opts.traceId || null,
+        opts.spanId || null,
+        opts.workload,
+        opts.provider,
+        opts.model,
+        messagesJson,
+        systemPrompt,
+        toolsJson,
+        opts.toolChoice || null,
+        opts.maxTokens || null,
+        opts.temperature ?? null,
+        opts.reasoningEffort || null,
+        now,
+        opts.callerAgentId || null,
+        opts.callerAgentName || null,
+        opts.callerPurpose || null,
+        opts.conversationId || null,
+      ]
+    );
 
     // Increment counters on trace and span
     if (opts.traceId) {
-      alasql('UPDATE traces SET llmCallCount = llmCallCount + 1 WHERE id = ?', [opts.traceId]);
+      db.rawRun('UPDATE traces SET llmCallCount = llmCallCount + 1 WHERE id = ?', [opts.traceId]);
     }
     if (opts.spanId) {
-      alasql('UPDATE trace_spans SET llmCallCount = llmCallCount + 1 WHERE id = ?', [opts.spanId]);
+      db.rawRun('UPDATE trace_spans SET llmCallCount = llmCallCount + 1 WHERE id = ?', [opts.spanId]);
     }
 
     this.broadcast({
@@ -445,7 +429,8 @@ export class TraceStore {
       } catch { /* ignore */ }
     }
 
-    alasql(
+    const db = getDb();
+    db.rawRun(
       `UPDATE llm_calls SET
         responseContent = ?,
         responseToolUseJson = ?,
@@ -473,7 +458,7 @@ export class TraceStore {
 
     // Update trace token totals
     if (call.traceId) {
-      alasql(
+      db.rawRun(
         'UPDATE traces SET totalInputTokens = totalInputTokens + ?, totalOutputTokens = totalOutputTokens + ? WHERE id = ?',
         [result.inputTokens || 0, result.outputTokens || 0, call.traceId]
       );
@@ -501,7 +486,8 @@ export class TraceStore {
     const durationMs = new Date(now).getTime() - new Date(call.startedAt).getTime();
     const errorStr = error instanceof Error ? error.message : String(error);
 
-    alasql(
+    const db = getDb();
+    db.rawRun(
       'UPDATE llm_calls SET completedAt = ?, durationMs = ?, status = ?, error = ? WHERE id = ?',
       [now, durationMs, 'error', errorStr, callId]
     );
@@ -545,32 +531,30 @@ export class TraceStore {
       } catch { /* ignore */ }
     }
 
-    const record: ToolCallRecord = {
-      id: opts.id,
-      traceId: opts.traceId || null,
-      spanId: opts.spanId || null,
-      llmCallId: opts.llmCallId || null,
-      toolName: opts.toolName,
-      source: opts.source,
-      parametersJson,
-      resultJson: null,
-      success: null,
-      error: null,
-      startedAt: now,
-      completedAt: null,
-      durationMs: null,
-      callerAgentId: opts.callerAgentId || null,
-      callerAgentName: opts.callerAgentName || null,
-    };
-
-    alasql('INSERT INTO tool_calls VALUES ?', [record]);
+    const db = getDb();
+    db.rawRun(
+      `INSERT INTO tool_calls (id, traceId, spanId, llmCallId, toolName, source, parametersJson, resultJson, success, error, startedAt, completedAt, durationMs, callerAgentId, callerAgentName)
+       VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, NULL, NULL, ?, ?)`,
+      [
+        opts.id,
+        opts.traceId || null,
+        opts.spanId || null,
+        opts.llmCallId || null,
+        opts.toolName,
+        opts.source,
+        parametersJson,
+        now,
+        opts.callerAgentId || null,
+        opts.callerAgentName || null,
+      ]
+    );
 
     // Increment counters
     if (opts.traceId) {
-      alasql('UPDATE traces SET toolCallCount = toolCallCount + 1 WHERE id = ?', [opts.traceId]);
+      db.rawRun('UPDATE traces SET toolCallCount = toolCallCount + 1 WHERE id = ?', [opts.traceId]);
     }
     if (opts.spanId) {
-      alasql('UPDATE trace_spans SET toolCallCount = toolCallCount + 1 WHERE id = ?', [opts.spanId]);
+      db.rawRun('UPDATE trace_spans SET toolCallCount = toolCallCount + 1 WHERE id = ?', [opts.spanId]);
     }
   }
 
@@ -593,7 +577,8 @@ export class TraceStore {
       }
     }
 
-    alasql(
+    const db = getDb();
+    db.rawRun(
       'UPDATE tool_calls SET resultJson = ?, success = ?, error = ?, completedAt = ?, durationMs = ? WHERE id = ?',
       [resultJson, success ? 1 : 0, error || null, now, durationMs, callId]
     );
@@ -604,7 +589,8 @@ export class TraceStore {
   // ============================================================
 
   getTraceById(traceId: string): TraceRecord | undefined {
-    const rows = alasql('SELECT * FROM traces WHERE id = ?', [traceId]) as TraceRecord[];
+    const db = getDb();
+    const rows = db.rawQuery('SELECT * FROM traces WHERE id = ?', [traceId]) as TraceRecord[];
     return rows[0];
   }
 
@@ -627,8 +613,10 @@ export class TraceStore {
     }
 
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-    return alasql(
-      `SELECT * FROM traces ${where} ORDER BY startedAt DESC LIMIT ${limit}`,
+    const db = getDb();
+    params.push(limit);
+    return db.rawQuery(
+      `SELECT * FROM traces ${where} ORDER BY startedAt DESC LIMIT ?`,
       params
     ) as TraceRecord[];
   }
@@ -642,17 +630,18 @@ export class TraceStore {
     const trace = this.getTraceById(traceId);
     if (!trace) return undefined;
 
-    const spans = alasql(
+    const db = getDb();
+    const spans = db.rawQuery(
       'SELECT * FROM trace_spans WHERE traceId = ? ORDER BY startedAt ASC',
       [traceId]
     ) as TraceSpan[];
 
-    const llmCalls = alasql(
+    const llmCalls = db.rawQuery(
       'SELECT * FROM llm_calls WHERE traceId = ? ORDER BY startedAt ASC',
       [traceId]
     ) as LlmCallRecord[];
 
-    const toolCalls = alasql(
+    const toolCalls = db.rawQuery(
       'SELECT * FROM tool_calls WHERE traceId = ? ORDER BY startedAt ASC',
       [traceId]
     ) as ToolCallRecord[];
@@ -661,19 +650,22 @@ export class TraceStore {
   }
 
   getSpanById(spanId: string): TraceSpan | undefined {
-    const rows = alasql('SELECT * FROM trace_spans WHERE id = ?', [spanId]) as TraceSpan[];
+    const db = getDb();
+    const rows = db.rawQuery('SELECT * FROM trace_spans WHERE id = ?', [spanId]) as TraceSpan[];
     return rows[0];
   }
 
   getSpansByTraceId(traceId: string): TraceSpan[] {
-    return alasql(
+    const db = getDb();
+    return db.rawQuery(
       'SELECT * FROM trace_spans WHERE traceId = ? ORDER BY startedAt ASC',
       [traceId]
     ) as TraceSpan[];
   }
 
   getLlmCallById(callId: string): LlmCallRecord | undefined {
-    const rows = alasql('SELECT * FROM llm_calls WHERE id = ?', [callId]) as LlmCallRecord[];
+    const db = getDb();
+    const rows = db.rawQuery('SELECT * FROM llm_calls WHERE id = ?', [callId]) as LlmCallRecord[];
     return rows[0];
   }
 
@@ -708,14 +700,17 @@ export class TraceStore {
     }
 
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-    return alasql(
-      `SELECT * FROM llm_calls ${where} ORDER BY startedAt DESC LIMIT ${limit}`,
+    const db = getDb();
+    params.push(limit);
+    return db.rawQuery(
+      `SELECT * FROM llm_calls ${where} ORDER BY startedAt DESC LIMIT ?`,
       params
     ) as LlmCallRecord[];
   }
 
   getToolCallById(callId: string): ToolCallRecord | undefined {
-    const rows = alasql('SELECT * FROM tool_calls WHERE id = ?', [callId]) as ToolCallRecord[];
+    const db = getDb();
+    const rows = db.rawQuery('SELECT * FROM tool_calls WHERE id = ?', [callId]) as ToolCallRecord[];
     return rows[0];
   }
 
@@ -738,8 +733,10 @@ export class TraceStore {
     }
 
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
-    return alasql(
-      `SELECT * FROM tool_calls ${where} ORDER BY startedAt DESC LIMIT ${limit}`,
+    const db = getDb();
+    params.push(limit);
+    return db.rawQuery(
+      `SELECT * FROM tool_calls ${where} ORDER BY startedAt DESC LIMIT ?`,
       params
     ) as ToolCallRecord[];
   }
@@ -749,6 +746,7 @@ export class TraceStore {
   // ============================================================
 
   getStats(since?: string): TraceStats {
+    const db = getDb();
     const conditions: string[] = [];
     const params: unknown[] = [];
 
@@ -759,11 +757,11 @@ export class TraceStore {
 
     const where = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
-    const traceRows = alasql(`SELECT COUNT(*) as cnt FROM traces ${where}`, params) as Array<{ cnt: number }>;
-    const llmRows = alasql(`SELECT COUNT(*) as cnt FROM llm_calls ${where}`, params) as Array<{ cnt: number }>;
-    const toolRows = alasql(`SELECT COUNT(*) as cnt FROM tool_calls ${where}`, params) as Array<{ cnt: number }>;
+    const traceRows = db.rawQuery(`SELECT COUNT(*) as cnt FROM traces ${where}`, params) as Array<{ cnt: number }>;
+    const llmRows = db.rawQuery(`SELECT COUNT(*) as cnt FROM llm_calls ${where}`, params) as Array<{ cnt: number }>;
+    const toolRows = db.rawQuery(`SELECT COUNT(*) as cnt FROM tool_calls ${where}`, params) as Array<{ cnt: number }>;
 
-    const tokenRows = alasql(
+    const tokenRows = db.rawQuery(
       `SELECT COALESCE(SUM(totalInputTokens), 0) as inputTok, COALESCE(SUM(totalOutputTokens), 0) as outputTok, AVG(durationMs) as avgDur FROM traces ${where}`,
       params
     ) as Array<{ inputTok: number; outputTok: number; avgDur: number }>;
@@ -786,19 +784,14 @@ export class TraceStore {
     const days = retentionDays ?? DEFAULT_RETENTION_DAYS;
     const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
 
+    const db = getDb();
     // Delete in order: tool_calls, llm_calls, trace_spans, traces
-    const toolCount = alasql('SELECT COUNT(*) as cnt FROM tool_calls WHERE startedAt < ?', [cutoff]) as Array<{ cnt: number }>;
-    alasql('DELETE FROM tool_calls WHERE startedAt < ?', [cutoff]);
+    const toolCount = db.rawRun('DELETE FROM tool_calls WHERE startedAt < ?', [cutoff]);
+    const llmCount = db.rawRun('DELETE FROM llm_calls WHERE startedAt < ?', [cutoff]);
+    db.rawRun('DELETE FROM trace_spans WHERE startedAt < ?', [cutoff]);
+    const traceCount = db.rawRun('DELETE FROM traces WHERE startedAt < ?', [cutoff]);
 
-    const llmCount = alasql('SELECT COUNT(*) as cnt FROM llm_calls WHERE startedAt < ?', [cutoff]) as Array<{ cnt: number }>;
-    alasql('DELETE FROM llm_calls WHERE startedAt < ?', [cutoff]);
-
-    alasql('DELETE FROM trace_spans WHERE startedAt < ?', [cutoff]);
-
-    const traceCount = alasql('SELECT COUNT(*) as cnt FROM traces WHERE startedAt < ?', [cutoff]) as Array<{ cnt: number }>;
-    alasql('DELETE FROM traces WHERE startedAt < ?', [cutoff]);
-
-    const total = (traceCount[0]?.cnt || 0) + (llmCount[0]?.cnt || 0) + (toolCount[0]?.cnt || 0);
+    const total = traceCount + llmCount + toolCount;
     if (total > 0) {
       console.log(`[TraceStore] Cleaned up ${total} trace records older than ${days} days`);
     }
