@@ -1289,6 +1289,24 @@ html, body {
   border-color: var(--border-color);
 }
 
+.html-preview-tab.html-preview-tab-execute {
+  background: #dc3545;
+  color: #fff;
+  border-color: #dc3545;
+}
+
+.html-preview-tab.html-preview-tab-execute:hover {
+  background: #c82333;
+  color: #fff;
+  border-color: #c82333;
+}
+
+.html-preview-tab.html-preview-tab-execute.active {
+  background: #bd2130;
+  color: #fff;
+  border-color: #bd2130;
+}
+
 .html-preview-controls {
   display: flex;
   gap: 0.25rem;
