@@ -27,7 +27,7 @@ import { createMessageHandler } from './App.websocket';
 const MODES = {
   CHAT: 'chat',
   EVAL: 'eval',
-  LOGS: 'logs',
+  TRACES: 'traces',
 };
 
 // Branding constants
@@ -57,7 +57,7 @@ function App() {
 
   // Derive mode from URL path
   const mode = location.pathname.startsWith('/eval') ? MODES.EVAL
-    : location.pathname.startsWith('/logs') ? MODES.LOGS
+    : location.pathname.startsWith('/traces') ? MODES.TRACES
     : MODES.CHAT;
 
   const [messages, setMessages] = useState([]);
@@ -1750,7 +1750,7 @@ function App() {
           <EvalSidebarContent evalMode={evalMode} />
         )}
 
-        {sidebarOpen && mode === MODES.LOGS && (
+        {sidebarOpen && mode === MODES.TRACES && (
           <LogsSidebarContent logsMode={logsMode} />
         )}
 
@@ -2159,11 +2159,11 @@ function App() {
                 Eval
               </button>
               <button
-                className={`mode-btn ${mode === MODES.LOGS ? 'active' : ''}`}
-                onClick={() => navigate('/logs')}
+                className={`mode-btn ${mode === MODES.TRACES ? 'active' : ''}`}
+                onClick={() => navigate('/traces')}
               >
                 <span className="mode-icon">📋</span>
-                Logs
+                Traces
               </button>
             </div>
           </div>
@@ -2176,7 +2176,7 @@ function App() {
         {mode === MODES.EVAL && <EvalMainContent evalMode={evalMode} evalState={evalState} />}
 
         {/* Logs Mode Content */}
-        {mode === MODES.LOGS && <LogsMainContent logsMode={logsMode} />}
+        {mode === MODES.TRACES && <LogsMainContent logsMode={logsMode} />}
 
         {/* Chat Mode Content */}
         {mode === MODES.CHAT && (

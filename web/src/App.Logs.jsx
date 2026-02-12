@@ -279,7 +279,7 @@ export const LogsSidebarContent = memo(function LogsSidebarContent({ logsMode })
   return (
     <div className="logs-sidebar">
       <div className="logs-sidebar-header">
-        <h3>Logs</h3>
+        <h3>Traces</h3>
         <button className="logs-refresh-btn" onClick={refresh} title="Refresh">&#x21bb;</button>
       </div>
 
