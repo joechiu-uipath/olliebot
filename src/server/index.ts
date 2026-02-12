@@ -52,6 +52,8 @@ export interface ServerConfig {
   allowedOrigins?: string[];
   // MCP Server (OllieBot as MCP server)
   mcpServerEnabled?: boolean;
+  mcpServerSecret?: string;
+  mcpServerAuthDisabled?: boolean;
   logBuffer?: LogBuffer;
   fastProvider?: string;
   fastModel?: string;
@@ -84,6 +86,8 @@ export class AssistantServer {
   private allowedOrigins: string[];
   private voiceWss: WebSocketServer;
   private mcpServerEnabled: boolean;
+  private mcpServerSecret?: string;
+  private mcpServerAuthDisabled?: boolean;
   private logBuffer?: LogBuffer;
   private fastProvider?: string;
   private fastModel?: string;
@@ -108,6 +112,8 @@ export class AssistantServer {
     this.azureOpenaiApiVersion = config.azureOpenaiApiVersion;
     this.openaiApiKey = config.openaiApiKey;
     this.mcpServerEnabled = config.mcpServerEnabled ?? false;
+    this.mcpServerSecret = config.mcpServerSecret;
+    this.mcpServerAuthDisabled = config.mcpServerAuthDisabled;
     this.logBuffer = config.logBuffer;
     this.fastProvider = config.fastProvider;
     this.fastModel = config.fastModel;
@@ -1156,6 +1162,10 @@ export class AssistantServer {
           fastProvider: this.fastProvider || '',
           fastModel: this.fastModel || '',
           port: this.port,
+        },
+        auth: {
+          secret: this.mcpServerSecret,
+          disabled: this.mcpServerAuthDisabled,
         },
       });
 

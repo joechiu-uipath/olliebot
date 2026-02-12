@@ -18,48 +18,26 @@ function errorResult(message: string): MCPToolCallResult {
 const DEFAULT_DB_QUERY_LIMIT = 100;
 const MAX_DB_QUERY_LIMIT = 1000;
 
-/**
- * Validate that a SQL query is read-only.
- * Throws if the query contains mutation keywords.
- */
-function validateReadOnlyQuery(sql: string): void {
-  const normalized = sql.trim().toUpperCase();
-
-  if (!normalized.startsWith('SELECT')) {
-    throw new Error('Only SELECT queries are allowed.');
-  }
-
-  const blocked = [
-    'DROP', 'DELETE', 'INSERT', 'UPDATE', 'ALTER', 'CREATE', 'TRUNCATE',
-    'EXEC', 'EXECUTE', 'GRANT', 'REVOKE',
-  ];
-  for (const keyword of blocked) {
-    // Match as whole word to avoid false positives in column names
-    const regex = new RegExp(`\\b${keyword}\\b`);
-    if (regex.test(normalized)) {
-      throw new Error(`Query contains blocked keyword: ${keyword}`);
-    }
-  }
-}
-
 export function createDataTools(): RegisteredTool[] {
   return [
     // ── db_query ────────────────────────────────────────────────────────
+    // Full SQL access for debugging — SELECT, INSERT, UPDATE, DELETE allowed.
+    // Security is provided by bearer token authentication, not query restrictions.
     {
       definition: {
         name: 'db_query',
         description:
-          'Execute a read-only SQL query against the OllieBot database (SQLite). Only SELECT statements allowed. Tables: conversations, messages, tasks, embeddings. JSON fields (metadata, jsonConfig) can be queried with json_extract(). Full-text search available via messages_fts table.',
+          'Execute SQL queries against the OllieBot database (SQLite). Full access: SELECT, INSERT, UPDATE, DELETE. Tables: conversations, messages, tasks, embeddings. JSON fields (metadata, jsonConfig) can be queried with json_extract(). Full-text search available via messages_fts table.',
         inputSchema: {
           type: 'object',
           properties: {
             query: {
               type: 'string',
-              description: 'SQL SELECT query to execute.',
+              description: 'SQL query to execute (SELECT, INSERT, UPDATE, DELETE).',
             },
             limit: {
               type: 'number',
-              description: `Max rows to return. Default ${DEFAULT_DB_QUERY_LIMIT}, max ${MAX_DB_QUERY_LIMIT}.`,
+              description: `Max rows to return for SELECT queries. Default ${DEFAULT_DB_QUERY_LIMIT}, max ${MAX_DB_QUERY_LIMIT}.`,
             },
           },
           required: ['query'],
@@ -73,9 +51,15 @@ export function createDataTools(): RegisteredTool[] {
         );
 
         try {
-          validateReadOnlyQuery(sql);
-
           const db = getDb();
+
+          // For non-SELECT queries, use rawRun which returns affected row count
+          if (!sql.trim().toUpperCase().startsWith('SELECT')) {
+            const affected = db.rawRun(sql);
+            return textResult(`Query executed successfully. Affected rows: ${affected}`);
+          }
+
+          // SELECT query — return rows
           const rows = db.rawQuery(sql);
           const truncated = rows.slice(0, limit);
 

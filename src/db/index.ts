@@ -388,11 +388,20 @@ class Database {
   }
 
   /**
-   * Execute a raw read-only SQL query. Used by MCP db_query tool.
+   * Execute a raw SQL SELECT query. Returns rows.
    */
   rawQuery(sql: string, params?: unknown[]): unknown[] {
     const stmt = this.sqlite.prepare(sql);
     return params ? stmt.all(...params) : stmt.all();
+  }
+
+  /**
+   * Execute a raw SQL mutation (INSERT/UPDATE/DELETE). Returns affected row count.
+   */
+  rawRun(sql: string, params?: unknown[]): number {
+    const stmt = this.sqlite.prepare(sql);
+    const result = params ? stmt.run(...params) : stmt.run();
+    return result.changes;
   }
 
   flush(): void {
