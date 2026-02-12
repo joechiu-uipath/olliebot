@@ -4,7 +4,6 @@
  * Tools: db_query, list_conversations, list_messages
  */
 
-import alasql from 'alasql';
 import { getDb } from '../../db/index.js';
 import type { RegisteredTool, MCPToolCallResult } from '../types.js';
 
@@ -50,7 +49,7 @@ export function createDataTools(): RegisteredTool[] {
       definition: {
         name: 'db_query',
         description:
-          'Execute a read-only SQL query against the OllieBot database (AlaSQL). Only SELECT statements allowed. Tables: conversations, messages, tasks, embeddings.',
+          'Execute a read-only SQL query against the OllieBot database (SQLite). Only SELECT statements allowed. Tables: conversations, messages, tasks, embeddings. JSON fields (metadata, jsonConfig) can be queried with json_extract(). Full-text search available via messages_fts table.',
         inputSchema: {
           type: 'object',
           properties: {
@@ -76,10 +75,8 @@ export function createDataTools(): RegisteredTool[] {
         try {
           validateReadOnlyQuery(sql);
 
-          // Ensure DB is initialized
-          getDb();
-
-          const rows = alasql(sql) as unknown[];
+          const db = getDb();
+          const rows = db.rawQuery(sql);
           const truncated = rows.slice(0, limit);
 
           // Deserialize JSON string fields for readability

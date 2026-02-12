@@ -1,12 +1,21 @@
 /**
- * Type-safe Database Layer with AlaSQL + JSON Persistence
+ * Type-safe Database Layer with better-sqlite3
  *
- * Provides SQL query capabilities with human-readable JSON storage.
- * Data is persisted to a JSON file that can be viewed offline.
+ * Provides SQL query capabilities with SQLite file-based persistence.
+ * Data is stored in a SQLite database file that can be inspected with
+ * tools like DB Browser for SQLite, SQLiteStudio, or the sqlite3 CLI.
+ *
+ * Features over the previous AlaSQL implementation:
+ * - File-based storage (not loading entire DB into memory)
+ * - FTS5 full-text search on message content
+ * - Proper indexes for query performance
+ * - WAL mode for concurrent reads
+ * - Immediate persistence (no debounced saves)
+ * - JSON1 extension for native JSON querying
  */
 
-import alasql from 'alasql';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
+import BetterSqlite3 from 'better-sqlite3';
+import { existsSync, mkdirSync, readFileSync } from 'fs';
 import { dirname } from 'path';
 import {
   DEFAULT_CONVERSATIONS_LIMIT,
@@ -89,13 +98,6 @@ export interface MessageQueryOptions {
   includeTotal?: boolean;
 }
 
-interface DatabaseData {
-  conversations: Conversation[];
-  messages: Message[];
-  tasks: Task[];
-  embeddings: Embedding[];
-}
-
 // ============================================================================
 // Repository Interfaces
 // ============================================================================
@@ -133,14 +135,59 @@ export interface EmbeddingRepository {
 }
 
 // ============================================================================
+// Raw row types (as stored in SQLite — JSON fields are TEXT)
+// ============================================================================
+
+interface ConversationRow {
+  id: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+  manuallyNamed: number | null; // SQLite stores booleans as 0/1
+}
+
+interface MessageRow {
+  id: string;
+  conversationId: string;
+  role: string;
+  content: string;
+  metadata: string; // JSON text
+  createdAt: string;
+  turnId: string | null;
+}
+
+interface TaskRow {
+  id: string;
+  name: string;
+  mdFile: string;
+  jsonConfig: string; // JSON text
+  status: string;
+  lastRun: string | null;
+  nextRun: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+interface EmbeddingRow {
+  id: string;
+  source: string;
+  chunkIndex: number;
+  content: string;
+  embedding: string; // JSON text
+  metadata: string;  // JSON text
+  createdAt: string;
+}
+
+// ============================================================================
 // Database Implementation
 // ============================================================================
 
+const SCHEMA_VERSION = 1;
+
 class Database {
+  private sqlite: BetterSqlite3.Database;
   private dbPath: string;
-  private saveTimeout: NodeJS.Timeout | null = null;
-  private isDirty = false;
-  private initialized = false;
 
   conversations: ConversationRepository;
   messages: MessageRepository;
@@ -148,7 +195,17 @@ class Database {
   embeddings: EmbeddingRepository;
 
   constructor(dbPath: string) {
-    this.dbPath = dbPath.endsWith('.json') ? dbPath : dbPath.replace(/\.[^.]+$/, '') + '.json';
+    // Normalize path to .db extension
+    this.dbPath = dbPath.replace(/\.[^.]+$/, '') + '.db';
+
+    // Ensure directory exists
+    const dir = dirname(this.dbPath);
+    if (!existsSync(dir)) {
+      mkdirSync(dir, { recursive: true });
+    }
+
+    // Open SQLite database
+    this.sqlite = new BetterSqlite3(this.dbPath);
 
     // Initialize repositories
     this.conversations = this.createConversationRepository();
@@ -158,172 +215,248 @@ class Database {
   }
 
   async init(): Promise<void> {
-    if (this.initialized) return;
+    // Enable WAL mode for better concurrent read performance
+    this.sqlite.pragma('journal_mode = WAL');
+    // Enable foreign keys
+    this.sqlite.pragma('foreign_keys = ON');
 
-    // Create tables in AlaSQL
-    alasql(`
+    // Create tables
+    this.sqlite.exec(`
       CREATE TABLE IF NOT EXISTS conversations (
-        id STRING PRIMARY KEY,
-        title STRING,
-        channel STRING,
-        createdAt STRING,
-        updatedAt STRING,
-        deletedAt STRING
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        createdAt TEXT NOT NULL,
+        updatedAt TEXT NOT NULL,
+        deletedAt TEXT,
+        manuallyNamed INTEGER
       )
     `);
 
-    alasql(`
+    this.sqlite.exec(`
       CREATE TABLE IF NOT EXISTS messages (
-        id STRING PRIMARY KEY,
-        conversationId STRING,
-        channel STRING,
-        role STRING,
-        content STRING,
-        metadata STRING,
-        createdAt STRING,
-        turnId STRING
+        id TEXT PRIMARY KEY,
+        conversationId TEXT NOT NULL,
+        role TEXT NOT NULL,
+        content TEXT NOT NULL DEFAULT '',
+        metadata TEXT NOT NULL DEFAULT '{}',
+        createdAt TEXT NOT NULL,
+        turnId TEXT
       )
     `);
 
-    alasql(`
+    this.sqlite.exec(`
       CREATE TABLE IF NOT EXISTS tasks (
-        id STRING PRIMARY KEY,
-        name STRING,
-        mdFile STRING,
-        jsonConfig STRING,
-        status STRING,
-        lastRun STRING,
-        nextRun STRING,
-        createdAt STRING,
-        updatedAt STRING
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        mdFile TEXT NOT NULL,
+        jsonConfig TEXT NOT NULL DEFAULT '{}',
+        status TEXT NOT NULL DEFAULT 'active',
+        lastRun TEXT,
+        nextRun TEXT,
+        createdAt TEXT NOT NULL,
+        updatedAt TEXT NOT NULL
       )
     `);
 
-    alasql(`
+    this.sqlite.exec(`
       CREATE TABLE IF NOT EXISTS embeddings (
-        id STRING PRIMARY KEY,
-        source STRING,
-        chunkIndex INT,
-        content STRING,
-        embedding STRING,
-        metadata STRING,
-        createdAt STRING
+        id TEXT PRIMARY KEY,
+        source TEXT NOT NULL,
+        chunkIndex INTEGER NOT NULL,
+        content TEXT NOT NULL DEFAULT '',
+        embedding TEXT NOT NULL DEFAULT '[]',
+        metadata TEXT NOT NULL DEFAULT '{}',
+        createdAt TEXT NOT NULL
       )
     `);
 
-    // Load existing data from JSON file
-    this.loadFromFile();
-    this.initialized = true;
+    // Create indexes for frequent query patterns
+    this.sqlite.exec(`
+      CREATE INDEX IF NOT EXISTS idx_conversations_updatedAt
+        ON conversations(updatedAt DESC);
+      CREATE INDEX IF NOT EXISTS idx_conversations_not_deleted
+        ON conversations(updatedAt DESC) WHERE deletedAt IS NULL;
+
+      CREATE INDEX IF NOT EXISTS idx_messages_conversation
+        ON messages(conversationId, createdAt, id);
+      CREATE INDEX IF NOT EXISTS idx_messages_conversation_desc
+        ON messages(conversationId, createdAt DESC, id DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_tasks_status
+        ON tasks(status, updatedAt DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_embeddings_source
+        ON embeddings(source, chunkIndex);
+    `);
+
+    // FTS5 virtual table for full-text search on message content
+    this.sqlite.exec(`
+      CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
+        content,
+        content=messages,
+        content_rowid=rowid,
+        tokenize='porter unicode61'
+      )
+    `);
+
+    // Triggers to keep FTS index in sync
+    this.sqlite.exec(`
+      CREATE TRIGGER IF NOT EXISTS messages_fts_insert AFTER INSERT ON messages BEGIN
+        INSERT INTO messages_fts(rowid, content) VALUES (new.rowid, new.content);
+      END;
+      CREATE TRIGGER IF NOT EXISTS messages_fts_delete AFTER DELETE ON messages BEGIN
+        INSERT INTO messages_fts(messages_fts, rowid, content) VALUES('delete', old.rowid, old.content);
+      END;
+      CREATE TRIGGER IF NOT EXISTS messages_fts_update AFTER UPDATE OF content ON messages BEGIN
+        INSERT INTO messages_fts(messages_fts, rowid, content) VALUES('delete', old.rowid, old.content);
+        INSERT INTO messages_fts(rowid, content) VALUES (new.rowid, new.content);
+      END;
+    `);
+
+    // Set schema version
+    this.sqlite.pragma(`user_version = ${SCHEMA_VERSION}`);
+
+    // Auto-migrate from old AlaSQL JSON file if it exists and DB is empty
+    this.autoMigrateFromJson();
+
+    console.log(`[Database] Initialized SQLite at ${this.dbPath}`);
   }
 
-  private loadFromFile(): void {
+  /**
+   * If the old AlaSQL JSON file exists alongside the new SQLite DB,
+   * and the SQLite DB has no conversations, auto-import the JSON data.
+   */
+  private autoMigrateFromJson(): void {
+    const jsonPath = this.dbPath.replace(/\.db$/, '.db.json');
+    if (!existsSync(jsonPath)) return;
+
+    // Only migrate if DB is empty
+    const count = (this.sqlite.prepare('SELECT COUNT(*) as cnt FROM conversations').get() as { cnt: number }).cnt;
+    if (count > 0) return;
+
+    console.log(`[Database] Found legacy JSON file at ${jsonPath} — auto-migrating...`);
+
     try {
-      if (existsSync(this.dbPath)) {
-        const content = readFileSync(this.dbPath, 'utf-8');
-        const data: DatabaseData = JSON.parse(content);
-
-        // Clear existing data
-        alasql('DELETE FROM conversations');
-        alasql('DELETE FROM messages');
-        alasql('DELETE FROM tasks');
-        alasql('DELETE FROM embeddings');
-
-        // Insert loaded data (serialize complex fields for AlaSQL storage)
-        if (data.conversations?.length) {
-          alasql('INSERT INTO conversations SELECT * FROM ?', [data.conversations]);
-        }
-        if (data.messages?.length) {
-          const messages = data.messages.map(m => ({
-            ...m,
-            metadata: typeof m.metadata === 'object' ? JSON.stringify(m.metadata) : m.metadata,
-          }));
-          alasql('INSERT INTO messages SELECT * FROM ?', [messages]);
-        }
-        if (data.tasks?.length) {
-          const tasks = data.tasks.map(t => ({
-            ...t,
-            jsonConfig: typeof t.jsonConfig === 'object' ? JSON.stringify(t.jsonConfig) : t.jsonConfig,
-          }));
-          alasql('INSERT INTO tasks SELECT * FROM ?', [tasks]);
-        }
-        if (data.embeddings?.length) {
-          const embeddings = data.embeddings.map(e => ({
-            ...e,
-            embedding: typeof e.embedding === 'object' ? JSON.stringify(e.embedding) : e.embedding,
-            metadata: typeof e.metadata === 'object' ? JSON.stringify(e.metadata) : e.metadata,
-          }));
-          alasql('INSERT INTO embeddings SELECT * FROM ?', [embeddings]);
-        }
-
-        console.log(`[Database] Loaded from ${this.dbPath}`);
-      }
-    } catch (error) {
-      console.error('[Database] Failed to load from file:', error);
-    }
-  }
-
-  private saveToFile(): void {
-    try {
-      const dir = dirname(this.dbPath);
-      if (!existsSync(dir)) {
-        mkdirSync(dir, { recursive: true });
-      }
-
-      // Get raw data from AlaSQL
-      const rawConversations = alasql('SELECT * FROM conversations ORDER BY updatedAt DESC') as Conversation[];
-      const rawMessages = alasql('SELECT * FROM messages ORDER BY createdAt ASC') as Array<Record<string, unknown>>;
-      const rawTasks = alasql('SELECT * FROM tasks ORDER BY updatedAt DESC') as Array<Record<string, unknown>>;
-      const rawEmbeddings = alasql('SELECT * FROM embeddings ORDER BY source, chunkIndex') as Array<Record<string, unknown>>;
-
-      // Deserialize JSON strings for human-readable output
-      const data: DatabaseData = {
-        conversations: rawConversations,
-        messages: rawMessages.map(m => ({
-          ...m,
-          metadata: typeof m.metadata === 'string' ? JSON.parse(m.metadata as string) : m.metadata,
-        })) as Message[],
-        tasks: rawTasks.map(t => ({
-          ...t,
-          jsonConfig: typeof t.jsonConfig === 'string' ? JSON.parse(t.jsonConfig as string) : t.jsonConfig,
-        })) as Task[],
-        embeddings: rawEmbeddings.map(e => ({
-          ...e,
-          embedding: typeof e.embedding === 'string' ? JSON.parse(e.embedding as string) : e.embedding,
-          metadata: typeof e.metadata === 'string' ? JSON.parse(e.metadata as string) : e.metadata,
-        })) as Embedding[],
+      const content = readFileSync(jsonPath, 'utf-8');
+      const data = JSON.parse(content) as {
+        conversations?: Array<Record<string, unknown>>;
+        messages?: Array<Record<string, unknown>>;
+        tasks?: Array<Record<string, unknown>>;
+        embeddings?: Array<Record<string, unknown>>;
       };
 
-      writeFileSync(this.dbPath, JSON.stringify(data, null, 2), 'utf-8');
-      this.isDirty = false;
+      const insertConv = this.sqlite.prepare(
+        'INSERT OR IGNORE INTO conversations (id, title, createdAt, updatedAt, deletedAt, manuallyNamed) VALUES (?, ?, ?, ?, ?, ?)'
+      );
+      const insertMsg = this.sqlite.prepare(
+        'INSERT OR IGNORE INTO messages (id, conversationId, role, content, metadata, createdAt, turnId) VALUES (?, ?, ?, ?, ?, ?, ?)'
+      );
+      const insertTask = this.sqlite.prepare(
+        'INSERT OR IGNORE INTO tasks (id, name, mdFile, jsonConfig, status, lastRun, nextRun, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      );
+      const insertEmb = this.sqlite.prepare(
+        'INSERT OR IGNORE INTO embeddings (id, source, chunkIndex, content, embedding, metadata, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)'
+      );
+
+      const migrateAll = this.sqlite.transaction(() => {
+        for (const c of data.conversations ?? []) {
+          insertConv.run(c.id, c.title, c.createdAt, c.updatedAt, c.deletedAt ?? null, c.manuallyNamed ? 1 : null);
+        }
+        for (const m of data.messages ?? []) {
+          const metadata = typeof m.metadata === 'object' ? JSON.stringify(m.metadata) : (m.metadata ?? '{}');
+          insertMsg.run(m.id, m.conversationId, m.role, m.content ?? '', metadata, m.createdAt, m.turnId ?? null);
+        }
+        for (const t of data.tasks ?? []) {
+          const jsonConfig = typeof t.jsonConfig === 'object' ? JSON.stringify(t.jsonConfig) : (t.jsonConfig ?? '{}');
+          insertTask.run(t.id, t.name, t.mdFile, jsonConfig, t.status, t.lastRun ?? null, t.nextRun ?? null, t.createdAt, t.updatedAt);
+        }
+        for (const e of data.embeddings ?? []) {
+          const embedding = typeof e.embedding === 'object' ? JSON.stringify(e.embedding) : (e.embedding ?? '[]');
+          const metadata = typeof e.metadata === 'object' ? JSON.stringify(e.metadata) : (e.metadata ?? '{}');
+          insertEmb.run(e.id, e.source, e.chunkIndex, e.content ?? '', embedding, metadata, e.createdAt);
+        }
+      });
+
+      migrateAll();
+
+      const convCount = (this.sqlite.prepare('SELECT COUNT(*) as cnt FROM conversations').get() as { cnt: number }).cnt;
+      const msgCount = (this.sqlite.prepare('SELECT COUNT(*) as cnt FROM messages').get() as { cnt: number }).cnt;
+      console.log(`[Database] Auto-migration complete: ${convCount} conversations, ${msgCount} messages imported.`);
     } catch (error) {
-      console.error('[Database] Failed to save to file:', error);
+      console.error('[Database] Auto-migration failed (non-fatal):', error);
     }
   }
 
-  private scheduleSave(): void {
-    this.isDirty = true;
-    if (this.saveTimeout) {
-      clearTimeout(this.saveTimeout);
-    }
-    // Debounce saves for performance
-    this.saveTimeout = setTimeout(() => {
-      this.saveToFile();
-      this.saveTimeout = null;
-    }, 100);
+  /**
+   * Execute a raw read-only SQL query. Used by MCP db_query tool.
+   */
+  rawQuery(sql: string, params?: unknown[]): unknown[] {
+    const stmt = this.sqlite.prepare(sql);
+    return params ? stmt.all(...params) : stmt.all();
   }
 
   flush(): void {
-    if (this.saveTimeout) {
-      clearTimeout(this.saveTimeout);
-      this.saveTimeout = null;
-    }
-    if (this.isDirty) {
-      this.saveToFile();
-    }
+    // SQLite persists immediately via WAL — nothing to flush.
+    // Checkpoint WAL to main database file for clean state.
+    this.sqlite.pragma('wal_checkpoint(TRUNCATE)');
   }
 
   close(): void {
     this.flush();
+    this.sqlite.close();
+  }
+
+  // ============================================================================
+  // Row deserialization helpers
+  // ============================================================================
+
+  private deserializeConversation(row: ConversationRow): Conversation {
+    return {
+      id: row.id,
+      title: row.title,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+      deletedAt: row.deletedAt,
+      ...(row.manuallyNamed ? { manuallyNamed: true } : {}),
+    };
+  }
+
+  private deserializeMessage(row: MessageRow): Message {
+    return {
+      id: row.id,
+      conversationId: row.conversationId,
+      role: row.role as Message['role'],
+      content: row.content,
+      metadata: JSON.parse(row.metadata),
+      createdAt: row.createdAt,
+      ...(row.turnId ? { turnId: row.turnId } : {}),
+    };
+  }
+
+  private deserializeTask(row: TaskRow): Task {
+    return {
+      id: row.id,
+      name: row.name,
+      mdFile: row.mdFile,
+      jsonConfig: JSON.parse(row.jsonConfig),
+      status: row.status as Task['status'],
+      lastRun: row.lastRun,
+      nextRun: row.nextRun,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt,
+    };
+  }
+
+  private deserializeEmbedding(row: EmbeddingRow): Embedding {
+    return {
+      id: row.id,
+      source: row.source,
+      chunkIndex: row.chunkIndex,
+      content: row.content,
+      embedding: JSON.parse(row.embedding),
+      metadata: JSON.parse(row.metadata),
+      createdAt: row.createdAt,
+    };
   }
 
   // ============================================================================
@@ -333,31 +466,41 @@ class Database {
   private createConversationRepository(): ConversationRepository {
     return {
       findById: (id: string): Conversation | undefined => {
-        const results = alasql('SELECT * FROM conversations WHERE id = ?', [id]) as Conversation[];
-        return results[0];
+        const row = this.sqlite.prepare('SELECT * FROM conversations WHERE id = ?').get(id) as ConversationRow | undefined;
+        return row ? this.deserializeConversation(row) : undefined;
       },
 
       findAll: (options?: { limit?: number; includeDeleted?: boolean }): Conversation[] => {
         const limit = options?.limit ?? DEFAULT_CONVERSATIONS_LIMIT;
         const includeDeleted = options?.includeDeleted ?? false;
+        let rows: ConversationRow[];
         if (includeDeleted) {
-          return alasql(`SELECT * FROM conversations ORDER BY updatedAt DESC LIMIT ${limit}`) as Conversation[];
+          rows = this.sqlite.prepare('SELECT * FROM conversations ORDER BY updatedAt DESC LIMIT ?').all(limit) as ConversationRow[];
+        } else {
+          rows = this.sqlite.prepare('SELECT * FROM conversations WHERE deletedAt IS NULL ORDER BY updatedAt DESC LIMIT ?').all(limit) as ConversationRow[];
         }
-        return alasql(`SELECT * FROM conversations WHERE deletedAt IS NULL ORDER BY updatedAt DESC LIMIT ${limit}`) as Conversation[];
+        return rows.map(r => this.deserializeConversation(r));
       },
 
       findRecent: (withinMs: number): Conversation | undefined => {
         const cutoff = new Date(Date.now() - withinMs).toISOString();
-        const results = alasql(
-          'SELECT * FROM conversations WHERE updatedAt > ? AND deletedAt IS NULL ORDER BY updatedAt DESC LIMIT 1',
-          [cutoff]
-        ) as Conversation[];
-        return results[0];
+        const row = this.sqlite.prepare(
+          'SELECT * FROM conversations WHERE updatedAt > ? AND deletedAt IS NULL ORDER BY updatedAt DESC LIMIT 1'
+        ).get(cutoff) as ConversationRow | undefined;
+        return row ? this.deserializeConversation(row) : undefined;
       },
 
       create: (conversation: Conversation): void => {
-        alasql('INSERT INTO conversations VALUES ?', [conversation]);
-        this.scheduleSave();
+        this.sqlite.prepare(
+          'INSERT INTO conversations (id, title, createdAt, updatedAt, deletedAt, manuallyNamed) VALUES (?, ?, ?, ?, ?, ?)'
+        ).run(
+          conversation.id,
+          conversation.title,
+          conversation.createdAt,
+          conversation.updatedAt,
+          conversation.deletedAt,
+          conversation.manuallyNamed ? 1 : null,
+        );
       },
 
       update: (id: string, updates: Partial<Omit<Conversation, 'id'>>): void => {
@@ -366,20 +509,22 @@ class Database {
 
         for (const [key, value] of Object.entries(updates)) {
           setClauses.push(`${key} = ?`);
-          values.push(value);
+          if (key === 'manuallyNamed') {
+            values.push(value ? 1 : null);
+          } else {
+            values.push(value);
+          }
         }
 
         if (setClauses.length > 0) {
           values.push(id);
-          alasql(`UPDATE conversations SET ${setClauses.join(', ')} WHERE id = ?`, values);
-          this.scheduleSave();
+          this.sqlite.prepare(`UPDATE conversations SET ${setClauses.join(', ')} WHERE id = ?`).run(...values);
         }
       },
 
       softDelete: (id: string): void => {
         const now = new Date().toISOString();
-        alasql('UPDATE conversations SET deletedAt = ? WHERE id = ?', [now, id]);
-        this.scheduleSave();
+        this.sqlite.prepare('UPDATE conversations SET deletedAt = ? WHERE id = ?').run(now, id);
       },
     };
   }
@@ -399,27 +544,18 @@ class Database {
       }
     };
 
-    // Helper to deserialize a message row
-    const deserializeRow = (row: Record<string, unknown>): Message => ({
-      ...row,
-      metadata: typeof row.metadata === 'string' ? JSON.parse(row.metadata as string) : row.metadata,
-    }) as Message;
-
     return {
       findById: (id: string): Message | undefined => {
-        const rows = alasql('SELECT * FROM messages WHERE id = ?', [id]) as Array<Record<string, unknown>>;
-        if (rows.length === 0) return undefined;
-        const row = rows[0];
-        return deserializeRow(row);
+        const row = this.sqlite.prepare('SELECT * FROM messages WHERE id = ?').get(id) as MessageRow | undefined;
+        return row ? this.deserializeMessage(row) : undefined;
       },
 
       findByConversationId: (conversationId: string, options?: { limit?: number }): Message[] => {
         const limit = options?.limit ?? DEFAULT_MESSAGES_LIMIT;
-        const rows = alasql(
-          `SELECT * FROM messages WHERE conversationId = ? ORDER BY createdAt ASC LIMIT ${limit}`,
-          [conversationId]
-        ) as Array<Record<string, unknown>>;
-        return rows.map(deserializeRow);
+        const rows = this.sqlite.prepare(
+          'SELECT * FROM messages WHERE conversationId = ? ORDER BY createdAt ASC LIMIT ?'
+        ).all(conversationId, limit) as MessageRow[];
+        return rows.map(r => this.deserializeMessage(r));
       },
 
       findByConversationIdPaginated: (conversationId: string, options?: MessageQueryOptions): PaginatedResult<Message> => {
@@ -427,27 +563,24 @@ class Database {
         const beforeCursor = options?.before ? decodeCursor(options.before) : null;
         const afterCursor = options?.after ? decodeCursor(options.after) : null;
 
-        let rows: Array<Record<string, unknown>>;
+        let rows: MessageRow[];
         const fetchLimit = limit + 1; // Fetch one extra to determine hasOlder/hasNewer
 
         if (beforeCursor) {
           // Get older messages (before the cursor) - ordered newest first, then reversed
-          rows = alasql(
-            `SELECT * FROM messages WHERE conversationId = ? AND (createdAt < ? OR (createdAt = ? AND id < ?)) ORDER BY createdAt DESC, id DESC LIMIT ${fetchLimit}`,
-            [conversationId, beforeCursor.createdAt, beforeCursor.createdAt, beforeCursor.id]
-          ) as Array<Record<string, unknown>>;
+          rows = this.sqlite.prepare(
+            'SELECT * FROM messages WHERE conversationId = ? AND (createdAt < ? OR (createdAt = ? AND id < ?)) ORDER BY createdAt DESC, id DESC LIMIT ?'
+          ).all(conversationId, beforeCursor.createdAt, beforeCursor.createdAt, beforeCursor.id, fetchLimit) as MessageRow[];
         } else if (afterCursor) {
           // Get newer messages (after the cursor) - ordered oldest first
-          rows = alasql(
-            `SELECT * FROM messages WHERE conversationId = ? AND (createdAt > ? OR (createdAt = ? AND id > ?)) ORDER BY createdAt ASC, id ASC LIMIT ${fetchLimit}`,
-            [conversationId, afterCursor.createdAt, afterCursor.createdAt, afterCursor.id]
-          ) as Array<Record<string, unknown>>;
+          rows = this.sqlite.prepare(
+            'SELECT * FROM messages WHERE conversationId = ? AND (createdAt > ? OR (createdAt = ? AND id > ?)) ORDER BY createdAt ASC, id ASC LIMIT ?'
+          ).all(conversationId, afterCursor.createdAt, afterCursor.createdAt, afterCursor.id, fetchLimit) as MessageRow[];
         } else {
           // Get most recent messages (default: newest first for chat UI)
-          rows = alasql(
-            `SELECT * FROM messages WHERE conversationId = ? ORDER BY createdAt DESC, id DESC LIMIT ${fetchLimit}`,
-            [conversationId]
-          ) as Array<Record<string, unknown>>;
+          rows = this.sqlite.prepare(
+            'SELECT * FROM messages WHERE conversationId = ? ORDER BY createdAt DESC, id DESC LIMIT ?'
+          ).all(conversationId, fetchLimit) as MessageRow[];
         }
 
         // Determine if there are more items in the direction we fetched
@@ -461,7 +594,7 @@ class Database {
           rows.reverse();
         }
 
-        const items = rows.map(deserializeRow);
+        const items = rows.map(r => this.deserializeMessage(r));
 
         // Calculate pagination metadata
         let hasOlder: boolean;
@@ -488,8 +621,8 @@ class Database {
         // Optionally include total count
         let totalCount: number | undefined;
         if (options?.includeTotal) {
-          const countResult = alasql('SELECT COUNT(*) as cnt FROM messages WHERE conversationId = ?', [conversationId]) as Array<{ cnt: number }>;
-          totalCount = countResult[0]?.cnt ?? 0;
+          const countResult = this.sqlite.prepare('SELECT COUNT(*) as cnt FROM messages WHERE conversationId = ?').get(conversationId) as { cnt: number };
+          totalCount = countResult.cnt;
         }
 
         return {
@@ -505,69 +638,69 @@ class Database {
       },
 
       countByConversationId: (conversationId: string): number => {
-        const result = alasql('SELECT COUNT(*) as cnt FROM messages WHERE conversationId = ?', [conversationId]) as Array<{ cnt: number }>;
-        return result[0]?.cnt ?? 0;
+        const result = this.sqlite.prepare('SELECT COUNT(*) as cnt FROM messages WHERE conversationId = ?').get(conversationId) as { cnt: number };
+        return result.cnt;
       },
 
       create: (message: Message): void => {
-        const row = {
-          ...message,
-          metadata: JSON.stringify(message.metadata || {}),
-        };
-        alasql('INSERT INTO messages VALUES ?', [row]);
-        this.scheduleSave();
+        this.sqlite.prepare(
+          'INSERT INTO messages (id, conversationId, role, content, metadata, createdAt, turnId) VALUES (?, ?, ?, ?, ?, ?, ?)'
+        ).run(
+          message.id,
+          message.conversationId,
+          message.role,
+          message.content,
+          JSON.stringify(message.metadata || {}),
+          message.createdAt,
+          message.turnId ?? null,
+        );
       },
 
       deleteByConversationId: (conversationId: string): number => {
-        const countResult = alasql('SELECT COUNT(*) as cnt FROM messages WHERE conversationId = ?', [conversationId]) as Array<{ cnt: number }>;
-        const count = countResult[0]?.cnt ?? 0;
-        alasql('DELETE FROM messages WHERE conversationId = ?', [conversationId]);
-        this.scheduleSave();
+        const countResult = this.sqlite.prepare('SELECT COUNT(*) as cnt FROM messages WHERE conversationId = ?').get(conversationId) as { cnt: number };
+        const count = countResult.cnt;
+        this.sqlite.prepare('DELETE FROM messages WHERE conversationId = ?').run(conversationId);
         return count;
       },
     };
   }
 
   private createTaskRepository(): TaskRepository {
-    const deserializeTask = (row: Record<string, unknown>): Task => ({
-      id: row.id as string,
-      name: row.name as string,
-      mdFile: row.mdFile as string,
-      jsonConfig: typeof row.jsonConfig === 'string' ? JSON.parse(row.jsonConfig as string) : row.jsonConfig as Record<string, unknown>,
-      status: row.status as Task['status'],
-      lastRun: row.lastRun as string | null,
-      nextRun: row.nextRun as string | null,
-      createdAt: row.createdAt as string,
-      updatedAt: row.updatedAt as string,
-    });
-
     return {
       findById: (id: string): Task | undefined => {
-        const results = alasql('SELECT * FROM tasks WHERE id = ?', [id]) as Array<Record<string, unknown>>;
-        return results[0] ? deserializeTask(results[0]) : undefined;
+        const row = this.sqlite.prepare('SELECT * FROM tasks WHERE id = ?').get(id) as TaskRow | undefined;
+        return row ? this.deserializeTask(row) : undefined;
       },
 
       findAll: (options?: { limit?: number; status?: Task['status'] }): Task[] => {
         const limit = options?.limit ?? DEFAULT_TASKS_LIMIT;
-        let rows: Array<Record<string, unknown>>;
+        let rows: TaskRow[];
         if (options?.status) {
-          rows = alasql(
-            `SELECT * FROM tasks WHERE status = ? ORDER BY updatedAt DESC LIMIT ${limit}`,
-            [options.status]
-          ) as Array<Record<string, unknown>>;
+          rows = this.sqlite.prepare(
+            'SELECT * FROM tasks WHERE status = ? ORDER BY updatedAt DESC LIMIT ?'
+          ).all(options.status, limit) as TaskRow[];
         } else {
-          rows = alasql(`SELECT * FROM tasks ORDER BY updatedAt DESC LIMIT ${limit}`) as Array<Record<string, unknown>>;
+          rows = this.sqlite.prepare(
+            'SELECT * FROM tasks ORDER BY updatedAt DESC LIMIT ?'
+          ).all(limit) as TaskRow[];
         }
-        return rows.map(deserializeTask);
+        return rows.map(r => this.deserializeTask(r));
       },
 
       create: (task: Task): void => {
-        const row = {
-          ...task,
-          jsonConfig: JSON.stringify(task.jsonConfig || {}),
-        };
-        alasql('INSERT INTO tasks VALUES ?', [row]);
-        this.scheduleSave();
+        this.sqlite.prepare(
+          'INSERT INTO tasks (id, name, mdFile, jsonConfig, status, lastRun, nextRun, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+        ).run(
+          task.id,
+          task.name,
+          task.mdFile,
+          JSON.stringify(task.jsonConfig || {}),
+          task.status,
+          task.lastRun,
+          task.nextRun,
+          task.createdAt,
+          task.updatedAt,
+        );
       },
 
       update: (id: string, updates: Partial<Omit<Task, 'id'>>): void => {
@@ -576,7 +709,6 @@ class Database {
 
         for (const [key, value] of Object.entries(updates)) {
           setClauses.push(`${key} = ?`);
-          // Serialize jsonConfig if present
           if (key === 'jsonConfig' && typeof value === 'object') {
             values.push(JSON.stringify(value));
           } else {
@@ -586,51 +718,42 @@ class Database {
 
         if (setClauses.length > 0) {
           values.push(id);
-          alasql(`UPDATE tasks SET ${setClauses.join(', ')} WHERE id = ?`, values);
-          this.scheduleSave();
+          this.sqlite.prepare(`UPDATE tasks SET ${setClauses.join(', ')} WHERE id = ?`).run(...values);
         }
       },
     };
   }
 
   private createEmbeddingRepository(): EmbeddingRepository {
-    const deserializeEmbedding = (row: Record<string, unknown>): Embedding => ({
-      id: row.id as string,
-      source: row.source as string,
-      chunkIndex: row.chunkIndex as number,
-      content: row.content as string,
-      embedding: typeof row.embedding === 'string' ? JSON.parse(row.embedding as string) : row.embedding as number[],
-      metadata: typeof row.metadata === 'string' ? JSON.parse(row.metadata as string) : row.metadata as Record<string, unknown>,
-      createdAt: row.createdAt as string,
-    });
-
     return {
       findBySource: (source: string): Embedding[] => {
-        const rows = alasql(
-          'SELECT * FROM embeddings WHERE source = ? ORDER BY chunkIndex ASC',
-          [source]
-        ) as Array<Record<string, unknown>>;
-        return rows.map(deserializeEmbedding);
+        const rows = this.sqlite.prepare(
+          'SELECT * FROM embeddings WHERE source = ? ORDER BY chunkIndex ASC'
+        ).all(source) as EmbeddingRow[];
+        return rows.map(r => this.deserializeEmbedding(r));
       },
 
       findAll: (): Embedding[] => {
-        const rows = alasql('SELECT * FROM embeddings') as Array<Record<string, unknown>>;
-        return rows.map(deserializeEmbedding);
+        const rows = this.sqlite.prepare('SELECT * FROM embeddings').all() as EmbeddingRow[];
+        return rows.map(r => this.deserializeEmbedding(r));
       },
 
       create: (embedding: Embedding): void => {
-        const row = {
-          ...embedding,
-          embedding: JSON.stringify(embedding.embedding),
-          metadata: JSON.stringify(embedding.metadata || {}),
-        };
-        alasql('INSERT INTO embeddings VALUES ?', [row]);
-        this.scheduleSave();
+        this.sqlite.prepare(
+          'INSERT INTO embeddings (id, source, chunkIndex, content, embedding, metadata, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)'
+        ).run(
+          embedding.id,
+          embedding.source,
+          embedding.chunkIndex,
+          embedding.content,
+          JSON.stringify(embedding.embedding),
+          JSON.stringify(embedding.metadata || {}),
+          embedding.createdAt,
+        );
       },
 
       deleteBySource: (source: string): void => {
-        alasql('DELETE FROM embeddings WHERE source = ?', [source]);
-        this.scheduleSave();
+        this.sqlite.prepare('DELETE FROM embeddings WHERE source = ?').run(source);
       },
     };
   }
@@ -646,7 +769,6 @@ export async function initDb(dbPath: string): Promise<Database> {
   if (!db) {
     db = new Database(dbPath);
     await db.init();
-    console.log(`[Database] Initialized with JSON persistence at ${dbPath.replace(/\.[^.]+$/, '')}.json`);
   }
   return db;
 }
