@@ -53,6 +53,7 @@ const SPECIALIST_TEMPLATES: SpecialistTemplate[] = [
       'web_scrape',
       'wikipedia_search',
       'analyze_image',
+      'query_rag_project',
       'mcp.*', // MCP tools
     ],
   },
@@ -86,6 +87,7 @@ const SPECIALIST_TEMPLATES: SpecialistTemplate[] = [
       'web_scrape',
       'wikipedia_search',
       'create_image',
+      'query_rag_project',
       'mcp.*', // MCP tools
     ],
   },
