@@ -13,12 +13,21 @@
  *     extracts links from the live DOM. Slower, but sees what the user sees
  *     (SPAs, client-side routing, lazy-loaded content).
  *
+ * After crawling, the tool can optionally download each page's content,
+ * extract human-readable text (preserving meta tags), and save to a RAG
+ * project folder for later indexing.
+ *
  * This tool uses the "display only result" pattern: the full URL collection
  * is displayed to the user via the UI event broadcast, but only a short
  * summary is sent to the LLM to conserve context tokens.
  */
 
 import type { NativeTool, NativeToolResult, ToolExecutionContext } from './types.js';
+import type { RAGProjectService } from '../../rag-projects/service.js';
+import { convert as htmlToText } from 'html-to-text';
+import { existsSync, mkdirSync } from 'fs';
+import { writeFile } from 'fs/promises';
+import { join } from 'path';
 
 /** Hard ceiling – never collect more than this regardless of user input. */
 const ABSOLUTE_MAX_URLS = 1_000;
@@ -60,6 +69,7 @@ export class WebsiteCrawlerTool implements NativeTool {
   readonly name = 'website_crawler';
   readonly description =
     'Crawl a website starting from a given URL, collecting all unique same-domain URLs found via links. ' +
+    'Downloads each page, extracts human-readable text (preserving meta tags), and saves to a RAG project folder. ' +
     'Returns a de-duplicated list of discovered URLs. Stops at a configurable maximum (default 1,000). ' +
     'Use strategy "fast" (default) for static HTML or "full" for JS-rendered/dynamic sites (uses headless browser). ' +
     'The full URL list is displayed to the user; only a summary is sent to the assistant.';
@@ -89,6 +99,14 @@ export class WebsiteCrawlerTool implements NativeTool {
     required: ['url'],
   };
 
+  private ragService: RAGProjectService | null;
+  private ragDir: string;
+
+  constructor(options?: { ragService?: RAGProjectService; ragDir?: string }) {
+    this.ragService = options?.ragService || null;
+    this.ragDir = options?.ragDir || join(process.cwd(), 'user', 'rag');
+  }
+
   async execute(params: Record<string, unknown>, context?: ToolExecutionContext): Promise<NativeToolResult> {
     const url = String(params.url || '').trim();
     const maxUrls = Math.min(
@@ -117,10 +135,22 @@ export class WebsiteCrawlerTool implements NativeTool {
       ? CONCURRENCY_LIMIT_FULL
       : CONCURRENCY_LIMIT_FAST;
 
+    // ── Create RAG project folder ───────────────────────────────────
+    const projectId = this.urlToFolderName(startUrl);
+    const projectPath = join(this.ragDir, projectId);
+    const documentsPath = join(projectPath, 'documents');
+
+    // Create directories
+    if (!existsSync(documentsPath)) {
+      mkdirSync(documentsPath, { recursive: true });
+    }
+
     // ── BFS state ───────────────────────────────────────────────────
     const visited = new Set<string>();
     const discovered = new Set<string>();
     const queue: string[] = [];
+    // Store HTML content for later processing
+    const pageContents = new Map<string, string>();
 
     const canonicalStart = this.canonicalise(startUrl);
     discovered.add(canonicalStart);
@@ -150,23 +180,32 @@ export class WebsiteCrawlerTool implements NativeTool {
     }
 
     // ── BFS loop ────────────────────────────────────────────────────
+    // Note: maxUrls controls how many pages we actually FETCH (not just discover)
     try {
-      while (queue.length > 0 && discovered.size < maxUrls) {
-        const batchSize = Math.min(concurrencyLimit, queue.length, maxUrls - discovered.size);
+      while (queue.length > 0 && pagesProcessed < maxUrls) {
+        const batchSize = Math.min(concurrencyLimit, queue.length, maxUrls - pagesProcessed);
         const batch = queue.splice(0, batchSize);
 
         const batchPromises = batch.map(async (pageUrl) => {
           if (visited.has(pageUrl)) return;
           visited.add(pageUrl);
 
+          // Check if we've hit the limit (another concurrent request may have incremented)
+          if (pagesProcessed >= maxUrls) return;
+
           try {
-            const links = strategy === 'full'
-              ? await this.renderAndExtractLinks(browserContext!, pageUrl, allowedOrigin)
-              : await this.fetchAndExtractLinks(pageUrl, allowedOrigin);
+            const result = strategy === 'full'
+              ? await this.renderAndExtractLinksWithContent(browserContext!, pageUrl, allowedOrigin)
+              : await this.fetchAndExtractLinksWithContent(pageUrl, allowedOrigin);
             pagesProcessed++;
 
-            for (const link of links) {
-              if (discovered.size >= maxUrls) break;
+            // Store page content for later saving
+            if (result.html) {
+              pageContents.set(pageUrl, result.html);
+            }
+
+            // Keep discovering links (for queue) but don't let discovered count limit us
+            for (const link of result.links) {
               if (!discovered.has(link)) {
                 discovered.add(link);
                 queue.push(link);
@@ -180,12 +219,12 @@ export class WebsiteCrawlerTool implements NativeTool {
         await Promise.all(batchPromises);
 
         context?.onProgress?.({
-          current: discovered.size,
+          current: pagesProcessed,
           total: maxUrls,
-          message: `[${strategy}] Discovered ${discovered.size} URL(s), fetched ${pagesProcessed} pages (${queue.length} queued)`,
+          message: `[${strategy}] Fetched ${pagesProcessed}/${maxUrls} pages (${discovered.size} URLs discovered, ${queue.length} queued)`,
         });
 
-        if (queue.length > 0 && discovered.size < maxUrls) {
+        if (queue.length > 0 && pagesProcessed < maxUrls) {
           await this.sleep(BATCH_DELAY_MS);
         }
       }
@@ -199,9 +238,42 @@ export class WebsiteCrawlerTool implements NativeTool {
       }
     }
 
+    // ── Extract text and save files ─────────────────────────────────
+    context?.onProgress?.({
+      current: 0,
+      total: pageContents.size,
+      message: `Extracting and saving ${pageContents.size} page(s) to RAG project "${projectId}"...`,
+    });
+
+    let savedCount = 0;
+    let saveErrors = 0;
+
+    for (const [pageUrl, html] of pageContents) {
+      try {
+        const textContent = this.extractTextWithMeta(html, pageUrl);
+        const filename = this.urlToFilename(pageUrl);
+        const filePath = join(documentsPath, filename);
+        await writeFile(filePath, textContent, 'utf-8');
+        savedCount++;
+
+        context?.onProgress?.({
+          current: savedCount,
+          total: pageContents.size,
+          message: `Saved ${savedCount}/${pageContents.size} pages`,
+        });
+      } catch {
+        saveErrors++;
+      }
+    }
+
+    // ── Emit projects_changed to refresh UI ─────────────────────────
+    if (this.ragService) {
+      this.ragService.emit('projects_changed');
+    }
+
     // ── Build result ────────────────────────────────────────────────
     const sortedUrls = Array.from(discovered).sort();
-    const hitLimit = discovered.size >= maxUrls;
+    const hitLimit = pagesProcessed >= maxUrls;
 
     return {
       success: true,
@@ -209,17 +281,21 @@ export class WebsiteCrawlerTool implements NativeTool {
         startUrl: canonicalStart,
         domain: startUrl.hostname,
         strategy,
-        totalUrls: sortedUrls.length,
-        pagesProcessed,
+        urlsDiscovered: sortedUrls.length,
+        pagesFetched: pagesProcessed,
         errorCount,
         hitLimit,
+        ragProject: projectId,
+        savedPages: savedCount,
+        saveErrors,
         urls: sortedUrls,
       },
       displayOnly: true,
       displayOnlySummary:
         `Crawled ${startUrl.hostname} starting from ${canonicalStart} (strategy: ${strategy}). ` +
-        `Found ${sortedUrls.length} unique URL(s) (${pagesProcessed} pages fetched, ${errorCount} errors). ` +
-        (hitLimit ? `Stopped at the ${maxUrls} URL limit. ` : 'All reachable pages visited. ') +
+        `Fetched ${pagesProcessed} pages (discovered ${sortedUrls.length} URLs, ${errorCount} errors). ` +
+        (hitLimit ? `Stopped at the ${maxUrls} page limit. ` : 'All reachable pages visited. ') +
+        `Saved ${savedCount} pages to RAG project "${projectId}" (${saveErrors} save errors). ` +
         'Full URL list displayed to user.',
     };
   }
@@ -228,8 +304,12 @@ export class WebsiteCrawlerTool implements NativeTool {
 
   /**
    * Fetch a page via HTTP and extract same-origin <a href> links using regex.
+   * Also returns the raw HTML for later text extraction.
    */
-  private async fetchAndExtractLinks(pageUrl: string, allowedOrigin: string): Promise<string[]> {
+  private async fetchAndExtractLinksWithContent(
+    pageUrl: string,
+    allowedOrigin: string
+  ): Promise<{ links: string[]; html: string | null }> {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
@@ -245,15 +325,16 @@ export class WebsiteCrawlerTool implements NativeTool {
 
       clearTimeout(timeoutId);
 
-      if (!response.ok) return [];
+      if (!response.ok) return { links: [], html: null };
 
       const contentType = response.headers.get('content-type') || '';
       if (!contentType.includes('text/html') && !contentType.includes('application/xhtml')) {
-        return [];
+        return { links: [], html: null };
       }
 
       const html = await response.text();
-      return this.extractLinksFromHtml(html, pageUrl, allowedOrigin);
+      const links = this.extractLinksFromHtml(html, pageUrl, allowedOrigin);
+      return { links, html };
     } catch {
       clearTimeout(timeoutId);
       throw new Error(`Failed to fetch ${pageUrl}`);
@@ -281,12 +362,13 @@ export class WebsiteCrawlerTool implements NativeTool {
   /**
    * Render a page in a headless browser and extract same-origin links from
    * the live DOM. This sees JS-rendered content, client-side routing, etc.
+   * Also returns the raw HTML for later text extraction.
    */
-  private async renderAndExtractLinks(
+  private async renderAndExtractLinksWithContent(
     browserContext: import('playwright').BrowserContext,
     pageUrl: string,
     allowedOrigin: string,
-  ): Promise<string[]> {
+  ): Promise<{ links: string[]; html: string | null }> {
     const page = await browserContext.newPage();
 
     try {
@@ -297,6 +379,9 @@ export class WebsiteCrawlerTool implements NativeTool {
 
       // Wait a short moment for any immediate JS rendering
       await page.waitForTimeout(1000);
+
+      // Get the full HTML content
+      const html = await page.content();
 
       // Extract all href values from the live DOM
       const hrefs: string[] = await page.$$eval('a[href]', (anchors) =>
@@ -311,7 +396,7 @@ export class WebsiteCrawlerTool implements NativeTool {
         if (resolved) links.push(resolved);
       }
 
-      return links;
+      return { links, html };
     } catch {
       throw new Error(`Failed to render ${pageUrl}`);
     } finally {
@@ -382,5 +467,204 @@ export class WebsiteCrawlerTool implements NativeTool {
 
   private sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  // ── Text extraction helpers ────────────────────────────────────────
+
+  /**
+   * Extract meta tags and human-readable text from HTML.
+   * Meta tags are placed at the top of the output.
+   */
+  private extractTextWithMeta(html: string, sourceUrl: string): string {
+    const lines: string[] = [];
+
+    // Add source URL at the top
+    lines.push(`Source: ${sourceUrl}`);
+    lines.push('');
+
+    // Extract meta tags
+    const metaTags = this.extractMetaTags(html);
+    if (metaTags.length > 0) {
+      lines.push('--- Meta Tags ---');
+      for (const meta of metaTags) {
+        lines.push(`${meta.name}: ${meta.content}`);
+      }
+      lines.push('');
+    }
+
+    // Extract title
+    const titleMatch = html.match(/<title[^>]*>([^<]*)<\/title>/i);
+    if (titleMatch && titleMatch[1].trim()) {
+      lines.push(`Title: ${titleMatch[1].trim()}`);
+      lines.push('');
+    }
+
+    lines.push('--- Content ---');
+    lines.push('');
+
+    // Convert HTML to text using html-to-text
+    const text = htmlToText(html, {
+      wordwrap: false,
+      preserveNewlines: true,
+      selectors: [
+        // Skip script and style elements
+        { selector: 'script', format: 'skip' },
+        { selector: 'style', format: 'skip' },
+        { selector: 'noscript', format: 'skip' },
+        { selector: 'nav', format: 'skip' },
+        { selector: 'footer', format: 'skip' },
+        { selector: 'header', format: 'skip' },
+        // Format headings
+        { selector: 'h1', format: 'heading', options: { uppercase: false } },
+        { selector: 'h2', format: 'heading', options: { uppercase: false } },
+        { selector: 'h3', format: 'heading', options: { uppercase: false } },
+        { selector: 'h4', format: 'heading', options: { uppercase: false } },
+        // Format links to show text without URL
+        { selector: 'a', format: 'anchor', options: { ignoreHref: true } },
+        // Format images as [image] placeholder
+        { selector: 'img', format: 'skip' },
+      ],
+    });
+
+    // Clean up excessive whitespace while preserving paragraph breaks
+    const cleanedText = text
+      .replace(/\n{3,}/g, '\n\n')  // Reduce multiple newlines to max 2
+      .replace(/[ \t]+/g, ' ')     // Collapse horizontal whitespace
+      .trim();
+
+    lines.push(cleanedText);
+
+    return lines.join('\n');
+  }
+
+  /**
+   * Extract meta tags from HTML.
+   */
+  private extractMetaTags(html: string): Array<{ name: string; content: string }> {
+    const tags: Array<{ name: string; content: string }> = [];
+    const metaRegex = /<meta\s+([^>]+)>/gi;
+    let match: RegExpExecArray | null;
+
+    while ((match = metaRegex.exec(html)) !== null) {
+      const attributes = match[1];
+
+      // Extract name/property and content attributes
+      const nameMatch = attributes.match(/(?:name|property)\s*=\s*["']([^"']+)["']/i);
+      const contentMatch = attributes.match(/content\s*=\s*["']([^"']+)["']/i);
+
+      if (nameMatch && contentMatch) {
+        const name = nameMatch[1].trim();
+        const content = contentMatch[1].trim();
+
+        // Only include useful meta tags
+        if (this.isUsefulMetaTag(name) && content) {
+          tags.push({ name, content });
+        }
+      }
+    }
+
+    return tags;
+  }
+
+  /**
+   * Check if a meta tag is useful for RAG purposes.
+   */
+  private isUsefulMetaTag(name: string): boolean {
+    const usefulTags = new Set([
+      'description',
+      'keywords',
+      'author',
+      'og:title',
+      'og:description',
+      'og:type',
+      'og:site_name',
+      'twitter:title',
+      'twitter:description',
+      'article:author',
+      'article:published_time',
+      'article:modified_time',
+      'article:section',
+      'article:tag',
+    ]);
+    return usefulTags.has(name.toLowerCase());
+  }
+
+  // ── Filename/folder helpers ────────────────────────────────────────
+
+  /**
+   * Convert a URL to a valid folder name for the RAG project.
+   * Uses the hostname as the base, sanitized for filesystem compatibility.
+   */
+  private urlToFolderName(url: URL): string {
+    // Use hostname as base (e.g., "docs.example.com")
+    let name = url.hostname;
+
+    // Remove www. prefix if present
+    name = name.replace(/^www\./, '');
+
+    // Replace invalid characters with underscores
+    name = name.replace(/[^a-zA-Z0-9.-]/g, '_');
+
+    // Collapse multiple underscores
+    name = name.replace(/_+/g, '_');
+
+    // Trim underscores from ends
+    name = name.replace(/^_+|_+$/g, '');
+
+    // Ensure it's not empty
+    if (!name) {
+      name = 'website';
+    }
+
+    return name;
+  }
+
+  /**
+   * Convert a URL to a valid filename for saving text content.
+   * The filename encodes the full path to preserve uniqueness.
+   */
+  private urlToFilename(urlString: string): string {
+    const url = new URL(urlString);
+
+    // Start with pathname
+    let path = url.pathname;
+
+    // Remove leading slash
+    path = path.replace(/^\//, '');
+
+    // Include query string if present (important for dynamic pages)
+    if (url.search) {
+      path += url.search;
+    }
+
+    // If path is empty (root), use 'index'
+    if (!path) {
+      path = 'index';
+    }
+
+    // Replace path separators and invalid chars with underscores
+    let filename = path.replace(/[\/\\?%*:|"<>]/g, '_');
+
+    // Collapse multiple underscores
+    filename = filename.replace(/_+/g, '_');
+
+    // Trim underscores from ends
+    filename = filename.replace(/^_+|_+$/g, '');
+
+    // Remove any existing extension
+    filename = filename.replace(/\.[^.]+$/, '');
+
+    // Truncate if too long (max 200 chars for filename without extension)
+    if (filename.length > 200) {
+      filename = filename.substring(0, 200);
+    }
+
+    // Ensure it's not empty
+    if (!filename) {
+      filename = 'page';
+    }
+
+    // Add .txt extension
+    return `${filename}.txt`;
   }
 }

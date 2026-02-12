@@ -364,7 +364,11 @@ async function main(): Promise<void> {
   toolRunner.registerNativeTool(new WebScrapeTool({ llmService }));
 
   // Website crawler (display-only result — full URL list shown in UI, summary sent to LLM)
-  toolRunner.registerNativeTool(new WebsiteCrawlerTool());
+  // Passes RAG service to enable automatic content saving to RAG projects
+  toolRunner.registerNativeTool(new WebsiteCrawlerTool({
+    ragService: ragProjectService ?? undefined,
+    ragDir: CONFIG.ragDir,
+  }));
 
   toolRunner.registerNativeTool(new TakeScreenshotTool());
   toolRunner.registerNativeTool(new AnalyzeImageTool(llmService));

@@ -36,6 +36,7 @@
     "cron-parser": "^5.5.0",
     "dotenv": "^16.4.5",
     "express": "^4.21.0",
+    "html-to-text": "^9.0.5",
     "multer": "^2.0.2",
     "playwright": "^1.58.1",
     "pngjs": "^7.0.0",
@@ -56,6 +57,7 @@
   "devDependencies": {
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.0",
+    "@types/html-to-text": "^9.0.4",
     "@types/node": "^22.7.4",
     "@types/pngjs": "^6.0.5",
     "@types/uuid": "^10.0.0",
