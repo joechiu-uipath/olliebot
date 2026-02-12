@@ -155,10 +155,10 @@ Time →  0s         2s         4s         6s         8s        10s
 - **Raw JSON**: The complete request payload as formatted JSON
 
 **[Response]**
-- **Content**: The full text response (markdown rendered)
+- **Content**: The **fully-assembled** text response (all streaming chunks pieced together into coherent text, markdown rendered). This is NOT raw SSE/WebSocket events - it is the complete, reconstructed output as if it were a non-streaming call. The `TracingLLMService` accumulates chunks during `onChunk` callbacks and stores the final assembled string in `responseContent`.
 - **Tool Use Blocks**: If the LLM requested tools, show each tool call with its parameters
-- **Raw JSON**: Complete response payload
-- **Streaming Reconstruction**: For streamed responses, show the original chunks with timestamps (useful for debugging streaming issues)
+- **Raw JSON**: Complete response payload (assembled, not individual chunks)
+- **Streaming Timeline** (opt-in, behind `TRACE_STORE_STREAM_CHUNKS=true` env var): When enabled, shows individual chunks with their arrival timestamps for debugging latency/streaming issues. Default: off, since most users only need the assembled response.
 
 #### C. Tool Call Detail View
 

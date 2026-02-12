@@ -68,6 +68,7 @@ import {
 } from './desktop/index.js';
 import { getUserSettingsService } from './settings/index.js';
 import { LogBuffer } from './mcp-server/index.js';
+import { getTraceStore } from './tracing/index.js';
 
 /**
  * Parse MCP server configurations from various formats.
@@ -276,6 +277,11 @@ async function main(): Promise<void> {
   await initDb(CONFIG.dbPath);
   ensureWellKnownConversations();
 
+  // Initialize trace store for execution logging
+  const traceStore = getTraceStore();
+  traceStore.init();
+  console.log('[Init] Trace store initialized');
+
   // Initialize LLM service with Main and Fast providers
   console.log('[Init] Initializing LLM service...');
   const mainProvider = createLLMProvider(CONFIG.mainProvider, CONFIG.mainModel);
@@ -284,6 +290,7 @@ async function main(): Promise<void> {
   const llmService = new LLMService({
     main: mainProvider,
     fast: fastProvider,
+    traceStore,
   });
 
   console.log(`[Init] Main LLM: ${CONFIG.mainProvider}/${CONFIG.mainModel}`);
@@ -697,6 +704,7 @@ async function main(): Promise<void> {
       desktopManager,
       taskManager,
       ragProjectService: ragProjectService || undefined,
+      traceStore,
       mainProvider: CONFIG.mainProvider,
       mainModel: CONFIG.mainModel,
       voiceProvider: CONFIG.voiceProvider,

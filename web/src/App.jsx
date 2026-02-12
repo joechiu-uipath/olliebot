@@ -16,6 +16,8 @@ import { CodeBlock } from './components/CodeBlock';
 
 // Extracted eval mode (fully self-contained)
 import { useEvalMode, EvalSidebarContent, EvalMainContent } from './App.Eval';
+// Extracted logs mode
+import { useLogsMode, LogsSidebarContent, LogsMainContent } from './App.Logs';
 
 // Extracted utilities
 import { transformMessages, shouldCollapseByDefault } from './utils/messageHelpers';
@@ -25,6 +27,7 @@ import { createMessageHandler } from './App.websocket';
 const MODES = {
   CHAT: 'chat',
   EVAL: 'eval',
+  LOGS: 'logs',
 };
 
 // Branding constants
@@ -53,7 +56,9 @@ function App() {
   const location = useLocation();
 
   // Derive mode from URL path
-  const mode = location.pathname.startsWith('/eval') ? MODES.EVAL : MODES.CHAT;
+  const mode = location.pathname.startsWith('/eval') ? MODES.EVAL
+    : location.pathname.startsWith('/logs') ? MODES.LOGS
+    : MODES.CHAT;
 
   const [messages, setMessages] = useState([]);
   const [attachments, setAttachments] = useState([]);
@@ -134,6 +139,9 @@ function App() {
 
   // Eval mode - managed by useEvalMode hook (state lives in App.Eval.jsx)
   const evalMode = useEvalMode();
+
+  // Logs mode - managed by useLogsMode hook (state lives in App.Logs.jsx)
+  const logsMode = useLogsMode();
 
   // Response pending state (disable input while waiting)
   const [isResponsePending, setIsResponsePending] = useState(false);
@@ -356,8 +364,23 @@ function App() {
   };
   const handleClose = () => setIsConnected(false);
 
+  // Ref for logs event handler to keep combined handler stable
+  const logsHandlerRef = useRef(logsMode.handleLogEvent);
+  useEffect(() => { logsHandlerRef.current = logsMode.handleLogEvent; }, [logsMode.handleLogEvent]);
+
+  // Combined WebSocket handler: main handler + logs handler
+  const [combinedMessageHandler] = useState(() => {
+    return (data) => {
+      handleMessage(data);
+      // Forward log events to logs mode
+      if (data.type && data.type.startsWith('log_')) {
+        logsHandlerRef.current?.(data);
+      }
+    };
+  });
+
   const { sendMessage, connectionState } = useWebSocket({
-    onMessage: handleMessage,
+    onMessage: combinedMessageHandler,
     onOpen: handleOpen,
     onClose: handleClose,
   });
@@ -1727,6 +1750,10 @@ function App() {
           <EvalSidebarContent evalMode={evalMode} />
         )}
 
+        {sidebarOpen && mode === MODES.LOGS && (
+          <LogsSidebarContent logsMode={logsMode} />
+        )}
+
         {sidebarOpen && mode === MODES.CHAT && (
           <>
           <div className="conversation-list">
@@ -2131,6 +2158,13 @@ function App() {
                 <span className="mode-icon">📊</span>
                 Eval
               </button>
+              <button
+                className={`mode-btn ${mode === MODES.LOGS ? 'active' : ''}`}
+                onClick={() => navigate('/logs')}
+              >
+                <span className="mode-icon">📋</span>
+                Logs
+              </button>
             </div>
           </div>
           <div className={`status ${isConnected ? 'connected' : 'disconnected'}`}>
@@ -2140,6 +2174,9 @@ function App() {
 
         {/* Eval Mode Content */}
         {mode === MODES.EVAL && <EvalMainContent evalMode={evalMode} evalState={evalState} />}
+
+        {/* Logs Mode Content */}
+        {mode === MODES.LOGS && <LogsMainContent logsMode={logsMode} />}
 
         {/* Chat Mode Content */}
         {mode === MODES.CHAT && (

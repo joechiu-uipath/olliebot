@@ -22,6 +22,7 @@ import { getMessageEventService, setMessageEventServiceChannel } from '../servic
 import { getUserSettingsService } from '../settings/index.js';
 import { OllieBotMCPServer } from '../mcp-server/index.js';
 import type { LogBuffer } from '../mcp-server/index.js';
+import type { TraceStore } from '../tracing/trace-store.js';
 
 export interface ServerConfig {
   port: number;
@@ -34,6 +35,7 @@ export interface ServerConfig {
   desktopManager?: DesktopSessionManager;
   taskManager?: TaskManager;
   ragProjectService?: RAGProjectService;
+  traceStore?: TraceStore;
   // LLM configuration for model capabilities endpoint
   mainProvider?: string;
   mainModel?: string;
@@ -74,6 +76,7 @@ export class AssistantServer {
   private desktopManager?: DesktopSessionManager;
   private taskManager?: TaskManager;
   private ragProjectService?: RAGProjectService;
+  private traceStore?: TraceStore;
   private mainProvider?: string;
   private mainModel?: string;
   private voiceProvider?: 'openai' | 'azure_openai';
@@ -103,6 +106,7 @@ export class AssistantServer {
     this.desktopManager = config.desktopManager;
     this.taskManager = config.taskManager;
     this.ragProjectService = config.ragProjectService;
+    this.traceStore = config.traceStore;
     this.mainProvider = config.mainProvider;
     this.mainModel = config.mainModel;
     this.voiceProvider = config.voiceProvider;
@@ -191,6 +195,11 @@ export class AssistantServer {
 
     // Set the web channel on the global MessageEventService so all agents can use it
     setMessageEventServiceChannel(this.wsChannel);
+
+    // Set the web channel on trace store for real-time log broadcasting
+    if (this.traceStore) {
+      this.traceStore.setChannel(this.wsChannel);
+    }
 
     // Setup routes
     this.setupRoutes();
@@ -1064,6 +1073,107 @@ export class AssistantServer {
         res.status(500).json({ error: 'Failed to close desktop session' });
       }
     });
+
+    // ================================================================
+    // Logs / Tracing API routes
+    // ================================================================
+    if (this.traceStore) {
+      const traceStore = this.traceStore;
+
+      // Get traces (list)
+      this.app.get('/api/logs/traces', (req: Request, res: Response) => {
+        try {
+          const limit = parseInt(req.query.limit as string) || 50;
+          const conversationId = req.query.conversationId as string | undefined;
+          const status = req.query.status as string | undefined;
+          const since = req.query.since as string | undefined;
+          res.json(traceStore.getTraces({ limit, conversationId, status, since }));
+        } catch (error) {
+          console.error('[API] Failed to fetch traces:', error);
+          res.status(500).json({ error: 'Failed to fetch traces' });
+        }
+      });
+
+      // Get single trace with all children
+      this.app.get('/api/logs/traces/:traceId', (req: Request, res: Response) => {
+        try {
+          const traceId = req.params.traceId as string;
+          const result = traceStore.getFullTrace(traceId);
+          if (!result) {
+            res.status(404).json({ error: 'Trace not found' });
+            return;
+          }
+          res.json(result);
+        } catch (error) {
+          console.error('[API] Failed to fetch trace:', error);
+          res.status(500).json({ error: 'Failed to fetch trace' });
+        }
+      });
+
+      // Get LLM calls (list)
+      this.app.get('/api/logs/llm-calls', (req: Request, res: Response) => {
+        try {
+          const limit = parseInt(req.query.limit as string) || 50;
+          const traceId = req.query.traceId as string | undefined;
+          const spanId = req.query.spanId as string | undefined;
+          const workload = req.query.workload as string | undefined;
+          const provider = req.query.provider as string | undefined;
+          const since = req.query.since as string | undefined;
+          const conversationId = req.query.conversationId as string | undefined;
+          res.json(traceStore.getLlmCalls({
+            limit, traceId, spanId,
+            workload: workload as 'main' | 'fast' | 'embedding' | 'image_gen' | 'browser' | 'voice' | undefined,
+            provider, since, conversationId,
+          }));
+        } catch (error) {
+          console.error('[API] Failed to fetch LLM calls:', error);
+          res.status(500).json({ error: 'Failed to fetch LLM calls' });
+        }
+      });
+
+      // Get single LLM call
+      this.app.get('/api/logs/llm-calls/:callId', (req: Request, res: Response) => {
+        try {
+          const callId = req.params.callId as string;
+          const call = traceStore.getLlmCallById(callId);
+          if (!call) {
+            res.status(404).json({ error: 'LLM call not found' });
+            return;
+          }
+          res.json(call);
+        } catch (error) {
+          console.error('[API] Failed to fetch LLM call:', error);
+          res.status(500).json({ error: 'Failed to fetch LLM call' });
+        }
+      });
+
+      // Get tool calls (list)
+      this.app.get('/api/logs/tool-calls', (req: Request, res: Response) => {
+        try {
+          const limit = parseInt(req.query.limit as string) || 50;
+          const traceId = req.query.traceId as string | undefined;
+          const spanId = req.query.spanId as string | undefined;
+          const llmCallId = req.query.llmCallId as string | undefined;
+          res.json(traceStore.getToolCalls({ limit, traceId, spanId, llmCallId }));
+        } catch (error) {
+          console.error('[API] Failed to fetch tool calls:', error);
+          res.status(500).json({ error: 'Failed to fetch tool calls' });
+        }
+      });
+
+      // Get stats
+      this.app.get('/api/logs/stats', (req: Request, res: Response) => {
+        try {
+          const since = req.query.since as string | undefined;
+          res.json(traceStore.getStats(since));
+        } catch (error) {
+          console.error('[API] Failed to fetch trace stats:', error);
+          res.status(500).json({ error: 'Failed to fetch trace stats' });
+        }
+      });
+
+      console.log('[Server] Logs/tracing routes enabled');
+    }
 
     // Setup RAG project routes
     if (this.ragProjectService) {

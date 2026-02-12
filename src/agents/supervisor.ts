@@ -23,6 +23,7 @@ import type { CitationSource, StoredCitationData } from '../citations/types.js';
 import { DEEP_RESEARCH_WORKFLOW_ID, AGENT_IDS } from '../deep-research/constants.js';
 import { SELF_CODING_WORKFLOW_ID, AGENT_IDS as CODING_AGENT_IDS } from '../self-coding/constants.js';
 import { getMessageEventService } from '../services/message-event-service.js';
+import { getTraceStore } from '../tracing/index.js';
 import {
   SUPERVISOR_ICON,
   SUPERVISOR_NAME,
@@ -152,6 +153,33 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
     }
     const channel = this.channel;
 
+    // Start execution trace
+    const traceStore = getTraceStore();
+    const traceId = traceStore.startTrace({
+      conversationId: requestConversationId,
+      turnId: requestTurnId,
+      triggerType: isScheduledTask ? 'task_run' : 'user_message',
+      triggerContent: typeof message.content === 'string' ? message.content : undefined,
+    });
+    const spanId = traceStore.startSpan({
+      traceId,
+      agentId: this.identity.id,
+      agentName: this.identity.name,
+      agentEmoji: this.identity.emoji,
+      agentType: 'supervisor-main',
+      agentRole: 'supervisor',
+    });
+
+    // Push LLM context so all calls in this turn are associated with this trace
+    this.llmService.pushContext({
+      traceId,
+      spanId,
+      agentId: this.identity.id,
+      agentName: this.identity.name,
+      conversationId: requestConversationId,
+      purpose: 'chat',
+    });
+
     try {
       // Check for agent command in metadata first (from UI badge selection)
       const agentCommand = message.metadata?.agentCommand as { command: string; icon: string } | undefined;
@@ -189,7 +217,8 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
           message,
           channel,
           requestConversationId,
-          requestTurnId
+          requestTurnId,
+          traceId
         );
       } else {
         // No command trigger - proceed with normal LLM processing
@@ -197,14 +226,14 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
         const supportsStreaming = typeof channel.startStream === 'function' && this.llmService.supportsStreaming();
 
         if (supportsStreaming) {
-          await this.generateStreamingResponse(message, channel, requestConversationId, requestTurnId);
+          await this.generateStreamingResponse(message, channel, requestConversationId, requestTurnId, traceId);
         } else {
           // Fallback to non-streaming
           const response = await this.generateResponse(this.conversationHistory.slice(-CONVERSATION_HISTORY_LIMIT));
           const delegationMatch = response.match(/```delegate\s*([\s\S]*?)```/);
 
           if (delegationMatch) {
-            await this.handleDelegation(delegationMatch[1], message, channel, requestConversationId, requestTurnId);
+            await this.handleDelegation(delegationMatch[1], message, channel, requestConversationId, requestTurnId, traceId);
           } else {
             await this.sendMessage(response, {
               reasoningMode: message.metadata?.reasoningMode as string | undefined,
@@ -215,8 +244,23 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
       }
     } catch (error) {
       console.error(`[${this.identity.name}] Error:`, error);
+      traceStore.endSpan(spanId, 'error', String(error));
+      traceStore.endTrace(traceId, 'error');
       await this.sendError('Failed to process message', String(error), requestConversationId);
     } finally {
+      // Pop LLM context
+      this.llmService.popContext();
+
+      // End trace/span if not already ended by error handler
+      const currentSpan = traceStore.getSpanById(spanId);
+      if (currentSpan && currentSpan.status === 'running') {
+        traceStore.endSpan(spanId);
+      }
+      const currentTrace = traceStore.getTraceById(traceId);
+      if (currentTrace && currentTrace.status === 'running') {
+        traceStore.endTrace(traceId);
+      }
+
       // Clean up processing state after a delay (allow for retries to be detected)
       setTimeout(() => {
         this.processingMessages.delete(message.id);
@@ -231,7 +275,8 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
     message: Message,
     channel: Channel,
     conversationId: string | undefined,
-    turnId: string | undefined
+    turnId: string | undefined,
+    traceId?: string
   ): Promise<void> {
     const streamId = uuid();
     let fullResponse = '';
@@ -429,7 +474,7 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
               }
 
               // Perform the delegation
-              await this.handleDelegationFromTool(delegationParams, message, channel, conversationId, turnId);
+              await this.handleDelegationFromTool(delegationParams, message, channel, conversationId, turnId, traceId);
 
               return;
             }
@@ -521,7 +566,8 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
     originalMessage: Message,
     channel: Channel,
     conversationId: string | undefined,
-    turnId: string | undefined
+    turnId: string | undefined,
+    traceId?: string
   ): Promise<void> {
     try {
       const delegation = JSON.parse(delegationJson.trim());
@@ -543,11 +589,12 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
         throw new Error('Failed to spawn agent');
       }
 
-      // Pass the conversationId and turnId to the worker agent
+      // Pass the conversationId, turnId, and traceId to the worker agent
       // Ensure we have a conversation (use existing or create new)
       const effectiveConversationId = conversationId || this.ensureConversation(null, originalMessage.content);
       agent.conversationId = effectiveConversationId;
       agent.turnId = turnId ?? null;
+      if (traceId) agent.traceId = traceId;
 
       // Emit delegation event via MessageEventService (broadcasts AND persists)
       const messageEventService = getMessageEventService();
@@ -602,7 +649,8 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
     originalMessage: Message,
     channel: Channel,
     conversationId: string | undefined,
-    turnId: string | undefined
+    turnId: string | undefined,
+    traceId?: string
   ): Promise<void> {
     const { type, mission, customName, customEmoji, rationale } = params;
 
@@ -623,11 +671,12 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
         throw new Error('Failed to spawn agent');
       }
 
-      // Pass the conversationId and turnId to the worker agent
+      // Pass the conversationId, turnId, and traceId to the worker agent
       // Ensure we have a conversation (use existing or create new)
       const effectiveConversationId = conversationId || this.ensureConversation(null, originalMessage.content);
       agent.conversationId = effectiveConversationId;
       agent.turnId = turnId ?? null;
+      if (traceId) agent.traceId = traceId;
 
       // Emit delegation event via MessageEventService (broadcasts AND persists)
       const messageEventService = getMessageEventService();
