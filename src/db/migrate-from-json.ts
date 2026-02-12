@@ -224,15 +224,25 @@ function migrate(jsonPath: string, sqlitePath: string): void {
 
     // Embeddings
     for (const e of data.embeddings ?? []) {
-      const embedding = typeof e.embedding === 'object' ? JSON.stringify(e.embedding) : e.embedding;
-      const metadata = typeof e.metadata === 'object' ? JSON.stringify(e.metadata) : e.metadata;
+      const embedding =
+        e.embedding == null
+          ? '[]'
+          : typeof e.embedding === 'object'
+            ? JSON.stringify(e.embedding)
+            : e.embedding;
+      const metadata =
+        e.metadata == null
+          ? '{}'
+          : typeof e.metadata === 'object'
+            ? JSON.stringify(e.metadata)
+            : e.metadata;
       const result = insertEmbedding.run(
         e.id,
         e.source,
         e.chunkIndex,
         e.content ?? '',
-        embedding ?? '[]',
-        metadata ?? '{}',
+        embedding,
+        metadata,
         e.createdAt,
       );
       if (result.changes > 0) inserted.embeddings++;
