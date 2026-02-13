@@ -5,7 +5,6 @@
  */
 
 import { chromium, type Browser } from 'playwright';
-import { v4 as uuid } from 'uuid';
 
 import type {
   BrowserConfig,

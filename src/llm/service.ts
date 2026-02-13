@@ -398,9 +398,9 @@ The JSON should follow this schema:
     "schedule": "cron expression if type is schedule",
     "event": "event name if type is event"
   },
-  "actions": [
+  "tools": [
     {
-      "type": "string - action type",
+      "type": "string - tool name without prefix (e.g. 'user.lottery', 'web_search', 'mcp.github.list_repos')",
       "params": {}
     }
   ],

@@ -649,6 +649,11 @@ async function main(): Promise<void> {
       console.log(`\n[Scheduler] Running scheduled task: ${task.name}`);
       try {
         const taskDescription = (task.jsonConfig as { description?: string }).description || '';
+        const taskTools = (task.jsonConfig as { tools?: Array<{ type: string }> }).tools || [];
+        // Extract tool names from tools array
+        const allowedToolNames = taskTools
+          .map(t => typeof t === 'string' ? t : t.type)
+          .filter(Boolean);
 
         // Create a task message for the supervisor
         const taskMessage = {
@@ -664,6 +669,8 @@ async function main(): Promise<void> {
             taskDescription,
             scheduled: true,
             conversationId: WellKnownConversations.FEED,
+            // Only allow tools specified in task config (empty = no tool restrictions)
+            allowedTools: allowedToolNames.length > 0 ? allowedToolNames : undefined,
           },
         };
 
@@ -714,6 +721,11 @@ async function main(): Promise<void> {
       console.log(`[Scheduler] Running scheduled task: ${task.name}`);
       try {
         const taskDescription = (task.jsonConfig as { description?: string }).description || '';
+        const taskTools = (task.jsonConfig as { tools?: Array<{ type: string }> }).tools || [];
+        // Extract tool names from tools array
+        const allowedToolNames = taskTools
+          .map(t => typeof t === 'string' ? t : t.type)
+          .filter(Boolean);
 
         // Create a task message for the supervisor
         // Route to the well-known `feed` conversation for background tasks
@@ -730,6 +742,8 @@ async function main(): Promise<void> {
             taskDescription,
             scheduled: true,
             conversationId: WellKnownConversations.FEED,  // Route to feed conversation
+            // Only allow tools specified in task config (empty = no tool restrictions)
+            allowedTools: allowedToolNames.length > 0 ? allowedToolNames : undefined,
           },
         };
 

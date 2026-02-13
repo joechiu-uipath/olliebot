@@ -949,8 +949,13 @@ export class AssistantServer {
           return;
         }
 
-        // Get description from jsonConfig
+        // Get description and tools from jsonConfig
         const taskDescription = (task.jsonConfig as { description?: string }).description || '';
+        const taskTools = (task.jsonConfig as { tools?: Array<{ type: string }> }).tools || [];
+        // Extract tool names from tools array
+        const allowedToolNames = taskTools
+          .map(t => typeof t === 'string' ? t : t.type)
+          .filter(Boolean);
 
         // Emit task_run event via MessageEventService (broadcasts AND persists)
         // Returns the turnId which should be used for all subsequent messages in this turn
@@ -979,6 +984,8 @@ export class AssistantServer {
             taskDescription,
             turnId, // Pass the turnId from the task_run event
             conversationId: conversationId || undefined, // Conversation context for this task
+            // Only allow tools specified in task config (empty = no tool restrictions)
+            allowedTools: allowedToolNames.length > 0 ? allowedToolNames : undefined,
           },
         };
 

@@ -589,6 +589,8 @@ const LlmCallDetailView = memo(function LlmCallDetailView({ call, onBack }) {
   if (call.messagesJson) {
     try { parsedMessages = JSON.parse(call.messagesJson); } catch { /* skip */ }
   }
+  // Filter out system messages (shown separately above)
+  const nonSystemMessages = parsedMessages?.filter(msg => msg.role !== 'system') ?? [];
 
   let parsedToolUse = null;
   if (call.responseToolUseJson) {
@@ -653,15 +655,15 @@ const LlmCallDetailView = memo(function LlmCallDetailView({ call, onBack }) {
         </div>
       )}
 
-      {/* Messages (collapsible - can be large) */}
-      {parsedMessages && (
+      {/* Messages (collapsible - can be large) - system messages filtered out since shown above */}
+      {nonSystemMessages.length > 0 && (
         <div className="logs-detail-section">
           <h4 className="logs-collapsible" onClick={() => setShowMessages(!showMessages)}>
-            {showMessages ? '▾' : '▸'} Messages ({parsedMessages.length})
+            {showMessages ? '▾' : '▸'} Messages ({nonSystemMessages.length})
           </h4>
           {showMessages && (
             <div className="logs-messages-list">
-              {parsedMessages.map((msg, i) => (
+              {nonSystemMessages.map((msg, i) => (
                 <div key={i} className={`logs-message logs-message-${msg.role}`}>
                   <div className="logs-message-role">{msg.role}</div>
                   <pre className="logs-message-content">
