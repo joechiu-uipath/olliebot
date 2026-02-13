@@ -305,7 +305,7 @@ export class AssistantServer {
           : [];
 
         // 6. MCP servers
-        let mcps: Array<{ id: string; name: string; enabled: boolean; transport: string; toolCount: number }> = [];
+        let mcps: Array<{ id: string; name: string; enabled: boolean; status: string; transport: string; toolCount: number }> = [];
         if (this.mcpClient) {
           const servers = this.mcpClient.getServers();
           const mcpTools = this.mcpClient.getTools();
@@ -313,6 +313,7 @@ export class AssistantServer {
             id: server.id,
             name: server.name,
             enabled: server.enabled,
+            status: this.mcpClient!.getServerStatus(server.id),
             transport: server.transport || (server.command ? 'stdio' : 'http'),
             toolCount: mcpTools.filter(t => t.serverId === server.id).length,
           }));
@@ -506,6 +507,7 @@ export class AssistantServer {
           id: server?.id,
           name: server?.name,
           enabled: server?.enabled,
+          status: this.mcpClient.getServerStatus(serverId),
           transport: server?.transport || (server?.command ? 'stdio' : 'http'),
           toolCount: tools.filter(t => t.serverId === serverId).length,
         });

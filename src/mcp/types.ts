@@ -8,6 +8,9 @@
 // Transport type for MCP servers
 export type MCPTransport = 'http' | 'stdio';
 
+// Connection status for MCP servers
+export type MCPServerStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
+
 export interface MCPServerConfig {
   id: string;
   name: string;
