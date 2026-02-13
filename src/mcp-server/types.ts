@@ -7,6 +7,7 @@
 import type { ToolRunner } from '../tools/runner.js';
 import type { MCPClient } from '../mcp/client.js';
 import type { LogBuffer } from './log-buffer.js';
+import type { TraceStore } from '../tracing/index.js';
 
 // ============================================================================
 // JSON-RPC 2.0
@@ -108,6 +109,8 @@ export interface MCPServerDependencies {
   toolRunner: ToolRunner;
   mcpClient?: MCPClient;
   logBuffer: LogBuffer;
+  /** Trace store for execution trace queries */
+  traceStore?: TraceStore;
   /** Server start time for uptime calculation */
   startTime: Date;
   /** Function to get connected WebSocket client count */

@@ -1304,6 +1304,7 @@ export class AssistantServer {
         toolRunner: this.toolRunner,
         mcpClient: this.mcpClient,
         logBuffer: this.logBuffer,
+        traceStore: this.traceStore,
         startTime: new Date(),
         getClientCount: () => this.wsChannel.getConnectedClients(),
         runtimeConfig: {
