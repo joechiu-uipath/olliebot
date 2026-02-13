@@ -2225,25 +2225,25 @@ function App() {
                 Chat
               </button>
               <button
-                className={`mode-btn ${mode === MODES.EVAL ? 'active' : ''}`}
-                onClick={() => navigate('/eval')}
+                className={`mode-btn ${mode === MODES.MISSION ? 'active' : ''}`}
+                onClick={() => navigate('/mission')}
               >
-                <span className="mode-icon">📊</span>
-                Eval
+                <span className="mode-icon">🎯</span>
+                Mission
               </button>
               <button
                 className={`mode-btn ${mode === MODES.TRACES ? 'active' : ''}`}
                 onClick={() => navigate('/traces')}
               >
                 <span className="mode-icon">📋</span>
-                Traces
+                Trace
               </button>
               <button
-                className={`mode-btn ${mode === MODES.MISSION ? 'active' : ''}`}
-                onClick={() => navigate('/mission')}
+                className={`mode-btn ${mode === MODES.EVAL ? 'active' : ''}`}
+                onClick={() => navigate('/eval')}
               >
-                <span className="mode-icon">🎯</span>
-                Mission
+                <span className="mode-icon">📊</span>
+                Eval
               </button>
             </div>
           </div>
