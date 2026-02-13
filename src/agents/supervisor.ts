@@ -218,7 +218,8 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
           channel,
           requestConversationId,
           requestTurnId,
-          traceId
+          traceId,
+          spanId
         );
       } else {
         // No command trigger - proceed with normal LLM processing
@@ -226,14 +227,14 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
         const supportsStreaming = typeof channel.startStream === 'function' && this.llmService.supportsStreaming();
 
         if (supportsStreaming) {
-          await this.generateStreamingResponse(message, channel, requestConversationId, requestTurnId, traceId);
+          await this.generateStreamingResponse(message, channel, requestConversationId, requestTurnId, traceId, spanId);
         } else {
           // Fallback to non-streaming
           const response = await this.generateResponse(this.conversationHistory.slice(-CONVERSATION_HISTORY_LIMIT));
           const delegationMatch = response.match(/```delegate\s*([\s\S]*?)```/);
 
           if (delegationMatch) {
-            await this.handleDelegation(delegationMatch[1], message, channel, requestConversationId, requestTurnId, traceId);
+            await this.handleDelegation(delegationMatch[1], message, channel, requestConversationId, requestTurnId, traceId, spanId);
           } else {
             await this.sendMessage(response, {
               reasoningMode: message.metadata?.reasoningMode as string | undefined,
@@ -276,7 +277,8 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
     channel: Channel,
     conversationId: string | undefined,
     turnId: string | undefined,
-    traceId?: string
+    traceId?: string,
+    spanId?: string
   ): Promise<void> {
     const streamId = uuid();
     let fullResponse = '';
@@ -475,7 +477,7 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
               }
 
               // Perform the delegation
-              await this.handleDelegationFromTool(delegationParams, message, channel, conversationId, turnId, traceId);
+              await this.handleDelegationFromTool(delegationParams, message, channel, conversationId, turnId, traceId, spanId);
 
               return;
             }
@@ -568,7 +570,8 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
     channel: Channel,
     conversationId: string | undefined,
     turnId: string | undefined,
-    traceId?: string
+    traceId?: string,
+    spanId?: string
   ): Promise<void> {
     try {
       const delegation = JSON.parse(delegationJson.trim());
@@ -590,12 +593,13 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
         throw new Error('Failed to spawn agent');
       }
 
-      // Pass the conversationId, turnId, and traceId to the worker agent
+      // Pass the conversationId, turnId, traceId, and parentSpanId to the worker agent
       // Ensure we have a conversation (use existing or create new)
       const effectiveConversationId = conversationId || this.ensureConversation(null, originalMessage.content);
       agent.conversationId = effectiveConversationId;
       agent.turnId = turnId ?? null;
       if (traceId) agent.traceId = traceId;
+      if (spanId) agent.parentSpanId = spanId;
 
       // Emit delegation event via MessageEventService (broadcasts AND persists)
       const messageEventService = getMessageEventService();
@@ -651,7 +655,8 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
     channel: Channel,
     conversationId: string | undefined,
     turnId: string | undefined,
-    traceId?: string
+    traceId?: string,
+    spanId?: string
   ): Promise<void> {
     const { type, mission, customName, customEmoji, rationale } = params;
 
@@ -672,12 +677,13 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
         throw new Error('Failed to spawn agent');
       }
 
-      // Pass the conversationId, turnId, and traceId to the worker agent
+      // Pass the conversationId, turnId, traceId, and parentSpanId to the worker agent
       // Ensure we have a conversation (use existing or create new)
       const effectiveConversationId = conversationId || this.ensureConversation(null, originalMessage.content);
       agent.conversationId = effectiveConversationId;
       agent.turnId = turnId ?? null;
       if (traceId) agent.traceId = traceId;
+      if (spanId) agent.parentSpanId = spanId;
 
       // Emit delegation event via MessageEventService (broadcasts AND persists)
       const messageEventService = getMessageEventService();

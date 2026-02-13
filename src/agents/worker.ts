@@ -27,6 +27,7 @@ export class WorkerAgent extends AbstractAgent {
   public conversationId: string | null = null; // Set by supervisor when spawning
   public turnId: string | null = null; // Set by supervisor when spawning - ID of originating message for this turn
   public traceId: string | null = null; // Set by supervisor for trace context propagation
+  public parentSpanId: string | null = null; // Set by parent agent for span hierarchy
   private subAgents: Map<string, WorkerAgent> = new Map();
   private agentType: string; // The type of this agent (e.g., 'deep-research-lead')
   private currentWorkflowId: string | null = null; // Current workflow context
@@ -110,6 +111,7 @@ export class WorkerAgent extends AbstractAgent {
     if (this.traceId) {
       spanId = traceStore.startSpan({
         traceId: this.traceId,
+        parentSpanId: this.parentSpanId ?? undefined,
         agentId: this.identity.id,
         agentName: this.identity.name,
         agentEmoji: this.identity.emoji,
@@ -406,7 +408,8 @@ export class WorkerAgent extends AbstractAgent {
                   const subAgentResult = await this.delegateToSubAgent(
                     delegationParams,
                     originalMessage,
-                    channel
+                    channel,
+                    spanId
                   );
 
                   return {
@@ -549,7 +552,8 @@ export class WorkerAgent extends AbstractAgent {
       customEmoji?: string;
     },
     originalMessage: Message,
-    channel: Channel
+    channel: Channel,
+    currentSpanId: string | null
   ): Promise<string> {
     const { type, mission, rationale, customName, customEmoji } = params;
 
@@ -594,6 +598,7 @@ export class WorkerAgent extends AbstractAgent {
     subAgent.conversationId = this.conversationId;
     subAgent.turnId = this.turnId;
     subAgent.traceId = this.traceId;
+    subAgent.parentSpanId = currentSpanId;
 
     // Set workflow context for restricted agents
     if (this.currentWorkflowId) {
