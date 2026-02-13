@@ -1,0 +1,581 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Real-Time Monitoring — Live System Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.6.0/dist/echarts.min.js"></script>
+<style>
+  *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+  body{
+    background:#0f1117;
+    color:#e0e0e0;
+    font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
+    min-height:100vh;
+    padding:24px 32px 48px;
+    line-height:1.5;
+  }
+
+  /* ── Palette tokens ── */
+  :root{
+    --bg:#0f1117;--card:#1a1d27;--border:#2a2d37;
+    --text:#e0e0e0;--muted:#8b8fa3;
+    --indigo:#6366f1;--cyan:#22d3ee;--green:#10b981;
+    --amber:#f59e0b;--rose:#f43f5e;
+  }
+
+  /* ── Header ── */
+  .header{display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:16px;margin-bottom:28px}
+  .header-left{flex:1;min-width:300px}
+  .header h1{font-size:1.65rem;font-weight:700;color:#fff;letter-spacing:-.3px}
+  .header h1 span{color:var(--cyan);font-weight:400}
+  .timestamp{font-size:.82rem;color:var(--muted);margin-top:4px;font-variant-numeric:tabular-nums}
+  .synopsis{font-size:.88rem;color:var(--muted);margin-top:6px;max-width:640px}
+
+  .pause-btn{
+    background:var(--indigo);color:#fff;border:none;padding:10px 22px;
+    border-radius:8px;font-size:.88rem;font-weight:600;cursor:pointer;
+    transition:background .2s,transform .1s;white-space:nowrap;
+    display:flex;align-items:center;gap:6px;
+  }
+  .pause-btn:hover{background:#818cf8;transform:translateY(-1px)}
+  .pause-btn.paused{background:var(--green)}
+
+  /* ── Info bar ── */
+  .info-bar{
+    background:linear-gradient(135deg,rgba(99,102,241,.12),rgba(34,211,238,.08));
+    border:1px solid rgba(99,102,241,.25);border-radius:10px;
+    padding:14px 20px;margin-bottom:28px;font-size:.84rem;color:var(--cyan);
+  }
+  .info-bar strong{color:#fff}
+
+  /* ── Grid helpers ── */
+  .grid-4{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:24px}
+  .grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:24px}
+  .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:24px}
+
+  /* ── Cards ── */
+  .card{
+    background:var(--card);border:1px solid var(--border);border-radius:12px;
+    padding:20px 22px;position:relative;overflow:hidden;
+    transition:border-color .3s;
+  }
+  .card:hover{border-color:rgba(99,102,241,.4)}
+  .card-title{font-size:.78rem;text-transform:uppercase;letter-spacing:.8px;color:var(--muted);margin-bottom:8px}
+  .card-chart{width:100%;height:100%;min-height:220px}
+
+  /* ── KPI cards ── */
+  .kpi{text-align:center;padding:24px 16px}
+  .kpi .kpi-value{font-size:2.2rem;font-weight:700;font-variant-numeric:tabular-nums;transition:color .4s}
+  .kpi .kpi-unit{font-size:.82rem;color:var(--muted);margin-top:2px}
+  .kpi .kpi-bar{height:3px;border-radius:2px;margin-top:12px;background:var(--border);overflow:hidden}
+  .kpi .kpi-bar-fill{height:100%;border-radius:2px;transition:width .8s ease,background .4s}
+
+  /* ── Status row ── */
+  .status-row{display:flex;flex-wrap:wrap;gap:14px;margin-bottom:24px}
+  .status-item{
+    display:flex;align-items:center;gap:8px;
+    background:var(--card);border:1px solid var(--border);border-radius:10px;
+    padding:10px 16px;flex:1;min-width:140px;
+  }
+  .status-dot{
+    width:12px;height:12px;border-radius:50%;flex-shrink:0;
+    transition:background .4s,box-shadow .4s;
+  }
+  .status-dot.green{background:var(--green);box-shadow:0 0 8px rgba(16,185,129,.5)}
+  .status-dot.yellow{background:var(--amber);box-shadow:0 0 8px rgba(245,158,11,.5)}
+  .status-dot.red{background:var(--rose);box-shadow:0 0 8px rgba(244,63,94,.5)}
+  .status-name{font-size:.82rem;color:var(--text)}
+  .status-label{font-size:.7rem;color:var(--muted);margin-left:auto;text-transform:uppercase}
+
+  /* ── Activity log ── */
+  .log-container{
+    background:var(--card);border:1px solid var(--border);border-radius:12px;
+    padding:18px 20px;margin-bottom:24px;
+  }
+  .log-container .card-title{margin-bottom:12px}
+  .log-area{
+    height:220px;overflow-y:auto;font-family:'JetBrains Mono','Fira Code','Cascadia Code',monospace;
+    font-size:.78rem;line-height:1.7;padding-right:8px;
+    scrollbar-width:thin;scrollbar-color:var(--border) transparent;
+  }
+  .log-area::-webkit-scrollbar{width:6px}
+  .log-area::-webkit-scrollbar-track{background:transparent}
+  .log-area::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+  .log-entry{white-space:pre-wrap;word-break:break-all}
+  .log-entry .ts{color:var(--muted)}
+  .log-info{color:var(--cyan)}
+  .log-success{color:var(--green)}
+  .log-warn{color:var(--amber)}
+  .log-error{color:var(--rose)}
+  .log-debug{color:#a78bfa}
+
+  /* ── Section labels ── */
+  .section-label{
+    font-size:.88rem;font-weight:600;color:var(--muted);
+    text-transform:uppercase;letter-spacing:1px;margin-bottom:14px;
+    padding-left:2px;
+  }
+
+  /* ── Responsive ── */
+  @media(max-width:1100px){
+    .grid-4{grid-template-columns:repeat(2,1fr)}
+    .grid-3{grid-template-columns:1fr}
+    .grid-2{grid-template-columns:1fr}
+  }
+  @media(max-width:600px){
+    body{padding:14px 10px 32px}
+    .grid-4{grid-template-columns:1fr 1fr}
+    .header h1{font-size:1.2rem}
+  }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════ HEADER ═══════════════════ -->
+<div class="header">
+  <div class="header-left">
+    <h1>Real-Time Monitoring <span>— Live System Dashboard</span></h1>
+    <div class="timestamp" id="headerTimestamp"></div>
+    <p class="synopsis">Live operational view with simulated real-time data feeds. Data refreshes automatically.</p>
+  </div>
+  <button class="pause-btn" id="pauseBtn" onclick="togglePause()">&#9208; Pause</button>
+</div>
+
+<!-- ═══════════════════ INFO BAR ═══════════════════ -->
+<div class="info-bar">
+  <strong>Interactivity:</strong> This dashboard simulates live data. Charts update every 2 seconds. Hover for current values. Click <strong>'Pause'</strong> to freeze updates.
+</div>
+
+<!-- ═══════════════════ KPI CARDS ═══════════════════ -->
+<div class="section-label">Key Metrics</div>
+<div class="grid-4" id="kpiRow">
+  <div class="card kpi" id="kpi-missions">
+    <div class="card-title">Active Missions</div>
+    <div class="kpi-value" id="kpiMissionsVal" style="color:var(--indigo)">12</div>
+    <div class="kpi-unit">concurrent</div>
+    <div class="kpi-bar"><div class="kpi-bar-fill" id="kpiMissionsBar" style="width:60%;background:var(--indigo)"></div></div>
+  </div>
+  <div class="card kpi" id="kpi-requests">
+    <div class="card-title">Requests / min</div>
+    <div class="kpi-value" id="kpiRequestsVal" style="color:var(--cyan)">152</div>
+    <div class="kpi-unit">throughput</div>
+    <div class="kpi-bar"><div class="kpi-bar-fill" id="kpiRequestsBar" style="width:70%;background:var(--cyan)"></div></div>
+  </div>
+  <div class="card kpi" id="kpi-latency">
+    <div class="card-title">Avg Latency</div>
+    <div class="kpi-value" id="kpiLatencyVal" style="color:var(--green)">1.2s</div>
+    <div class="kpi-unit">response time</div>
+    <div class="kpi-bar"><div class="kpi-bar-fill" id="kpiLatencyBar" style="width:40%;background:var(--green)"></div></div>
+  </div>
+  <div class="card kpi" id="kpi-errors">
+    <div class="card-title">Error Rate</div>
+    <div class="kpi-value" id="kpiErrorsVal" style="color:var(--green)">0.8%</div>
+    <div class="kpi-unit">of requests</div>
+    <div class="kpi-bar"><div class="kpi-bar-fill" id="kpiErrorsBar" style="width:15%;background:var(--green)"></div></div>
+  </div>
+</div>
+
+<!-- ═══════════════════ GAUGES ═══════════════════ -->
+<div class="section-label">System Health Gauges</div>
+<div class="grid-3">
+  <div class="card"><div class="card-title">CPU Utilization</div><div class="card-chart" id="gaugeCpu"></div></div>
+  <div class="card"><div class="card-title">Memory Usage</div><div class="card-chart" id="gaugeMemory"></div></div>
+  <div class="card"><div class="card-title">API Health Score</div><div class="card-chart" id="gaugeApi"></div></div>
+</div>
+
+<!-- ═══════════════════ LIVE CHARTS ═══════════════════ -->
+<div class="section-label">Live Data Feeds</div>
+<div class="grid-2">
+  <div class="card"><div class="card-title">Live Request Rate</div><div class="card-chart" id="chartRequests"></div></div>
+  <div class="card"><div class="card-title">Live Latency (P50, P95, P99)</div><div class="card-chart" id="chartLatency"></div></div>
+</div>
+
+<!-- ═══════════════════ STATUS INDICATORS ═══════════════════ -->
+<div class="section-label">Service Status</div>
+<div class="status-row" id="statusRow"></div>
+
+<!-- ═══════════════════ ACTIVITY LOG ═══════════════════ -->
+<div class="section-label">Activity Log</div>
+<div class="log-container">
+  <div class="card-title">System Events <span style="color:var(--green);font-size:.72rem;margin-left:6px">&#9679; LIVE</span></div>
+  <div class="log-area" id="logArea"></div>
+</div>
+
+<script>
+/* ================================================================
+   GLOBAL STATE
+   ================================================================ */
+let paused = false;
+const intervals = [];
+
+function togglePause() {
+  paused = !paused;
+  const btn = document.getElementById('pauseBtn');
+  if (paused) {
+    btn.innerHTML = '&#9654; Resume';
+    btn.classList.add('paused');
+  } else {
+    btn.innerHTML = '&#9208; Pause';
+    btn.classList.remove('paused');
+  }
+}
+
+/* ── Helpers ── */
+function rand(min, max) { return Math.random() * (max - min) + min; }
+function randInt(min, max) { return Math.floor(rand(min, max + 1)); }
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+function fmtTime(d) {
+  return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+function fmtDateTime(d) {
+  return d.toLocaleDateString('en-US', { weekday:'long', year:'numeric', month:'long', day:'numeric' })
+    + '  ' + fmtTime(d);
+}
+
+/* ================================================================
+   1. HEADER CLOCK  (updates every second)
+   ================================================================ */
+function tickClock() {
+  document.getElementById('headerTimestamp').textContent = fmtDateTime(new Date());
+}
+tickClock();
+intervals.push(setInterval(tickClock, 1000));
+
+/* ================================================================
+   2. KPI CARDS — animated numeric transitions
+   ================================================================ */
+const kpis = {
+  missions:  { el: 'kpiMissionsVal',  bar: 'kpiMissionsBar',  val: 12,   min: 8,   max: 15,  fmt: v => Math.round(v).toString(),        unit: '' },
+  requests:  { el: 'kpiRequestsVal',  bar: 'kpiRequestsBar',  val: 152,  min: 120, max: 180, fmt: v => Math.round(v).toString(),        unit: '' },
+  latency:   { el: 'kpiLatencyVal',   bar: 'kpiLatencyBar',   val: 1.2,  min: 0.8, max: 2.0, fmt: v => v.toFixed(1) + 's',              unit: 's' },
+  errors:    { el: 'kpiErrorsVal',    bar: 'kpiErrorsBar',    val: 0.8,  min: 0.1, max: 3.0, fmt: v => v.toFixed(1) + '%',              unit: '%' },
+};
+
+/* Smooth count animation */
+function animateValue(el, start, end, duration, formatter, colorFn) {
+  const startTime = performance.now();
+  function tick(now) {
+    const t = Math.min((now - startTime) / duration, 1);
+    const eased = t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t;   // ease-in-out
+    const cur = start + (end - start) * eased;
+    el.textContent = formatter(cur);
+    if (colorFn) el.style.color = colorFn(cur);
+    if (t < 1) requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+}
+
+function kpiColor(key, v) {
+  if (key === 'missions')  return v > 13 ? 'var(--amber)' : 'var(--indigo)';
+  if (key === 'requests')  return v > 165 ? 'var(--amber)' : 'var(--cyan)';
+  if (key === 'latency')   return v > 1.5 ? (v > 1.8 ? 'var(--rose)' : 'var(--amber)') : 'var(--green)';
+  if (key === 'errors')    return v > 2.0 ? 'var(--rose)' : (v > 1.0 ? 'var(--amber)' : 'var(--green)');
+  return 'var(--text)';
+}
+
+function updateKpis() {
+  if (paused) return;
+  for (const [key, k] of Object.entries(kpis)) {
+    const newVal = clamp(k.val + rand(-1, 1) * (k.max - k.min) * 0.25, k.min, k.max);
+    const el = document.getElementById(k.el);
+    const barEl = document.getElementById(k.bar);
+    animateValue(el, k.val, newVal, 800, k.fmt, v => kpiColor(key, v));
+    const pct = ((newVal - k.min) / (k.max - k.min)) * 100;
+    barEl.style.width = pct + '%';
+    barEl.style.background = kpiColor(key, newVal);
+    k.val = newVal;
+  }
+}
+intervals.push(setInterval(updateKpis, 2000));
+
+/* ================================================================
+   3. GAUGES — ECharts
+   ================================================================ */
+function makeGaugeOption(value, title) {
+  return {
+    animation: true,
+    animationDuration: 1200,
+    animationEasing: 'cubicOut',
+    series: [{
+      type: 'gauge',
+      startAngle: 210,
+      endAngle: -30,
+      min: 0,
+      max: 100,
+      radius: '90%',
+      progress: { show: true, width: 14, roundCap: true },
+      pointer: {
+        length: '60%',
+        width: 5,
+        itemStyle: { color: '#e0e0e0' }
+      },
+      axisLine: {
+        lineStyle: {
+          width: 14,
+          color: [
+            [0.6, '#10b981'],
+            [0.8, '#f59e0b'],
+            [1,   '#f43f5e']
+          ]
+        }
+      },
+      axisTick: { show: false },
+      splitLine: { length: 10, lineStyle: { width: 2, color: '#3a3d47' } },
+      axisLabel: { distance: 20, color: '#8b8fa3', fontSize: 11 },
+      detail: {
+        valueAnimation: true,
+        formatter: '{value}%',
+        color: '#e0e0e0',
+        fontSize: 22,
+        fontWeight: 700,
+        offsetCenter: [0, '70%']
+      },
+      data: [{ value: value }]
+    }]
+  };
+}
+
+const gaugeCpu    = echarts.init(document.getElementById('gaugeCpu'), null, { renderer: 'canvas' });
+const gaugeMemory = echarts.init(document.getElementById('gaugeMemory'), null, { renderer: 'canvas' });
+const gaugeApi    = echarts.init(document.getElementById('gaugeApi'), null, { renderer: 'canvas' });
+
+let gaugeCpuVal = 55, gaugeMemVal = 62, gaugeApiVal = 97;
+
+gaugeCpu.setOption(makeGaugeOption(gaugeCpuVal));
+gaugeMemory.setOption(makeGaugeOption(gaugeMemVal));
+gaugeApi.setOption(makeGaugeOption(gaugeApiVal));
+
+function updateGauges() {
+  if (paused) return;
+  gaugeCpuVal = clamp(gaugeCpuVal + rand(-8, 8), 20, 95);
+  gaugeMemVal = clamp(gaugeMemVal + rand(-5, 5), 30, 90);
+  gaugeApiVal = clamp(gaugeApiVal + rand(-4, 2), 75, 100);
+  gaugeCpu.setOption({ series: [{ data: [{ value: Math.round(gaugeCpuVal) }] }] });
+  gaugeMemory.setOption({ series: [{ data: [{ value: Math.round(gaugeMemVal) }] }] });
+  gaugeApi.setOption({ series: [{ data: [{ value: Math.round(gaugeApiVal) }] }] });
+}
+intervals.push(setInterval(updateGauges, 2000));
+
+/* ================================================================
+   4. ROLLING LINE CHART — Live Request Rate
+   ================================================================ */
+const MAX_POINTS = 60;
+
+function timeLabels(count) {
+  const labels = [];
+  const now = Date.now();
+  for (let i = count - 1; i >= 0; i--) {
+    labels.push(fmtTime(new Date(now - i * 2000)));
+  }
+  return labels;
+}
+
+function seedData(count, baseline, variance) {
+  const arr = [];
+  for (let i = 0; i < count; i++) arr.push(+(baseline + rand(-variance, variance)).toFixed(1));
+  return arr;
+}
+
+let reqLabels = timeLabels(MAX_POINTS);
+let reqData   = seedData(MAX_POINTS, 150, 20);
+
+const chartRequests = echarts.init(document.getElementById('chartRequests'), null, { renderer: 'canvas' });
+chartRequests.setOption({
+  animation: true,
+  tooltip: { trigger: 'axis', backgroundColor: '#1a1d27', borderColor: '#2a2d37', textStyle: { color: '#e0e0e0' } },
+  grid: { left: 50, right: 20, top: 20, bottom: 30 },
+  xAxis: {
+    type: 'category', data: reqLabels, boundaryGap: false,
+    axisLine: { lineStyle: { color: '#2a2d37' } },
+    axisLabel: { color: '#8b8fa3', fontSize: 10, interval: 9 },
+    axisTick: { show: false }
+  },
+  yAxis: {
+    type: 'value', min: 100, max: 200,
+    splitLine: { lineStyle: { color: '#2a2d37' } },
+    axisLabel: { color: '#8b8fa3', fontSize: 10 },
+    axisLine: { show: false }
+  },
+  series: [{
+    type: 'line', data: reqData, smooth: true, symbol: 'none', lineStyle: { color: '#22d3ee', width: 2 },
+    areaStyle: {
+      color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+        { offset: 0, color: 'rgba(34,211,238,0.35)' },
+        { offset: 1, color: 'rgba(34,211,238,0.02)' }
+      ])
+    }
+  }]
+});
+
+function updateRequestChart() {
+  if (paused) return;
+  reqLabels.shift();
+  reqLabels.push(fmtTime(new Date()));
+  reqData.shift();
+  reqData.push(+(150 + rand(-25, 25)).toFixed(1));
+  chartRequests.setOption({ xAxis: { data: reqLabels }, series: [{ data: reqData }] });
+}
+intervals.push(setInterval(updateRequestChart, 2000));
+
+/* ================================================================
+   5. ROLLING MULTI-LINE — Latency P50 / P95 / P99
+   ================================================================ */
+let latLabels = timeLabels(MAX_POINTS);
+let latP50 = seedData(MAX_POINTS, 0.8, 0.2);
+let latP95 = seedData(MAX_POINTS, 2.0, 0.5);
+let latP99 = seedData(MAX_POINTS, 5.0, 1.0);
+
+const chartLatency = echarts.init(document.getElementById('chartLatency'), null, { renderer: 'canvas' });
+chartLatency.setOption({
+  animation: true,
+  tooltip: {
+    trigger: 'axis', backgroundColor: '#1a1d27', borderColor: '#2a2d37', textStyle: { color: '#e0e0e0' },
+    formatter: params => params.map(p => `<span style="color:${p.color}">${p.seriesName}</span>: ${p.value}s`).join('<br>')
+  },
+  legend: { data: ['P50','P95','P99'], textStyle: { color: '#8b8fa3', fontSize: 11 }, top: 0, right: 0 },
+  grid: { left: 50, right: 20, top: 32, bottom: 30 },
+  xAxis: {
+    type: 'category', data: latLabels, boundaryGap: false,
+    axisLine: { lineStyle: { color: '#2a2d37' } },
+    axisLabel: { color: '#8b8fa3', fontSize: 10, interval: 9 },
+    axisTick: { show: false }
+  },
+  yAxis: {
+    type: 'value', min: 0, max: 8,
+    splitLine: { lineStyle: { color: '#2a2d37' } },
+    axisLabel: { color: '#8b8fa3', fontSize: 10, formatter: '{value}s' },
+    axisLine: { show: false }
+  },
+  series: [
+    { name: 'P50', type: 'line', data: latP50, smooth: true, symbol: 'none', lineStyle: { color: '#10b981', width: 2 }, itemStyle: { color: '#10b981' } },
+    { name: 'P95', type: 'line', data: latP95, smooth: true, symbol: 'none', lineStyle: { color: '#f59e0b', width: 2 }, itemStyle: { color: '#f59e0b' } },
+    { name: 'P99', type: 'line', data: latP99, smooth: true, symbol: 'none', lineStyle: { color: '#f43f5e', width: 2 }, itemStyle: { color: '#f43f5e' } },
+  ]
+});
+
+function updateLatencyChart() {
+  if (paused) return;
+  latLabels.shift(); latLabels.push(fmtTime(new Date()));
+  latP50.shift(); latP50.push(+clamp(0.8 + rand(-0.3, 0.3), 0.3, 1.5).toFixed(2));
+  latP95.shift(); latP95.push(+clamp(2.0 + rand(-0.6, 0.6), 1.0, 3.5).toFixed(2));
+  latP99.shift(); latP99.push(+clamp(5.0 + rand(-1.2, 1.2), 2.5, 7.5).toFixed(2));
+  chartLatency.setOption({ xAxis: { data: latLabels }, series: [{ data: latP50 },{ data: latP95 },{ data: latP99 }] });
+}
+intervals.push(setInterval(updateLatencyChart, 2000));
+
+/* ================================================================
+   6. SERVICE STATUS INDICATORS
+   ================================================================ */
+const services = [
+  { id: 'llm-api',     name: 'LLM API' },
+  { id: 'database',    name: 'Database' },
+  { id: 'redis',       name: 'Redis' },
+  { id: 'websocket',   name: 'WebSocket' },
+  { id: 'mcp-server',  name: 'MCP Server' },
+  { id: 'tool-runner', name: 'Tool Runner' },
+  { id: 'queue',       name: 'Queue' },
+  { id: 'scheduler',   name: 'Scheduler' },
+];
+
+const statusStates = {};   // id -> 'green'|'yellow'|'red'
+const statusRow = document.getElementById('statusRow');
+
+services.forEach(s => {
+  statusStates[s.id] = 'green';
+  const item = document.createElement('div');
+  item.className = 'status-item';
+  item.innerHTML = `<span class="status-dot green" id="dot-${s.id}"></span>
+    <span class="status-name">${s.name}</span>
+    <span class="status-label" id="lbl-${s.id}">Healthy</span>`;
+  statusRow.appendChild(item);
+});
+
+function setServiceStatus(id, status) {
+  const dot = document.getElementById('dot-' + id);
+  const lbl = document.getElementById('lbl-' + id);
+  dot.className = 'status-dot ' + status;
+  statusStates[id] = status;
+  if (status === 'green')  lbl.textContent = 'Healthy';
+  if (status === 'yellow') lbl.textContent = 'Degraded';
+  if (status === 'red')    lbl.textContent = 'Down';
+}
+
+function updateStatuses() {
+  if (paused) return;
+  /* Occasionally degrade a random service, then recover */
+  if (Math.random() < 0.3) {
+    const svc = services[randInt(0, services.length - 1)];
+    const severity = Math.random() < 0.7 ? 'yellow' : 'red';
+    setServiceStatus(svc.id, severity);
+    /* Recover after 4-8 seconds */
+    setTimeout(() => setServiceStatus(svc.id, 'green'), randInt(4, 8) * 1000);
+  }
+}
+intervals.push(setInterval(updateStatuses, 3000));
+
+/* ================================================================
+   7. ACTIVITY LOG
+   ================================================================ */
+const logArea = document.getElementById('logArea');
+const agents = ['Coder', 'Reviewer', 'Planner', 'Researcher', 'Debugger', 'Deployer'];
+const tools  = ['file_read', 'file_write', 'bash_exec', 'web_search', 'code_lint', 'test_runner', 'git_commit'];
+const models = ['claude-opus-4', 'claude-sonnet-4', 'claude-haiku-3'];
+
+const logTemplates = [
+  { level: 'info',    fn: () => `Mission #${randInt(200,400)} started — agent: ${agents[randInt(0,agents.length-1)]}` },
+  { level: 'success', fn: () => `LLM call completed — ${randInt(400,4000).toLocaleString()} tokens, ${rand(0.4,3.5).toFixed(1)}s` },
+  { level: 'info',    fn: () => `Tool invoked: ${tools[randInt(0,tools.length-1)]} — duration ${randInt(50,1200)}ms` },
+  { level: 'success', fn: () => `Mission #${randInt(200,400)} completed successfully — ${randInt(3,18)} steps` },
+  { level: 'warn',    fn: () => `High latency detected — ${tools[randInt(0,tools.length-1)]} took ${rand(2.5,8.0).toFixed(1)}s` },
+  { level: 'error',   fn: () => `Rate limit hit on ${models[randInt(0,models.length-1)]} — retrying in ${randInt(1,5)}s` },
+  { level: 'info',    fn: () => `WebSocket connection refreshed — ${randInt(12,60)} active clients` },
+  { level: 'debug',   fn: () => `Cache hit ratio: ${rand(85,99).toFixed(1)}% — Redis pool: ${randInt(5,20)} connections` },
+  { level: 'success', fn: () => `Deployment #${randInt(100,200)} rolled out — 0 errors` },
+  { level: 'warn',    fn: () => `Memory usage spike: ${rand(70,92).toFixed(0)}% — GC triggered` },
+  { level: 'info',    fn: () => `Queue depth: ${randInt(0,45)} tasks — avg wait ${rand(0.1,2.0).toFixed(1)}s` },
+  { level: 'error',   fn: () => `Connection timeout — Database replica #${randInt(1,3)} — reconnecting` },
+  { level: 'info',    fn: () => `Scheduler tick — ${randInt(2,8)} jobs dispatched` },
+  { level: 'success', fn: () => `Health check passed — all ${services.length} services operational` },
+  { level: 'debug',   fn: () => `Token budget remaining: ${randInt(10000,90000).toLocaleString()} / 100,000` },
+];
+
+const levelColors = { info: 'log-info', success: 'log-success', warn: 'log-warn', error: 'log-error', debug: 'log-debug' };
+const levelTags   = { info: 'INFO ', success: ' OK  ', warn: 'WARN ', error: 'ERROR', debug: 'DEBUG' };
+
+function addLogEntry() {
+  if (paused) return;
+  const tpl = logTemplates[randInt(0, logTemplates.length - 1)];
+  const ts = fmtTime(new Date());
+  const entry = document.createElement('div');
+  entry.className = 'log-entry ' + levelColors[tpl.level];
+  entry.innerHTML = `<span class="ts">[${ts}]</span> <span style="opacity:.6">${levelTags[tpl.level]}</span> ${tpl.fn()}`;
+  logArea.appendChild(entry);
+  /* Keep max ~120 entries */
+  while (logArea.childElementCount > 120) logArea.removeChild(logArea.firstChild);
+  logArea.scrollTop = logArea.scrollHeight;
+}
+
+/* Seed some initial log entries */
+for (let i = 0; i < 8; i++) addLogEntry();
+
+/* New log every 1-3 seconds */
+function scheduleLog() {
+  const delay = randInt(1000, 3000);
+  setTimeout(() => { addLogEntry(); scheduleLog(); }, delay);
+}
+scheduleLog();
+
+/* ================================================================
+   8. RESIZE HANDLING
+   ================================================================ */
+window.addEventListener('resize', () => {
+  gaugeCpu.resize();
+  gaugeMemory.resize();
+  gaugeApi.resize();
+  chartRequests.resize();
+  chartLatency.resize();
+});
+</script>
+</body>
+</html>

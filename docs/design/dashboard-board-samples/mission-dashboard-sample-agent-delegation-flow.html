@@ -1,0 +1,644 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agent Delegation Flow — Multi-Agent Orchestration View</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.6.0/dist/echarts.min.js"></script>
+<style>
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  :root{
+    --bg:#0f1117;--card:#1a1d27;--border:#2a2d37;
+    --text:#e0e0e0;--muted:#8b8fa3;
+    --supervisor:#6366f1;--missionlead:#818cf8;
+    --researcher:#22d3ee;--coder:#10b981;
+    --reviewer:#f59e0b;--error:#f43f5e;
+  }
+  html{font-size:15px}
+  body{
+    background:var(--bg);color:var(--text);
+    font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
+    line-height:1.55;padding:0;min-height:100vh;
+  }
+
+  /* ── layout ── */
+  .dashboard{max-width:1440px;margin:0 auto;padding:28px 32px 48px}
+  .row{display:flex;gap:20px;flex-wrap:wrap;margin-bottom:20px}
+  .col-full{flex:1 1 100%}
+  .col-half{flex:1 1 calc(50% - 10px);min-width:380px}
+
+  /* ── header ── */
+  .header{margin-bottom:28px}
+  .header h1{
+    font-size:1.65rem;font-weight:700;letter-spacing:-.02em;
+    background:linear-gradient(135deg,var(--supervisor),var(--researcher));
+    -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+    background-clip:text;
+  }
+  .header .timestamp{color:var(--muted);font-size:.82rem;margin-top:4px}
+  .header .synopsis{
+    color:var(--muted);font-size:.88rem;margin-top:10px;
+    max-width:800px;line-height:1.6;
+  }
+
+  /* ── interactivity banner ── */
+  .interaction-banner{
+    background:linear-gradient(135deg,rgba(99,102,241,.12),rgba(34,211,238,.08));
+    border:1px solid rgba(99,102,241,.25);border-radius:10px;
+    padding:12px 20px;margin-bottom:24px;
+    font-size:.82rem;color:var(--muted);display:flex;align-items:center;gap:10px;
+  }
+  .interaction-banner .icon{font-size:1.1rem}
+
+  /* ── cards ── */
+  .card{
+    background:var(--card);border:1px solid var(--border);
+    border-radius:12px;padding:22px 26px;position:relative;overflow:hidden;
+  }
+  .card::before{
+    content:'';position:absolute;top:0;left:0;right:0;height:2px;
+    background:linear-gradient(90deg,var(--supervisor),var(--researcher));
+    opacity:.6;
+  }
+  .card-title{
+    font-size:.78rem;text-transform:uppercase;letter-spacing:.08em;
+    color:var(--muted);font-weight:600;margin-bottom:6px;
+  }
+  .chart-title{
+    font-size:1.05rem;font-weight:600;color:var(--text);margin-bottom:4px;
+  }
+  .chart-subtitle{font-size:.78rem;color:var(--muted);margin-bottom:14px}
+
+  /* ── KPI cards ── */
+  .kpi-row{display:flex;gap:20px;flex-wrap:wrap;margin-bottom:20px}
+  .kpi{
+    flex:1 1 200px;background:var(--card);border:1px solid var(--border);
+    border-radius:12px;padding:22px 26px;position:relative;overflow:hidden;
+    transition:transform .2s,box-shadow .2s;
+  }
+  .kpi:hover{transform:translateY(-2px);box-shadow:0 8px 24px rgba(0,0,0,.35)}
+  .kpi .label{
+    font-size:.76rem;text-transform:uppercase;letter-spacing:.08em;
+    color:var(--muted);font-weight:600;margin-bottom:8px;
+  }
+  .kpi .value{font-size:2.1rem;font-weight:700;letter-spacing:-.02em}
+  .kpi .sub{font-size:.78rem;color:var(--muted);margin-top:4px}
+  .kpi.delegations .value{color:var(--supervisor)}
+  .kpi.depth .value{color:var(--researcher)}
+  .kpi.success .value{color:var(--coder)}
+  .kpi .accent-bar{
+    position:absolute;top:0;left:0;right:0;height:3px;
+  }
+  .kpi.delegations .accent-bar{background:linear-gradient(90deg,var(--supervisor),var(--missionlead))}
+  .kpi.depth .accent-bar{background:linear-gradient(90deg,var(--researcher),var(--coder))}
+  .kpi.success .accent-bar{background:linear-gradient(90deg,var(--coder),var(--reviewer))}
+
+  /* ── chart containers ── */
+  .chart-box{width:100%;position:relative}
+
+  /* ── responsive ── */
+  @media(max-width:860px){
+    .dashboard{padding:16px 12px 36px}
+    .col-half{flex:1 1 100%;min-width:0}
+    .kpi-row{flex-direction:column}
+  }
+</style>
+</head>
+<body>
+<div class="dashboard">
+
+  <!-- ═══════ HEADER ═══════ -->
+  <div class="header">
+    <h1>Agent Delegation Flow &mdash; Multi-Agent Orchestration View</h1>
+    <div class="timestamp">Generated 2026-02-13 14:32:07 UTC &middot; Mission #M-20260213-0042 &middot; Runtime 38.4 s</div>
+    <div class="synopsis">
+      Visualizes how the supervisor delegates tasks through the agent hierarchy,
+      showing token flow and handoff patterns. Each link represents a delegation
+      event with associated token cost, while node sizes reflect cumulative
+      activity across the mission lifecycle.
+    </div>
+  </div>
+
+  <!-- ═══════ INTERACTIVITY BANNER ═══════ -->
+  <div class="interaction-banner">
+    <span class="icon">&#9881;</span>
+    <span>
+      <strong>Interactive:</strong>
+      Hover nodes/links for details.
+      Drag Sankey nodes to rearrange.
+      Click legend items to filter series.
+      Use data-zoom handles on the timeline chart.
+    </span>
+  </div>
+
+  <!-- ═══════ KPI CARDS ═══════ -->
+  <div class="kpi-row">
+    <div class="kpi delegations">
+      <div class="accent-bar"></div>
+      <div class="label">Total Delegations</div>
+      <div class="value" id="kpiDelegations">0</div>
+      <div class="sub">+12% vs prior mission</div>
+    </div>
+    <div class="kpi depth">
+      <div class="accent-bar"></div>
+      <div class="label">Avg Chain Depth</div>
+      <div class="value" id="kpiDepth">0</div>
+      <div class="sub">agents per delegation path</div>
+    </div>
+    <div class="kpi success">
+      <div class="accent-bar"></div>
+      <div class="label">Delegation Success Rate</div>
+      <div class="value" id="kpiSuccess">0%</div>
+      <div class="sub">2 retries &middot; 0 failures</div>
+    </div>
+  </div>
+
+  <!-- ═══════ SANKEY ═══════ -->
+  <div class="row">
+    <div class="col-full card">
+      <div class="chart-title">Token Flow: Agent &#8594; Agent &#8594; Tools</div>
+      <div class="chart-subtitle">Link width proportional to token cost. Drag nodes to rearrange. Hover for details.</div>
+      <div id="sankeyChart" class="chart-box" style="height:420px"></div>
+    </div>
+  </div>
+
+  <!-- ═══════ TREE  +  FORCE GRAPH ═══════ -->
+  <div class="row">
+    <div class="col-half card">
+      <div class="chart-title">Agent Hierarchy</div>
+      <div class="chart-subtitle">Organisational tree &mdash; supervisor to worker agents</div>
+      <div id="treeChart" class="chart-box" style="height:400px"></div>
+    </div>
+    <div class="col-half card">
+      <div class="chart-title">Agent Communication Frequency</div>
+      <div class="chart-subtitle">Force-directed graph &mdash; node size = call count, edge width = interactions</div>
+      <div id="forceChart" class="chart-box" style="height:400px"></div>
+    </div>
+  </div>
+
+  <!-- ═══════ GANTT TIMELINE ═══════ -->
+  <div class="row">
+    <div class="col-full card">
+      <div class="chart-title">Delegation Sequence (Last Mission)</div>
+      <div class="chart-subtitle">Gantt-style timeline showing overlapping agent executions. Drag the zoom bar to navigate.</div>
+      <div id="ganttChart" class="chart-box" style="height:370px"></div>
+    </div>
+  </div>
+
+</div><!-- /dashboard -->
+
+<script>
+/* ═══════════════════════════════════════════
+   PALETTE
+   ═══════════════════════════════════════════ */
+const C = {
+  supervisor : '#6366f1',
+  missionlead: '#818cf8',
+  researcher : '#22d3ee',
+  coder      : '#10b981',
+  reviewer   : '#f59e0b',
+  error      : '#f43f5e',
+  bg         : '#0f1117',
+  card       : '#1a1d27',
+  border     : '#2a2d37',
+  text       : '#e0e0e0',
+  muted      : '#8b8fa3',
+};
+
+const agentColor = {
+  'Supervisor' : C.supervisor,
+  'MissionLead': C.missionlead,
+  'Researcher' : C.researcher,
+  'Coder'      : C.coder,
+  'Reviewer'   : C.reviewer,
+};
+
+const toolColor = '#4b5563';
+
+/* ── helpers ── */
+function animateValue(el, end, suffix, duration) {
+  suffix = suffix || '';
+  duration = duration || 1200;
+  const isFloat = String(end).includes('.');
+  let start = 0, startTime = null;
+  function step(ts) {
+    if (!startTime) startTime = ts;
+    const p = Math.min((ts - startTime) / duration, 1);
+    const ease = 1 - Math.pow(1 - p, 3);
+    const cur = start + (end - start) * ease;
+    el.textContent = (isFloat ? cur.toFixed(1) : Math.round(cur)) + suffix;
+    if (p < 1) requestAnimationFrame(step);
+  }
+  requestAnimationFrame(step);
+}
+
+/* KPI animation */
+animateValue(document.getElementById('kpiDelegations'), 47, '', 1400);
+animateValue(document.getElementById('kpiDepth'), 2.3, '', 1400);
+animateValue(document.getElementById('kpiSuccess'), 95.7, '%', 1400);
+
+/* ═══════════════════════════════════════════
+   1. SANKEY — Token Flow
+   ═══════════════════════════════════════════ */
+(function () {
+  const chart = echarts.init(document.getElementById('sankeyChart'), null, { renderer: 'canvas' });
+
+  const nodes = [
+    // Column 0 — Orchestrators
+    { name: 'Supervisor',  itemStyle: { color: C.supervisor  } },
+    // Column 1 — Workers
+    { name: 'MissionLead', itemStyle: { color: C.missionlead } },
+    { name: 'Coder',       itemStyle: { color: C.coder       } },
+    { name: 'Researcher',  itemStyle: { color: C.researcher  } },
+    { name: 'Reviewer',    itemStyle: { color: C.reviewer    } },
+    // Column 2 — Tools
+    { name: 'Read',        itemStyle: { color: '#6b7280' } },
+    { name: 'Edit',        itemStyle: { color: '#6b7280' } },
+    { name: 'Bash',        itemStyle: { color: '#6b7280' } },
+    { name: 'Grep',        itemStyle: { color: '#6b7280' } },
+    { name: 'WebFetch',    itemStyle: { color: '#6b7280' } },
+    { name: 'db_query',    itemStyle: { color: '#6b7280' } },
+  ];
+
+  const links = [
+    // Supervisor → Workers
+    { source: 'Supervisor', target: 'MissionLead', value: 12400, tokens: 12400, cost: 0.19 },
+    { source: 'Supervisor', target: 'Coder',       value:  9800, tokens:  9800, cost: 0.15 },
+    { source: 'Supervisor', target: 'Researcher',  value:  7200, tokens:  7200, cost: 0.11 },
+    { source: 'Supervisor', target: 'Reviewer',    value:  5100, tokens:  5100, cost: 0.08 },
+    // MissionLead → Tools
+    { source: 'MissionLead', target: 'Read',      value: 3200, tokens: 3200, cost: 0.05 },
+    { source: 'MissionLead', target: 'Grep',      value: 2800, tokens: 2800, cost: 0.04 },
+    { source: 'MissionLead', target: 'Bash',      value: 2100, tokens: 2100, cost: 0.03 },
+    { source: 'MissionLead', target: 'db_query',  value: 4300, tokens: 4300, cost: 0.07 },
+    // Coder → Tools
+    { source: 'Coder', target: 'Edit',     value: 4100, tokens: 4100, cost: 0.06 },
+    { source: 'Coder', target: 'Bash',     value: 3400, tokens: 3400, cost: 0.05 },
+    { source: 'Coder', target: 'Read',     value: 2300, tokens: 2300, cost: 0.04 },
+    // Researcher → Tools
+    { source: 'Researcher', target: 'WebFetch', value: 3600, tokens: 3600, cost: 0.05 },
+    { source: 'Researcher', target: 'Grep',    value: 2100, tokens: 2100, cost: 0.03 },
+    { source: 'Researcher', target: 'Read',    value: 1500, tokens: 1500, cost: 0.02 },
+    // Reviewer → Tools
+    { source: 'Reviewer', target: 'Read',   value: 2600, tokens: 2600, cost: 0.04 },
+    { source: 'Reviewer', target: 'Grep',   value: 1400, tokens: 1400, cost: 0.02 },
+    { source: 'Reviewer', target: 'Bash',   value: 1100, tokens: 1100, cost: 0.02 },
+  ];
+
+  chart.setOption({
+    tooltip: {
+      trigger: 'item',
+      backgroundColor: 'rgba(26,29,39,.95)',
+      borderColor: C.border,
+      textStyle: { color: C.text, fontSize: 12 },
+      formatter: function (p) {
+        if (p.dataType === 'edge') {
+          var d = p.data;
+          return '<b>' + d.source + ' &#8594; ' + d.target + '</b><br/>' +
+                 'Tokens: <b>' + d.tokens.toLocaleString() + '</b><br/>' +
+                 'Est. cost: <b>$' + d.cost.toFixed(2) + '</b>';
+        }
+        return '<b>' + p.name + '</b>';
+      }
+    },
+    series: [{
+      type: 'sankey',
+      layout: 'none',
+      draggable: true,
+      emphasis: { focus: 'adjacency' },
+      nodeAlign: 'left',
+      nodeWidth: 22,
+      nodeGap: 14,
+      layoutIterations: 0,
+      left: 40, right: 40, top: 20, bottom: 20,
+      data: nodes,
+      links: links,
+      lineStyle: {
+        color: 'gradient',
+        opacity: 0.38,
+        curveness: 0.5,
+      },
+      label: {
+        color: C.text,
+        fontSize: 12,
+        fontWeight: 600,
+      },
+      itemStyle: {
+        borderWidth: 0,
+      },
+      animationDuration: 1500,
+      animationEasing: 'cubicOut',
+    }]
+  });
+
+  window.addEventListener('resize', function () { chart.resize(); });
+})();
+
+/* ═══════════════════════════════════════════
+   2. TREE — Agent Hierarchy
+   ═══════════════════════════════════════════ */
+(function () {
+  const chart = echarts.init(document.getElementById('treeChart'), null, { renderer: 'canvas' });
+
+  const treeData = {
+    name: 'Supervisor',
+    label: '🎯 Supervisor\n47 calls',
+    itemStyle: { color: C.supervisor, borderColor: C.supervisor },
+    children: [
+      {
+        name: 'MissionLead',
+        label: '📋 MissionLead\n18 calls',
+        itemStyle: { color: C.missionlead, borderColor: C.missionlead },
+        children: [
+          {
+            name: 'Coder',
+            label: '💻 Coder\n12 calls',
+            itemStyle: { color: C.coder, borderColor: C.coder },
+          },
+          {
+            name: 'Researcher',
+            label: '🔍 Researcher\n9 calls',
+            itemStyle: { color: C.researcher, borderColor: C.researcher },
+          },
+          {
+            name: 'Reviewer',
+            label: '✅ Reviewer\n8 calls',
+            itemStyle: { color: C.reviewer, borderColor: C.reviewer },
+          }
+        ]
+      }
+    ]
+  };
+
+  chart.setOption({
+    tooltip: {
+      trigger: 'item',
+      backgroundColor: 'rgba(26,29,39,.95)',
+      borderColor: C.border,
+      textStyle: { color: C.text, fontSize: 12 },
+      formatter: function (p) {
+        var d = p.data;
+        return '<b>' + d.name + '</b><br/>' + (d.label || '');
+      }
+    },
+    series: [{
+      type: 'tree',
+      data: [treeData],
+      top: 30, bottom: 30, left: 80, right: 180,
+      orient: 'LR',
+      symbolSize: 18,
+      edgeShape: 'polyline',
+      edgeForkPosition: '50%',
+      initialTreeDepth: -1,
+      lineStyle: {
+        color: C.border,
+        width: 2,
+        curveness: 0.3,
+      },
+      label: {
+        position: 'right',
+        verticalAlign: 'middle',
+        align: 'left',
+        color: C.text,
+        fontSize: 12,
+        fontWeight: 500,
+        lineHeight: 18,
+        formatter: function (p) { return p.data.label || p.data.name; },
+        rich: {}
+      },
+      leaves: {
+        label: { position: 'right', align: 'left' }
+      },
+      emphasis: {
+        focus: 'descendant',
+      },
+      expandAndCollapse: false,
+      animationDuration: 800,
+      animationDurationUpdate: 600,
+    }]
+  });
+
+  window.addEventListener('resize', function () { chart.resize(); });
+})();
+
+/* ═══════════════════════════════════════════
+   3. FORCE GRAPH — Communication Frequency
+   ═══════════════════════════════════════════ */
+(function () {
+  const chart = echarts.init(document.getElementById('forceChart'), null, { renderer: 'canvas' });
+
+  const gNodes = [
+    { name: 'Supervisor',  symbolSize: 52, itemStyle: { color: C.supervisor  }, category: 0, callCount: 47 },
+    { name: 'MissionLead', symbolSize: 42, itemStyle: { color: C.missionlead }, category: 1, callCount: 18 },
+    { name: 'Coder',       symbolSize: 36, itemStyle: { color: C.coder       }, category: 2, callCount: 12 },
+    { name: 'Researcher',  symbolSize: 32, itemStyle: { color: C.researcher  }, category: 3, callCount:  9 },
+    { name: 'Reviewer',    symbolSize: 30, itemStyle: { color: C.reviewer    }, category: 4, callCount:  8 },
+  ];
+
+  const gLinks = [
+    { source: 'Supervisor',  target: 'MissionLead', value: 18, lineStyle: { width: 5 } },
+    { source: 'Supervisor',  target: 'Coder',       value: 10, lineStyle: { width: 3 } },
+    { source: 'Supervisor',  target: 'Researcher',  value:  7, lineStyle: { width: 2.5 } },
+    { source: 'Supervisor',  target: 'Reviewer',    value:  5, lineStyle: { width: 2 } },
+    { source: 'MissionLead', target: 'Coder',       value: 14, lineStyle: { width: 4 } },
+    { source: 'MissionLead', target: 'Researcher',  value: 11, lineStyle: { width: 3.5 } },
+    { source: 'MissionLead', target: 'Reviewer',    value:  8, lineStyle: { width: 2.5 } },
+    { source: 'Coder',       target: 'Reviewer',    value:  6, lineStyle: { width: 2 } },
+    { source: 'Researcher',  target: 'Reviewer',    value:  4, lineStyle: { width: 1.5 } },
+    { source: 'Researcher',  target: 'Coder',       value:  3, lineStyle: { width: 1.2 } },
+  ];
+
+  const categories = [
+    { name: 'Supervisor',  itemStyle: { color: C.supervisor  } },
+    { name: 'MissionLead', itemStyle: { color: C.missionlead } },
+    { name: 'Coder',       itemStyle: { color: C.coder       } },
+    { name: 'Researcher',  itemStyle: { color: C.researcher  } },
+    { name: 'Reviewer',    itemStyle: { color: C.reviewer    } },
+  ];
+
+  chart.setOption({
+    tooltip: {
+      backgroundColor: 'rgba(26,29,39,.95)',
+      borderColor: C.border,
+      textStyle: { color: C.text, fontSize: 12 },
+      formatter: function (p) {
+        if (p.dataType === 'edge') {
+          return '<b>' + p.data.source + ' ↔ ' + p.data.target + '</b><br/>Interactions: <b>' + p.data.value + '</b>';
+        }
+        return '<b>' + p.data.name + '</b><br/>Calls: <b>' + p.data.callCount + '</b>';
+      }
+    },
+    legend: {
+      data: categories.map(function (c) { return c.name; }),
+      bottom: 5,
+      textStyle: { color: C.muted, fontSize: 11 },
+      itemWidth: 12, itemHeight: 12,
+    },
+    series: [{
+      type: 'graph',
+      layout: 'force',
+      roam: true,
+      draggable: true,
+      categories: categories,
+      data: gNodes,
+      links: gLinks,
+      force: {
+        repulsion: 280,
+        gravity: 0.12,
+        edgeLength: [80, 180],
+        layoutAnimation: true,
+      },
+      label: {
+        show: true,
+        position: 'bottom',
+        color: C.text,
+        fontSize: 11,
+        fontWeight: 500,
+        distance: 6,
+      },
+      lineStyle: {
+        color: 'source',
+        opacity: 0.45,
+        curveness: 0.15,
+      },
+      emphasis: {
+        focus: 'adjacency',
+        lineStyle: { opacity: 0.85, width: 4 },
+      },
+      animationDuration: 1500,
+      animationEasingUpdate: 'quinticInOut',
+    }]
+  });
+
+  window.addEventListener('resize', function () { chart.resize(); });
+})();
+
+/* ═══════════════════════════════════════════
+   4. GANTT TIMELINE — Delegation Sequence
+   ═══════════════════════════════════════════ */
+(function () {
+  const chart = echarts.init(document.getElementById('ganttChart'), null, { renderer: 'canvas' });
+
+  // Time base: seconds from mission start
+  const events = [
+    { agent: 'Supervisor',  task: 'Plan mission',         start: 0.0,  end: 2.4  },
+    { agent: 'MissionLead', task: 'Decompose tasks',      start: 2.4,  end: 5.8  },
+    { agent: 'Researcher',  task: 'Gather context',       start: 5.8,  end: 12.1 },
+    { agent: 'Coder',       task: 'Implement feature',    start: 8.5,  end: 22.3 },
+    { agent: 'Researcher',  task: 'Lookup API docs',      start: 13.0, end: 17.6 },
+    { agent: 'Reviewer',    task: 'Review code pass 1',   start: 22.3, end: 28.7 },
+    { agent: 'Coder',       task: 'Apply review fixes',   start: 28.7, end: 33.5 },
+    { agent: 'Supervisor',  task: 'Final validation',     start: 33.5, end: 38.4 },
+  ];
+
+  // Y-axis categories (each event gets a row)
+  const yLabels = events.map(function (e, i) { return e.agent + ': ' + e.task; });
+
+  // Build custom bar data: each bar starts at 'start' with width 'end-start'
+  var data = events.map(function (e, i) {
+    return {
+      value: [e.start, i, e.end - e.start],
+      agent: e.agent,
+      task: e.task,
+      startT: e.start,
+      endT: e.end,
+      itemStyle: {
+        color: agentColor[e.agent] || C.muted,
+        borderRadius: [4, 4, 4, 4],
+      }
+    };
+  });
+
+  chart.setOption({
+    tooltip: {
+      backgroundColor: 'rgba(26,29,39,.95)',
+      borderColor: C.border,
+      textStyle: { color: C.text, fontSize: 12 },
+      formatter: function (p) {
+        var d = p.data;
+        return '<b>' + d.agent + '</b><br/>' +
+               'Task: ' + d.task + '<br/>' +
+               'Start: <b>' + d.startT.toFixed(1) + 's</b><br/>' +
+               'End: <b>' + d.endT.toFixed(1) + 's</b><br/>' +
+               'Duration: <b>' + (d.endT - d.startT).toFixed(1) + 's</b>';
+      }
+    },
+    grid: { left: 210, right: 40, top: 20, bottom: 60 },
+    xAxis: {
+      type: 'value',
+      name: 'Time (seconds)',
+      nameTextStyle: { color: C.muted, fontSize: 11 },
+      min: 0, max: 42,
+      axisLabel: { color: C.muted, fontSize: 11, formatter: '{value}s' },
+      axisLine: { lineStyle: { color: C.border } },
+      splitLine: { lineStyle: { color: C.border, opacity: 0.3 } },
+    },
+    yAxis: {
+      type: 'category',
+      data: yLabels,
+      inverse: true,
+      axisLabel: {
+        color: C.text,
+        fontSize: 11,
+        fontWeight: 500,
+        width: 190,
+        overflow: 'truncate',
+      },
+      axisLine: { lineStyle: { color: C.border } },
+      splitLine: { show: false },
+    },
+    dataZoom: [
+      {
+        type: 'slider',
+        xAxisIndex: 0,
+        bottom: 8,
+        height: 18,
+        borderColor: C.border,
+        backgroundColor: 'rgba(26,29,39,.6)',
+        fillerColor: 'rgba(99,102,241,.2)',
+        handleStyle: { color: C.supervisor },
+        textStyle: { color: C.muted, fontSize: 10 },
+        dataBackground: {
+          lineStyle: { color: C.supervisor, opacity: 0.3 },
+          areaStyle: { color: C.supervisor, opacity: 0.08 },
+        },
+      }
+    ],
+    series: [{
+      type: 'custom',
+      renderItem: function (params, api) {
+        var categoryIndex = api.value(1);
+        var start = api.coord([api.value(0), categoryIndex]);
+        var end = api.coord([api.value(0) + api.value(2), categoryIndex]);
+        var height = api.size([0, 1])[1] * 0.55;
+
+        var rectShape = echarts.graphic.clipRectByRect(
+          { x: start[0], y: start[1] - height / 2, width: end[0] - start[0], height: height },
+          { x: params.coordSys.x, y: params.coordSys.y, width: params.coordSys.width, height: params.coordSys.height }
+        );
+
+        return rectShape && {
+          type: 'rect',
+          transition: ['shape'],
+          shape: rectShape,
+          style: api.style({
+            fill: api.visual('color'),
+            stroke: 'transparent',
+          }),
+          emphasis: {
+            style: { shadowBlur: 12, shadowColor: 'rgba(0,0,0,.5)' }
+          }
+        };
+      },
+      encode: { x: [0, 2], y: 1 },
+      data: data,
+      animationDuration: 1200,
+      animationEasing: 'cubicOut',
+    }]
+  });
+
+  window.addEventListener('resize', function () { chart.resize(); });
+})();
+</script>
+</body>
+</html>
