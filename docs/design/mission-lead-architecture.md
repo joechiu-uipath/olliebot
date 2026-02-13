@@ -185,7 +185,7 @@ User → WebSocket → Router (checks conversationId metadata)
   instructions that may be irrelevant for mission context — slight waste (~500 tokens)
 
 ### Code Complexity
-- **Medium**: No subclassing, but requires refactoring
+- **Medium initially, degrades over time**: No subclassing, but requires refactoring
 - `SupervisorAgentImpl` constructor currently hardcodes identity (`supervisor-main`)
   and loads `supervisor.md` — needs parameterization
 - Must extract `ensureConversation()` logic or disable it (mission conversations
@@ -196,15 +196,59 @@ User → WebSocket → Router (checks conversationId metadata)
 - No clean way to inject per-request mission context without constructor-time config
   (mission context is dynamic — different per conversation)
 
+### The `if...else` Divergence Problem
+This is a critical weakness that becomes worse over time. Even if the constructor is
+parameterized, behavioral differences between vanilla Supervisor and Mission Lead
+cannot be captured by config alone. Real divergence points include:
+
+1. **System prompt composition**: Mission Lead needs dynamic mission context injection
+   per request (pillar metrics, todo counts, strategy summaries). Vanilla Supervisor
+   does not. This requires an `if (isMissionInstance)` check in `buildSystemPrompt()`.
+
+2. **Conversation creation**: Vanilla Supervisor auto-creates conversations or finds
+   recent ones via `ensureConversation()`. Mission Lead must use the pre-existing
+   mission/pillar conversation — never create new ones. Another `if` branch.
+
+3. **Auto-naming**: Supervisor auto-names conversations after 3 messages. Mission
+   conversations have fixed names tied to the mission/pillar. Another `if` guard.
+
+4. **Command triggers**: Supervisor handles `#Deep Research`, `#Modify` commands.
+   These don't make sense in mission context — Mission Lead might have its own
+   commands (e.g., `#Run Cycle`, `#Update Metrics`). Shared `handleMessage()` needs
+   branching logic for which commands apply.
+
+5. **Delegation framing**: When Supervisor delegates, it frames it as "I'll hand this
+   off to a specialist." When Mission Lead delegates, the framing should be
+   "Let me have our researcher look into this" — same mechanism, different UX voice.
+
+6. **Future divergence**: As mission features grow (cycle triggers, metric alerts,
+   strategy recommendations), each new behavior adds another `if (isMissionInstance)`
+   scattered through the Supervisor class.
+
+These conditional branches would be **scattered across 5+ methods** in a 1,300-line
+class. Each one is individually small, but collectively they make the Supervisor harder
+to reason about — you'd need to mentally trace which code paths apply to which
+instance. This is the classic "feature flag in a shared class" anti-pattern: it starts
+clean and gradually turns the host class into a tangled mess of concerns.
+
+A subclass (Option D) keeps these deltas **co-located in one place**. You read
+`mission-lead.ts` and see all Mission Lead behavior in ~100 lines. You read
+`supervisor.ts` and it's purely about the vanilla Supervisor. The separation of
+concerns maps cleanly to file boundaries.
+
 ### Data Model Impact
 - None — reuses existing tables
 
 ### Future Flexibility
-- Medium: Adding mission-specific behavior requires either constructor params or
-  more subclassing anyway, which defeats the purpose
+- **Degrades**: Each new mission-specific behavior adds another conditional branch
+  to the shared class. Adding a second specialized agent (e.g., Sprint Lead) would
+  double the branching. Eventually you'd extract subclasses anyway — doing it upfront
+  (Option D) avoids the migration cost.
 
-**Verdict: Architecturally clean in theory, messy in practice** — Too many assumptions
-in `SupervisorAgentImpl` would need to be loosened.
+**Verdict: Architecturally clean in theory, degrades in practice** — Parameterization
+handles identity and prompt, but behavioral divergence inevitably introduces scattered
+conditionals. A thin subclass keeps the same deltas co-located and the parent class
+clean.
 
 ---
 
