@@ -16,6 +16,8 @@ import { CodeBlock } from './components/CodeBlock';
 
 // Extracted eval mode (fully self-contained)
 import { useEvalMode, EvalSidebarContent, EvalMainContent } from './App.Eval';
+// Extracted logs mode
+import { useLogsMode, LogsSidebarContent, LogsMainContent } from './App.Logs';
 
 // Extracted utilities
 import { transformMessages, shouldCollapseByDefault } from './utils/messageHelpers';
@@ -25,6 +27,7 @@ import { createMessageHandler } from './App.websocket';
 const MODES = {
   CHAT: 'chat',
   EVAL: 'eval',
+  TRACES: 'traces',
 };
 
 // Branding constants
@@ -53,7 +56,9 @@ function App() {
   const location = useLocation();
 
   // Derive mode from URL path
-  const mode = location.pathname.startsWith('/eval') ? MODES.EVAL : MODES.CHAT;
+  const mode = location.pathname.startsWith('/eval') ? MODES.EVAL
+    : location.pathname.startsWith('/traces') ? MODES.TRACES
+    : MODES.CHAT;
 
   const [messages, setMessages] = useState([]);
   const [attachments, setAttachments] = useState([]);
@@ -134,6 +139,9 @@ function App() {
 
   // Eval mode - managed by useEvalMode hook (state lives in App.Eval.jsx)
   const evalMode = useEvalMode();
+
+  // Logs mode - managed by useLogsMode hook (state lives in App.Logs.jsx)
+  const logsMode = useLogsMode();
 
   // Response pending state (disable input while waiting)
   const [isResponsePending, setIsResponsePending] = useState(false);
@@ -356,8 +364,23 @@ function App() {
   };
   const handleClose = () => setIsConnected(false);
 
+  // Ref for logs event handler to keep combined handler stable
+  const logsHandlerRef = useRef(logsMode.handleLogEvent);
+  useEffect(() => { logsHandlerRef.current = logsMode.handleLogEvent; }, [logsMode.handleLogEvent]);
+
+  // Combined WebSocket handler: main handler + logs handler
+  const [combinedMessageHandler] = useState(() => {
+    return (data) => {
+      handleMessage(data);
+      // Forward log events to logs mode
+      if (data.type && data.type.startsWith('log_')) {
+        logsHandlerRef.current?.(data);
+      }
+    };
+  });
+
   const { sendMessage, connectionState } = useWebSocket({
-    onMessage: handleMessage,
+    onMessage: combinedMessageHandler,
     onOpen: handleOpen,
     onClose: handleClose,
   });
@@ -1068,7 +1091,39 @@ function App() {
   };
 
   // Render tool result with special handling for images and audio
-  const renderToolResult = (result) => {
+  // files parameter is for files passed separately from result (e.g., from tool events)
+  const renderToolResult = (result, files) => {
+    // Handle files passed as separate parameter (takes precedence)
+    if (files && Array.isArray(files) && files.length > 0) {
+      const imageFiles = files.filter(f => f.dataUrl && f.dataUrl.startsWith('data:image/'));
+      const audioFiles = files.filter(f => f.dataUrl && f.dataUrl.startsWith('data:audio/'));
+      const hasMediaFiles = imageFiles.length > 0 || audioFiles.length > 0;
+
+      if (hasMediaFiles) {
+        return (
+          <div className="tool-result-with-media">
+            {imageFiles.map((file, idx) => (
+              <div key={`img-${idx}`} className="tool-result-image">
+                {imageFiles.length > 1 && <div className="tool-result-image-label">{file.name}:</div>}
+                <img src={file.dataUrl} alt={file.name} style={{ maxWidth: '100%', maxHeight: '400px', borderRadius: '4px' }} />
+              </div>
+            ))}
+            {audioFiles.map((file, idx) => (
+              <div key={`audio-${idx}`} className="tool-result-audio">
+                {audioFiles.length > 1 && <div className="tool-result-audio-label">{file.name}:</div>}
+                <AudioPlayer
+                  audioDataUrl={file.dataUrl}
+                  mimeType={file.mediaType}
+                />
+              </div>
+            ))}
+            {/* Also render the result output if present */}
+            {result && renderOutput(result)}
+          </div>
+        );
+      }
+    }
+
     if (!result) return null;
 
     // If result is a string, try to parse it as JSON first
@@ -1512,10 +1567,10 @@ function App() {
                   </pre>
                 </div>
               )}
-              {msg.result && (
+              {(msg.result || msg.files) && (
                 <div className="tool-details-section">
                   <div className="tool-details-label">Response</div>
-                  {renderToolResult(msg.result)}
+                  {renderToolResult(msg.result, msg.files)}
                 </div>
               )}
               {msg.error && (
@@ -1593,6 +1648,17 @@ function App() {
                 {msg.role === 'assistant' && msg.usage && !msg.isStreaming && (
                   <div className="message-usage-footer">
                     {formatTokenCount(msg.usage.inputTokens)} in / {formatTokenCount(msg.usage.outputTokens)} out · {msg.usage.llmDurationMs > 0 ? Math.round(msg.usage.outputTokens / (msg.usage.llmDurationMs / 1000)) : '?'} tok/s · {(msg.usage.llmDurationMs / 1000).toFixed(1)}s{msg.usage.modelId ? ` · ${msg.usage.modelId}` : ''}
+                    {msg.usage.traceId && (
+                      <button
+                        type="button"
+                        className="trace-link"
+                        onClick={() => navigate(`/traces?traceId=${msg.usage.traceId}`)}
+                        title="View trace details"
+                        aria-label="View trace details"
+                      >
+                        📋
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
@@ -1619,6 +1685,17 @@ function App() {
           {msg.role === 'assistant' && msg.usage && !msg.isStreaming && (
             <div className="message-usage-footer">
               {formatTokenCount(msg.usage.inputTokens)} in / {formatTokenCount(msg.usage.outputTokens)} out · {msg.usage.llmDurationMs > 0 ? Math.round(msg.usage.outputTokens / (msg.usage.llmDurationMs / 1000)) : '?'} tok/s · {(msg.usage.llmDurationMs / 1000).toFixed(1)}s{msg.usage.modelId ? ` · ${msg.usage.modelId}` : ''}
+              {msg.usage.traceId && (
+                <button
+                  type="button"
+                  className="trace-link"
+                  onClick={() => navigate(`/traces?traceId=${msg.usage.traceId}`)}
+                  title="View trace details"
+                  aria-label="View trace details"
+                >
+                  📋
+                </button>
+              )}
             </div>
           )}
           {msg.attachments && msg.attachments.length > 0 && (
@@ -1725,6 +1802,10 @@ function App() {
 
         {sidebarOpen && mode === MODES.EVAL && (
           <EvalSidebarContent evalMode={evalMode} />
+        )}
+
+        {sidebarOpen && mode === MODES.TRACES && (
+          <LogsSidebarContent logsMode={logsMode} />
         )}
 
         {sidebarOpen && mode === MODES.CHAT && (
@@ -2131,6 +2212,13 @@ function App() {
                 <span className="mode-icon">📊</span>
                 Eval
               </button>
+              <button
+                className={`mode-btn ${mode === MODES.TRACES ? 'active' : ''}`}
+                onClick={() => navigate('/traces')}
+              >
+                <span className="mode-icon">📋</span>
+                Traces
+              </button>
             </div>
           </div>
           <div className={`status ${isConnected ? 'connected' : 'disconnected'}`}>
@@ -2140,6 +2228,9 @@ function App() {
 
         {/* Eval Mode Content */}
         {mode === MODES.EVAL && <EvalMainContent evalMode={evalMode} evalState={evalState} />}
+
+        {/* Logs Mode Content */}
+        {mode === MODES.TRACES && <LogsMainContent logsMode={logsMode} />}
 
         {/* Chat Mode Content */}
         {mode === MODES.CHAT && (

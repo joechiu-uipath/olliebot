@@ -368,7 +368,7 @@ export class WebSocketChannel implements Channel {
       streamId: string;
       conversationId?: string;
       citations?: { sources: unknown[]; references: unknown[] };
-      usage?: { inputTokens: number; outputTokens: number; llmDurationMs: number; modelId?: string };
+      usage?: { inputTokens: number; outputTokens: number; llmDurationMs: number; modelId?: string; traceId?: string };
       timestamp: string;
     } = {
       type: 'stream_end',

@@ -399,7 +399,7 @@ export class RAGProjectService extends EventEmitter {
           try {
             manifest.summary = await this.summarizationProvider.summarize(
               fileSummaries,
-              'Summarize this collection of document summaries into a cohesive overview in 2-3 sentences. Describe what this project contains and its main themes.'
+              'Write a 1-sentence summary (max 50 words) of what this document collection covers. Be concise and specific.'
             );
           } catch (error) {
             console.warn(`[RAGProjects] Failed to generate project summary:`, error);
