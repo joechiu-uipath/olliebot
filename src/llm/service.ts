@@ -95,7 +95,7 @@ export class LLMService {
     this.traceStore.completeLlmCall(callId, {
       content: response.content,
       toolUse: withTools.toolUse,
-      stopReason: withTools.stopReason || (response as LLMResponse).stopReason,
+      stopReason: withTools.stopReason || response.finishReason,
       inputTokens: response.usage?.inputTokens,
       outputTokens: response.usage?.outputTokens,
       streamChunks,

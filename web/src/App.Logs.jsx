@@ -48,72 +48,67 @@ export function useLogsMode() {
   // ---- Fetch helpers ----
 
   const fetchTraces = useCallback(async () => {
-    try {
-      const params = new URLSearchParams({ limit: '50' });
-      if (statusFilter) params.set('status', statusFilter);
-      const res = await fetch(`${API_BASE}/api/traces/traces?${params}`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      setTraces(data);
-    } catch (err) {
-      console.error('[Logs] Failed to fetch traces:', err);
+    const params = new URLSearchParams({ limit: '50' });
+    if (statusFilter) params.set('status', statusFilter);
+    const res = await fetch(`${API_BASE}/api/traces/traces?${params}`).catch(() => null);
+    if (!res?.ok) {
+      console.error('[Logs] Failed to fetch traces');
+      return;
     }
+    const data = await res.json();
+    setTraces(data);
   }, [statusFilter]);
 
   const fetchLlmCalls = useCallback(async () => {
-    try {
-      const params = new URLSearchParams({ limit: '50' });
-      if (workloadFilter) params.set('workload', workloadFilter);
-      const res = await fetch(`${API_BASE}/api/traces/llm-calls?${params}`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      setLlmCalls(data);
-    } catch (err) {
-      console.error('[Logs] Failed to fetch LLM calls:', err);
+    const params = new URLSearchParams({ limit: '50' });
+    if (workloadFilter) params.set('workload', workloadFilter);
+    const res = await fetch(`${API_BASE}/api/traces/llm-calls?${params}`).catch(() => null);
+    if (!res?.ok) {
+      console.error('[Logs] Failed to fetch LLM calls');
+      return;
     }
+    const data = await res.json();
+    setLlmCalls(data);
   }, [workloadFilter]);
 
   const fetchStats = useCallback(async () => {
-    try {
-      const res = await fetch(`${API_BASE}/api/traces/stats`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      setStats(data);
-    } catch (err) {
-      console.error('[Logs] Failed to fetch stats:', err);
+    const res = await fetch(`${API_BASE}/api/traces/stats`).catch(() => null);
+    if (!res?.ok) {
+      console.error('[Logs] Failed to fetch stats');
+      return;
     }
+    const data = await res.json();
+    setStats(data);
   }, []);
 
   const fetchFullTrace = useCallback(async (traceId) => {
     setLoading(true);
     setError(null);
-    try {
-      const res = await fetch(`${API_BASE}/api/traces/traces/${traceId}`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      setSelectedTrace(data);
-    } catch (err) {
-      console.error('[Logs] Failed to fetch trace detail:', err);
-      setError(err.message);
-    } finally {
+    const res = await fetch(`${API_BASE}/api/traces/traces/${traceId}`).catch(() => null);
+    if (!res?.ok) {
+      console.error('[Logs] Failed to fetch trace detail');
+      setError('Failed to fetch trace');
       setLoading(false);
+      return;
     }
+    const data = await res.json();
+    setSelectedTrace(data);
+    setLoading(false);
   }, []);
 
   const fetchLlmCallDetail = useCallback(async (callId) => {
     setLoading(true);
     setError(null);
-    try {
-      const res = await fetch(`${API_BASE}/api/traces/llm-calls/${callId}`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
-      setSelectedLlmCall(data);
-    } catch (err) {
-      console.error('[Logs] Failed to fetch LLM call detail:', err);
-      setError(err.message);
-    } finally {
+    const res = await fetch(`${API_BASE}/api/traces/llm-calls/${callId}`).catch(() => null);
+    if (!res?.ok) {
+      console.error('[Logs] Failed to fetch LLM call detail');
+      setError('Failed to fetch LLM call');
       setLoading(false);
+      return;
     }
+    const data = await res.json();
+    setSelectedLlmCall(data);
+    setLoading(false);
   }, []);
 
   // ---- Initial load + polling ----
