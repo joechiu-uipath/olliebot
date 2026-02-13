@@ -7,6 +7,7 @@
 
 import { useState, useEffect, useCallback, memo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
+import { MissionChat } from './components/mission/MissionChat';
 
 const API_BASE = '/api/missions';
 
@@ -277,7 +278,7 @@ export const MissionSidebarContent = memo(function MissionSidebarContent({ missi
 // Main Content Component
 // ============================================================================
 
-export const MissionMainContent = memo(function MissionMainContent({ missionMode }) {
+export const MissionMainContent = memo(function MissionMainContent({ missionMode, sendMessage, subscribe }) {
   const {
     selectedMission,
     selectedPillar,
@@ -374,9 +375,19 @@ export const MissionMainContent = memo(function MissionMainContent({ missionMode
               missionSlug={selectedMission.slug}
               pillarSlug={selectedPillar.slug}
               onBack={handleBack}
+              sendMessage={sendMessage}
+              subscribe={subscribe}
             />
           )}
         </div>
+
+        <MissionChat
+          conversationId={selectedPillar.conversationId}
+          contextLabel={`${selectedPillar.name} Chat`}
+          placeholder={`Message about ${selectedPillar.name}...`}
+          sendMessage={sendMessage}
+          subscribe={subscribe}
+        />
       </div>
     );
   }
@@ -432,6 +443,14 @@ export const MissionMainContent = memo(function MissionMainContent({ missionMode
           <MissionConfig mission={selectedMission} />
         )}
       </div>
+
+      <MissionChat
+        conversationId={selectedMission.conversationId}
+        contextLabel="Mission Chat"
+        placeholder="Message the Mission Lead..."
+        sendMessage={sendMessage}
+        subscribe={subscribe}
+      />
     </div>
   );
 }, (prev, next) => {
@@ -443,7 +462,9 @@ export const MissionMainContent = memo(function MissionMainContent({ missionMode
     && pm.missionTab === nm.missionTab
     && pm.pillarTab === nm.pillarTab
     && pm.loading === nm.loading
-    && pm.error === nm.error;
+    && pm.error === nm.error
+    && prev.sendMessage === next.sendMessage
+    && prev.subscribe === next.subscribe;
 });
 
 // ============================================================================
@@ -700,7 +721,7 @@ function PillarTodos({ todos, onSelectTodo }) {
   );
 }
 
-function TodoExecution({ todoId, missionSlug, pillarSlug, onBack }) {
+function TodoExecution({ todoId, missionSlug, pillarSlug, onBack, sendMessage, subscribe }) {
   const [todo, setTodo] = useState(null);
   const [loadError, setLoadError] = useState(null);
 
@@ -748,10 +769,15 @@ function TodoExecution({ todoId, missionSlug, pillarSlug, onBack }) {
           {todo.conversationId && (
             <div className="todo-execution-section">
               <h4>Execution Log</h4>
-              <div className="mission-dashboard-placeholder">
-                Conversation log for this TODO will be displayed here.
-                <br />Conversation ID: <code>{todo.conversationId}</code>
-              </div>
+              <MissionChat
+                conversationId={todo.conversationId}
+                contextLabel="Task Execution"
+                placeholder="Intervene in this task..."
+                sendMessage={sendMessage}
+                subscribe={subscribe}
+                readOnly={todo.status === 'completed'}
+                defaultExpanded={true}
+              />
             </div>
           )}
         </div>

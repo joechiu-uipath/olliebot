@@ -24,6 +24,7 @@ import { useMissionMode, MissionSidebarContent, MissionMainContent } from './App
 // Extracted utilities
 import { transformMessages, shouldCollapseByDefault } from './utils/messageHelpers';
 import { createMessageHandler } from './App.websocket';
+import { useConversationSubscription } from './hooks/useConversationSubscription';
 
 // Mode constants
 const MODES = {
@@ -149,6 +150,9 @@ function App() {
 
   // Mission mode - managed by useMissionMode hook (state lives in App.Mission.jsx)
   const missionMode = useMissionMode();
+
+  // Conversation subscription — multi-conversation WebSocket event routing for embedded chats
+  const { subscribe: subscribeConversation, dispatch: dispatchConversation } = useConversationSubscription();
 
   // Response pending state (disable input while waiting)
   const [isResponsePending, setIsResponsePending] = useState(false);
@@ -375,9 +379,16 @@ function App() {
   const logsHandlerRef = useRef(logsMode.handleLogEvent);
   useEffect(() => { logsHandlerRef.current = logsMode.handleLogEvent; }, [logsMode.handleLogEvent]);
 
-  // Combined WebSocket handler: main handler + logs handler
+  // Ref for conversation subscription dispatcher (stable across renders)
+  const dispatchConversationRef = useRef(dispatchConversation);
+  useEffect(() => { dispatchConversationRef.current = dispatchConversation; }, [dispatchConversation]);
+
+  // Combined WebSocket handler: main handler + logs handler + conversation subscriptions
   const [combinedMessageHandler] = useState(() => {
     return (data) => {
+      // Dispatch to conversation subscribers first (embedded mission chats, etc.)
+      dispatchConversationRef.current?.(data);
+      // Main chat handler
       handleMessage(data);
       // Forward log events to logs mode
       if (data.type && data.type.startsWith('log_')) {
@@ -2259,7 +2270,13 @@ function App() {
         {mode === MODES.TRACES && <LogsMainContent logsMode={logsMode} />}
 
         {/* Mission Mode Content */}
-        {mode === MODES.MISSION && <MissionMainContent missionMode={missionMode} />}
+        {mode === MODES.MISSION && (
+          <MissionMainContent
+            missionMode={missionMode}
+            sendMessage={sendMessage}
+            subscribe={subscribeConversation}
+          />
+        )}
 
         {/* Chat Mode Content */}
         {mode === MODES.CHAT && (
