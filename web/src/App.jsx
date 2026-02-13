@@ -1091,7 +1091,39 @@ function App() {
   };
 
   // Render tool result with special handling for images and audio
-  const renderToolResult = (result) => {
+  // files parameter is for files passed separately from result (e.g., from tool events)
+  const renderToolResult = (result, files) => {
+    // Handle files passed as separate parameter (takes precedence)
+    if (files && Array.isArray(files) && files.length > 0) {
+      const imageFiles = files.filter(f => f.dataUrl && f.dataUrl.startsWith('data:image/'));
+      const audioFiles = files.filter(f => f.dataUrl && f.dataUrl.startsWith('data:audio/'));
+      const hasMediaFiles = imageFiles.length > 0 || audioFiles.length > 0;
+
+      if (hasMediaFiles) {
+        return (
+          <div className="tool-result-with-media">
+            {imageFiles.map((file, idx) => (
+              <div key={`img-${idx}`} className="tool-result-image">
+                {imageFiles.length > 1 && <div className="tool-result-image-label">{file.name}:</div>}
+                <img src={file.dataUrl} alt={file.name} style={{ maxWidth: '100%', maxHeight: '400px', borderRadius: '4px' }} />
+              </div>
+            ))}
+            {audioFiles.map((file, idx) => (
+              <div key={`audio-${idx}`} className="tool-result-audio">
+                {audioFiles.length > 1 && <div className="tool-result-audio-label">{file.name}:</div>}
+                <AudioPlayer
+                  audioDataUrl={file.dataUrl}
+                  mimeType={file.mediaType}
+                />
+              </div>
+            ))}
+            {/* Also render the result output if present */}
+            {result && renderOutput(result)}
+          </div>
+        );
+      }
+    }
+
     if (!result) return null;
 
     // If result is a string, try to parse it as JSON first
@@ -1535,10 +1567,10 @@ function App() {
                   </pre>
                 </div>
               )}
-              {msg.result && (
+              {(msg.result || msg.files) && (
                 <div className="tool-details-section">
                   <div className="tool-details-label">Response</div>
-                  {renderToolResult(msg.result)}
+                  {renderToolResult(msg.result, msg.files)}
                 </div>
               )}
               {msg.error && (

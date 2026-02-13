@@ -146,7 +146,7 @@ export class WorkerAgent extends AbstractAgent {
 
       if (hasTools) {
         // Use tool-enabled execution
-        await this.executeWithTools(originalMessage, mission, channel, tools);
+        await this.executeWithTools(originalMessage, mission, channel, tools, spanId);
       } else {
         // Fallback to simple generation without tools
         const contextMessages: Message[] = [
@@ -212,7 +212,8 @@ export class WorkerAgent extends AbstractAgent {
     originalMessage: Message,
     mission: string,
     channel: Channel,
-    tools: ReturnType<typeof this.getToolsForLLM>
+    tools: ReturnType<typeof this.getToolsForLLM>,
+    spanId: string | null
   ): Promise<void> {
     const streamId = uuid();
     let fullResponse = '';
@@ -346,8 +347,12 @@ export class WorkerAgent extends AbstractAgent {
         if (response.toolUse && response.toolUse.length > 0) {
           // Execute requested tools with citation extraction
           // Pass this.identity.id as callerId so tool events are attributed to this agent only
+          // Pass traceId for tool call persistence in trace store
           const toolRequests = response.toolUse.map((tu) =>
-            this.toolRunner!.createRequest(tu.id, tu.name, tu.input, undefined, this.identity.id)
+            this.toolRunner!.createRequest(tu.id, tu.name, tu.input, undefined, this.identity.id, {
+              traceId: this.traceId ?? undefined,
+              spanId: spanId ?? undefined,
+            })
           );
 
           const { results, citations } = await this.toolRunner!.executeToolsWithCitations(toolRequests);

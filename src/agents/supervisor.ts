@@ -420,7 +420,7 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
             // Execute requested tools with citation extraction
             // callerId includes conversationId to ensure correct event routing
             const toolRequests = response.toolUse.map((tu) =>
-              this.toolRunner!.createRequest(tu.id, tu.name, tu.input, undefined, callerId)
+              this.toolRunner!.createRequest(tu.id, tu.name, tu.input, undefined, callerId, { traceId })
             );
 
             const { results, citations } = await this.toolRunner.executeToolsWithCitations(toolRequests);

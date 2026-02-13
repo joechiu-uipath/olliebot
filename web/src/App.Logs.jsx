@@ -5,7 +5,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef, memo } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 
 // ============================================================
 // Constants
@@ -22,6 +22,10 @@ export function useLogsMode() {
   // Read traceId from URL search params (for deep-linking)
   const [searchParams] = useSearchParams();
   const urlTraceId = searchParams.get('traceId');
+
+  // Check if we're on the /traces route (to control polling)
+  const location = useLocation();
+  const isTracesRoute = location.pathname === '/traces';
 
   // Data
   const [traces, setTraces] = useState([]);
@@ -119,11 +123,15 @@ export function useLogsMode() {
     else fetchLlmCalls();
   }, [activeView, fetchTraces, fetchLlmCalls, fetchStats]);
 
+  // Only poll when on the /traces route
   useEffect(() => {
+    if (!isTracesRoute) {
+      return;
+    }
     refresh();
     intervalRef.current = setInterval(refresh, POLL_INTERVAL_MS);
     return () => clearInterval(intervalRef.current);
-  }, [refresh]);
+  }, [refresh, isTracesRoute]);
 
   // Handle trace ID from URL (deep-link from chat)
   useEffect(() => {
@@ -732,6 +740,11 @@ const ToolCallCard = memo(function ToolCallCard({ call }) {
     try { parsedResult = JSON.parse(call.resultJson); } catch { parsedResult = call.resultJson; }
   }
 
+  let parsedFiles = null;
+  if (call.filesJson) {
+    try { parsedFiles = JSON.parse(call.filesJson); } catch { /* skip */ }
+  }
+
   const success = call.success === 1;
 
   return (
@@ -752,6 +765,31 @@ const ToolCallCard = memo(function ToolCallCard({ call }) {
             <div className="logs-tool-section">
               <div className="logs-tool-section-title">Parameters</div>
               <pre className="logs-json-block">{JSON.stringify(parsedParams, null, 2)}</pre>
+            </div>
+          )}
+          {/* Render file attachments (screenshots, images) */}
+          {parsedFiles && parsedFiles.length > 0 && (
+            <div className="logs-tool-section">
+              <div className="logs-tool-section-title">Files ({parsedFiles.length})</div>
+              <div className="logs-tool-files">
+                {parsedFiles.map((file, idx) => (
+                  <div key={idx} className="logs-tool-file">
+                    {file.mediaType?.startsWith('image/') || file.dataUrl?.startsWith('data:image/') ? (
+                      <img
+                        src={file.dataUrl}
+                        alt={file.name || 'Screenshot'}
+                        className="logs-tool-image"
+                        style={{ maxWidth: '100%', maxHeight: '400px', borderRadius: '4px' }}
+                      />
+                    ) : (
+                      <div className="logs-tool-file-info">
+                        <span>{file.name}</span>
+                        {file.size && <span> ({Math.round(file.size / 1024)}KB)</span>}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
           )}
           {parsedResult && (

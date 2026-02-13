@@ -355,6 +355,7 @@ async function main(): Promise<void> {
   console.log('[Init] Initializing tool runner...');
   const toolRunner = new ToolRunner({
     mcpClient,
+    traceStore,
   });
 
   // Register native tools

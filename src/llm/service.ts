@@ -66,6 +66,15 @@ export class LLMService {
     if (!this.traceStore) return null;
     const ctx = this.getContext();
     const callId = uuid();
+
+    // Serialize toolChoice (can be string or object)
+    let toolChoiceStr: string | undefined;
+    if (options?.toolChoice) {
+      toolChoiceStr = typeof options.toolChoice === 'string'
+        ? options.toolChoice
+        : JSON.stringify(options.toolChoice);
+    }
+
     this.traceStore.recordLlmCallStart({
       id: callId,
       traceId: ctx?.traceId,
@@ -74,7 +83,9 @@ export class LLMService {
       provider: provider.name,
       model: provider.model,
       messages: messages as unknown[],
+      systemPrompt: options?.systemPrompt,
       tools: options?.tools as unknown[],
+      toolChoice: toolChoiceStr,
       maxTokens: options?.maxTokens,
       temperature: options?.temperature,
       reasoningEffort: options?.reasoningEffort,

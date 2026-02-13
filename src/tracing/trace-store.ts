@@ -133,6 +133,7 @@ export class TraceStore {
         source TEXT NOT NULL,
         parametersJson TEXT,
         resultJson TEXT,
+        filesJson TEXT,
         success INTEGER,
         error TEXT,
         startedAt TEXT NOT NULL,
@@ -142,6 +143,13 @@ export class TraceStore {
         callerAgentName TEXT
       )
     `);
+
+    // Migration: add filesJson column if missing (for existing databases)
+    try {
+      db.rawRun('ALTER TABLE tool_calls ADD COLUMN filesJson TEXT');
+    } catch {
+      // Column already exists, ignore
+    }
 
     // Indexes for frequent query patterns
     db.rawExec(`
@@ -159,6 +167,10 @@ export class TraceStore {
 
     this.initialized = true;
     console.log('[TraceStore] Initialized tracing tables');
+
+    // Run cleanup on startup to remove old traces
+    const retentionDays = parseInt(process.env.TRACE_RETENTION_DAYS || '', 10) || DEFAULT_RETENTION_DAYS;
+    this.cleanup(retentionDays);
   }
 
   /**
@@ -558,7 +570,13 @@ export class TraceStore {
     }
   }
 
-  completeToolCall(callId: string, result: unknown, success: boolean, error?: string): void {
+  completeToolCall(
+    callId: string,
+    result: unknown,
+    success: boolean,
+    error?: string,
+    files?: Array<{ name: string; dataUrl: string; size: number; mediaType?: string }>
+  ): void {
     const now = new Date().toISOString();
     const call = this.getToolCallById(callId);
     const durationMs = call
@@ -577,10 +595,17 @@ export class TraceStore {
       }
     }
 
+    let filesJson: string | null = null;
+    if (files && files.length > 0) {
+      try {
+        filesJson = JSON.stringify(files);
+      } catch { /* ignore serialization errors */ }
+    }
+
     const db = getDb();
     db.rawRun(
-      'UPDATE tool_calls SET resultJson = ?, success = ?, error = ?, completedAt = ?, durationMs = ? WHERE id = ?',
-      [resultJson, success ? 1 : 0, error || null, now, durationMs, callId]
+      'UPDATE tool_calls SET resultJson = ?, filesJson = ?, success = ?, error = ?, completedAt = ?, durationMs = ? WHERE id = ?',
+      [resultJson, filesJson, success ? 1 : 0, error || null, now, durationMs, callId]
     );
   }
 

@@ -126,6 +126,7 @@ export interface ToolCallRecord {
   parametersJson: string | null;
 
   resultJson: string | null;
+  filesJson: string | null;   // JSON-serialized file attachments (screenshots, etc.)
   success: number | null;     // 0 or 1 (AlaSQL doesn't have boolean)
   error: string | null;
 

@@ -21,6 +21,7 @@ import type {
 } from './types.js';
 import type { NativeTool, ToolExecutionContext } from './native/types.js';
 import type { MCPClient } from '../mcp/client.js';
+import type { TraceStore } from '../tracing/trace-store.js';
 import { initializeCitationServiceSync } from '../citations/service.js';
 import { getDefaultExtractors } from '../citations/extractors.js';
 import type { CitationSource } from '../citations/types.js';
@@ -51,6 +52,7 @@ interface InvokeToolResult {
 export interface ToolRunnerConfig {
   mcpClient?: MCPClient;
   nativeTools?: Map<string, NativeTool>;
+  traceStore?: TraceStore;
 }
 
 export class ToolRunner {
@@ -58,11 +60,13 @@ export class ToolRunner {
   private nativeTools: Map<string, NativeTool>;
   private userTools: Map<string, NativeTool>;
   private eventListeners: Set<ToolEventCallback> = new Set();
+  private traceStore: TraceStore | null;
 
   constructor(config: ToolRunnerConfig = {}) {
     this.mcpClient = config.mcpClient || null;
     this.nativeTools = config.nativeTools || new Map();
     this.userTools = new Map();
+    this.traceStore = config.traceStore || null;
   }
 
   /**
@@ -219,6 +223,22 @@ export class ToolRunner {
       callerId: request.callerId,
     });
 
+    // Record tool call start in trace store
+    let traceCallId: string | null = null;
+    if (this.traceStore && request.traceId) {
+      traceCallId = request.id; // Use the tool_use ID as the trace ID
+      this.traceStore.recordToolCallStart({
+        id: traceCallId,
+        traceId: request.traceId,
+        spanId: request.spanId,
+        toolName: request.toolName,
+        source: request.source,
+        parameters: request.parameters,
+        callerAgentId: request.callerId?.split(':')[0],
+        callerAgentName: request.callerId?.split(':')[0],
+      });
+    }
+
     // Build execution context with a progress callback that emits tool_progress events
     const context: ToolExecutionContext = {
       onProgress: (progress) => {
@@ -250,6 +270,7 @@ export class ToolRunner {
         durationMs: endTime.getTime() - startTime.getTime(),
         displayOnly: invokeResult.displayOnly,
         displayOnlySummary: invokeResult.displayOnlySummary,
+        files: invokeResult.files,
       };
 
     } catch (error) {
@@ -267,6 +288,11 @@ export class ToolRunner {
 
     }
 
+    // Complete tool call in trace store
+    if (this.traceStore && traceCallId) {
+      this.traceStore.completeToolCall(traceCallId, result.output, result.success, result.error, result.files);
+    }
+
     // Emit tool_execution_finished event
     this.emitEvent({
       type: 'tool_execution_finished',
@@ -282,6 +308,7 @@ export class ToolRunner {
       durationMs: result.durationMs,
       timestamp: new Date(),
       callerId: request.callerId,
+      files: result.files,
     });
 
     return result;
@@ -448,13 +475,15 @@ export class ToolRunner {
   /**
    * Create a tool request from LLM tool_use block
    * @param callerId - ID of the agent making this request (for event filtering)
+   * @param traceContext - Optional tracing context for recording tool calls
    */
   createRequest(
     toolUseId: string,
     toolName: string,
     parameters: Record<string, unknown>,
     groupId?: string,
-    callerId?: string
+    callerId?: string,
+    traceContext?: { traceId?: string; spanId?: string }
   ): ToolRequest {
     const { source } = this.parseToolName(toolName);
     return {
@@ -464,6 +493,8 @@ export class ToolRunner {
       parameters,
       groupId,
       callerId,
+      traceId: traceContext?.traceId,
+      spanId: traceContext?.spanId,
     };
   }
 }
