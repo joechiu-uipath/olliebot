@@ -7,6 +7,7 @@ import { connect, type Connection, type Table } from '@lancedb/lancedb';
 import { existsSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
 import type { VectorRecord, SearchResult, EmbeddingProvider } from './types.js';
+import { RAG_DEFAULT_TOP_K } from '../constants.js';
 
 const VECTOR_TABLE_NAME = 'vectors';
 
@@ -83,7 +84,7 @@ export class LanceStore {
    */
   async search(
     queryText: string,
-    topK: number = 10,
+    topK: number = RAG_DEFAULT_TOP_K,
     minScore: number = 0,
     contentType?: 'text' | 'image' | 'all'
   ): Promise<SearchResult[]> {

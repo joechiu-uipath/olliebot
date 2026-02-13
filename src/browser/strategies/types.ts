@@ -11,6 +11,7 @@ import type {
   InstructionContext,
   BrowserStrategyType,
 } from '../types.js';
+import type { LLMMessage, LLMOptions, LLMResponse } from '../../llm/types.js';
 
 /**
  * Configuration passed to strategy on initialization.
@@ -90,19 +91,10 @@ export interface IBrowserStrategy {
 
 /**
  * LLM service interface for strategy use.
+ * Uses proper types from llm/types.ts for type safety.
  */
 export interface IStrategyLLMService {
-  /**
-   * Generates a response from the LLM.
-   */
-  generate(
-    messages: Array<{ role: string; content: string | ContentBlock[] }>,
-    options?: {
-      systemPrompt?: string;
-      maxTokens?: number;
-      tools?: ToolDefinition[];
-    }
-  ): Promise<LLMResponse>;
+  generate(messages: LLMMessage[], options?: LLMOptions): Promise<LLMResponse>;
 }
 
 /**
@@ -127,13 +119,5 @@ export interface ToolDefinition {
   inputSchema: Record<string, unknown>;
 }
 
-/**
- * LLM response.
- */
-export interface LLMResponse {
-  content: string;
-  toolCalls?: Array<{
-    name: string;
-    arguments: Record<string, unknown>;
-  }>;
-}
+// Re-export LLMResponse from llm/types.ts for consumers of this module
+export type { LLMResponse } from '../../llm/types.js';

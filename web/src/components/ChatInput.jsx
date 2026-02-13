@@ -20,6 +20,9 @@ export const ChatInput = memo(function ChatInput({
   onReasoningModeChange,
   onMessageTypeChange,
   modelCapabilities,
+  commandTriggers = [],
+  agentCommand,
+  onAgentCommandChange,
   ref,
 }) {
   const [input, setInput] = useState('');
@@ -81,6 +84,7 @@ export const ChatInput = memo(function ChatInput({
         // Get current input value at submit time
         const currentInput = textareaRef.current?.value || '';
         if (currentInput.trim()) {
+          // Submit message (command is passed via parent state/metadata)
           onSubmit(currentInput);
           setInput('');
         }
@@ -144,8 +148,10 @@ export const ChatInput = memo(function ChatInput({
     getValue: () => input,
   }));
 
-  // Build hashtag menu options from model capabilities
+  // Build hashtag menu options from model capabilities and command triggers
   const hashtagMenuOptions = [];
+
+  // 1. Reasoning modes (Think, Think+) from model capabilities
   if (modelCapabilities && modelCapabilities.reasoningEfforts) {
     for (let i = 0; i < modelCapabilities.reasoningEfforts.length; i++) {
       const effort = modelCapabilities.reasoningEfforts[i];
@@ -168,13 +174,19 @@ export const ChatInput = memo(function ChatInput({
       }
     }
   }
-  hashtagMenuOptions.push({
-    id: 'deep_research',
-    type: 'message_type',
-    label: 'Deep Research',
-    icon: '🔬',
-    desc: 'Multi-agent research',
-  });
+
+  // 2. Agent command triggers (e.g., #Deep Research, #Modify) from backend
+  for (let i = 0; i < commandTriggers.length; i++) {
+    const trigger = commandTriggers[i];
+    hashtagMenuOptions.push({
+      id: trigger.command,
+      type: 'agent_command',
+      label: trigger.command,
+      icon: trigger.agentEmoji,
+      desc: trigger.description,
+      agentType: trigger.agentType,
+    });
+  }
 
   const handleLocalInputChange = (e) => {
     const newValue = e.target.value;
@@ -217,17 +229,28 @@ export const ChatInput = memo(function ChatInput({
     const cursorPos = textareaRef.current ? textareaRef.current.selectionStart : input.length;
     const textBeforeCursor = input.slice(0, cursorPos);
     const lastHashIndex = textBeforeCursor.lastIndexOf('#');
+
+    // Remove the # trigger text from input
     if (lastHashIndex !== -1) {
       const newInput = input.slice(0, lastHashIndex) + input.slice(cursorPos);
       setInput(newInput);
     }
 
-    // Only one think mode at a time (reasoning OR deep research, not both)
-    if (option.type === 'message_type') {
-      onReasoningModeChange(null); // Clear reasoning mode
+    if (option.type === 'agent_command') {
+      // For agent commands, set via parent state (shows badge, passed in metadata on submit)
+      onAgentCommandChange({ command: option.label, icon: option.icon });
+      // Clear reasoning mode since commands are mutually exclusive
+      onReasoningModeChange(null);
+      onMessageTypeChange(null);
+    } else if (option.type === 'message_type') {
+      // Legacy message type (shouldn't be used now, but keep for compatibility)
+      onAgentCommandChange(null);
+      onReasoningModeChange(null);
       onMessageTypeChange(option.id);
     } else if (option.type === 'reasoning') {
-      onMessageTypeChange(null); // Clear message type (deep research)
+      // Reasoning modes (Think, Think+)
+      onAgentCommandChange(null);
+      onMessageTypeChange(null);
       onReasoningModeChange(option.id);
     }
 
@@ -282,6 +305,7 @@ export const ChatInput = memo(function ChatInput({
     if (!input.trim() && attachments.length === 0) return;
     if (!isConnected || isResponsePending) return;
 
+    // Submit message (command is passed via parent state/metadata, not prepended)
     onSubmit(input);
     setInput('');
     setHashtagMenuOpen(false);
@@ -290,8 +314,8 @@ export const ChatInput = memo(function ChatInput({
   return (
     <form className="input-form" onSubmit={handleLocalSubmit}>
       <div className="input-wrapper">
-        {/* Chips bar - show if attachments OR reasoning mode OR message type */}
-        {(attachments.length > 0 || reasoningMode || messageType) && (
+        {/* Chips bar - show if attachments OR reasoning mode OR message type OR agent command */}
+        {(attachments.length > 0 || reasoningMode || messageType || agentCommand) && (
           <div className="attachments-bar">
             {/* Attachment chips first */}
             {attachments.map((attachment, index) => (
@@ -310,8 +334,24 @@ export const ChatInput = memo(function ChatInput({
               </div>
             ))}
 
-            {/* Message type chip (e.g., Deep Research) */}
-            {messageType && (
+            {/* Agent command chip (e.g., Deep Research, Modify) */}
+            {agentCommand && (
+              <div className="hashtag-chip hashtag-chip-command">
+                <span className="hashtag-chip-icon">{agentCommand.icon}</span>
+                <span className="hashtag-chip-label">{agentCommand.command}</span>
+                <button
+                  type="button"
+                  className="hashtag-chip-remove"
+                  onClick={() => onAgentCommandChange(null)}
+                  title="Remove command"
+                >
+                  ×
+                </button>
+              </div>
+            )}
+
+            {/* Legacy message type chip - kept for backward compatibility */}
+            {messageType && !agentCommand && (
               <div className="hashtag-chip hashtag-chip-research">
                 <span className="hashtag-chip-icon">🔬</span>
                 <span className="hashtag-chip-label">
@@ -441,6 +481,8 @@ export const ChatInput = memo(function ChatInput({
     prevProps.isResponsePending === nextProps.isResponsePending &&
     prevProps.reasoningMode === nextProps.reasoningMode &&
     prevProps.messageType === nextProps.messageType &&
-    prevProps.modelCapabilities === nextProps.modelCapabilities
+    prevProps.modelCapabilities === nextProps.modelCapabilities &&
+    prevProps.commandTriggers === nextProps.commandTriggers &&
+    prevProps.agentCommand === nextProps.agentCommand
   );
 });

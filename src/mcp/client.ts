@@ -8,6 +8,7 @@ import type {
   MCPResource,
   MCPPrompt,
 } from './types.js';
+import { SUPERVISOR_NAME } from '../constants.js';
 
 /**
  * MCP Client - Connects to MCP servers and invokes tools
@@ -116,7 +117,7 @@ export class MCPClient {
       await this.sendStdioRequest(config, 'initialize', {
         protocolVersion: '2024-11-05',
         capabilities: {},
-        clientInfo: { name: 'OllieBot', version: '0.1.0' },
+        clientInfo: { name: SUPERVISOR_NAME, version: '0.1.0' },
       });
       // Send initialized notification to complete handshake
       this.sendStdioNotification(config, 'notifications/initialized', {});
@@ -447,13 +448,66 @@ export class MCPClient {
   }
 
   /**
+   * Enable or disable an MCP server at runtime.
+   * When disabled, all tools from that server are excluded from tool use.
+   * When enabled, the server will be started (if stdio) and capabilities rediscovered.
+   */
+  async setServerEnabled(serverId: string, enabled: boolean): Promise<boolean> {
+    const server = this.servers.get(serverId);
+    if (!server) {
+      console.warn(`[MCP] Server not found: ${serverId}`);
+      return false;
+    }
+
+    if (server.enabled === enabled) {
+      return true; // Already in desired state
+    }
+
+    server.enabled = enabled;
+
+    if (enabled) {
+      // Enable: start server and discover capabilities
+      const transport = server.transport || (server.command ? 'stdio' : 'http');
+      if (transport === 'stdio' && server.command && !this.processes.has(serverId)) {
+        await this.startStdioServer(server);
+      }
+      await this.discoverCapabilities(server);
+      console.log(`[MCP] Server enabled: ${server.name}`);
+    } else {
+      // Disable: stop stdio server if running
+      const proc = this.processes.get(serverId);
+      if (proc) {
+        proc.kill();
+        this.processes.delete(serverId);
+        this.readlines.delete(serverId);
+      }
+      console.log(`[MCP] Server disabled: ${server.name}`);
+    }
+
+    return true;
+  }
+
+  /**
+   * Get the enabled status of a server
+   */
+  isServerEnabled(serverId: string): boolean {
+    const server = this.servers.get(serverId);
+    return server?.enabled ?? false;
+  }
+
+  /**
    * Get all available tools, optionally filtered by whitelist/blacklist
+   * Only returns tools from enabled servers
    */
   getAvailableTools(options?: {
     whitelist?: string[];
     blacklist?: string[];
   }): MCPTool[] {
-    let tools = Array.from(this.tools.values());
+    // Filter by enabled servers first
+    let tools = Array.from(this.tools.values()).filter((t) => {
+      const server = this.servers.get(t.serverId);
+      return server?.enabled === true;
+    });
 
     if (options?.whitelist && options.whitelist.length > 0) {
       tools = tools.filter(

@@ -9,16 +9,36 @@ const HEIGHT_STEP = 100;
 
 /**
  * HtmlPreview component - renders HTML with toggle between raw code and preview
- * Preview uses sandboxed iframe for security (no JavaScript execution)
+ * Preview uses sandboxed iframe for security (no JavaScript execution by default)
  *
  * When isStreaming is true, only raw HTML view is shown to prevent flashing.
- * When streaming ends, it auto-switches to preview mode.
+ * When streaming ends:
+ *   - If no JavaScript detected: auto-switches to preview mode (safe)
+ *   - If JavaScript present (script tags, inline handlers, javascript: URLs):
+ *     stays in raw mode, shows red "Execute" button
+ *     User must explicitly click "Execute" to allow JavaScript execution
  */
+// Check if HTML contains JavaScript (script tags or inline event handlers)
+const hasJavaScript = (htmlContent) => {
+  // Check for <script> tags
+  if (/<script[\s>]/i.test(htmlContent)) return true;
+  // Check for inline event handlers (onclick, onload, onerror, etc.)
+  if (/\son\w+\s*=/i.test(htmlContent)) return true;
+  // Check for javascript: URLs
+  if (/javascript:/i.test(htmlContent)) return true;
+  return false;
+};
+
 const HtmlPreview = memo(function HtmlPreview({ html, className = '', isStreaming = false }) {
-  const [viewMode, setViewMode] = useState(isStreaming ? 'raw' : 'preview');
+  // Initialize to 'raw' if streaming OR if HTML contains scripts (require explicit Execute)
+  const [viewMode, setViewMode] = useState(() => {
+    if (isStreaming || hasJavaScript(html)) return 'raw';
+    return 'preview';
+  });
   const [height, setHeight] = useState(DEFAULT_HEIGHT);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isReady, setIsReady] = useState(false);
+  const [jsExecutionAllowed, setJsExecutionAllowed] = useState(false);
   const prevStreamingRef = useRef(isStreaming);
   const codeRef = useRef(null);
   const iframeRef = useRef(null);
@@ -45,18 +65,25 @@ const HtmlPreview = memo(function HtmlPreview({ html, className = '', isStreamin
     };
   }, []);
 
-  // Auto-switch to preview when streaming ends
+  // Detect if HTML contains script tags
+  const containsScripts = hasJavaScript(html);
+
+  // Auto-switch to preview when streaming ends (only if no scripts)
   useEffect(() => {
-    // If streaming just ended (was true, now false), switch to preview
+    // If streaming just ended (was true, now false), switch to preview only if no scripts
     if (prevStreamingRef.current && !isStreaming) {
-      setViewMode('preview');
+      if (!hasJavaScript(html)) {
+        setViewMode('preview');
+      }
+      // If there are scripts, stay in raw mode - user must explicitly click Execute
     }
-    // If streaming just started, switch to raw
+    // If streaming just started, switch to raw and reset JS execution permission
     if (!prevStreamingRef.current && isStreaming) {
       setViewMode('raw');
+      setJsExecutionAllowed(false);
     }
     prevStreamingRef.current = isStreaming;
-  }, [isStreaming]);
+  }, [isStreaming, html]);
 
   // Highlight code when switching to raw mode
   useEffect(() => {
@@ -120,7 +147,7 @@ const HtmlPreview = memo(function HtmlPreview({ html, className = '', isStreamin
   };
 
   // Update iframe content when in preview mode - only if html actually changed
-  // Also write if iframe is empty (e.g., after switching from raw mode or when isReady becomes true)
+  // Also write if iframe is empty (e.g., after switching from raw mode, when isReady becomes true, or after jsExecutionAllowed changes)
   useEffect(() => {
     if (isReady && viewMode === 'preview') {
       const iframe = iframeRef.current;
@@ -131,7 +158,7 @@ const HtmlPreview = memo(function HtmlPreview({ html, className = '', isStreamin
         lastWrittenHtmlRef.current = html;
       }
     }
-  }, [isReady, viewMode, html, writeToIframe]);
+  }, [isReady, viewMode, html, jsExecutionAllowed, writeToIframe]);
 
   // Update modal iframe content when fullscreen is open - only if html actually changed
   useEffect(() => {
@@ -144,7 +171,7 @@ const HtmlPreview = memo(function HtmlPreview({ html, className = '', isStreamin
         lastWrittenModalHtmlRef.current = html;
       }
     }
-  }, [isReady, isFullscreen, viewMode, html, writeToIframe]);
+  }, [isReady, isFullscreen, viewMode, html, jsExecutionAllowed, writeToIframe]);
 
   // Close modal on Escape key
   useEffect(() => {
@@ -166,14 +193,29 @@ const HtmlPreview = memo(function HtmlPreview({ html, className = '', isStreamin
     <div className={`html-preview ${className}`}>
       <div className="html-preview-header">
         <div className="html-preview-tabs">
-          <button
-            className={`html-preview-tab ${effectiveViewMode === 'preview' ? 'active' : ''}`}
-            onClick={() => !isStreaming && setViewMode('preview')}
-            disabled={isStreaming}
-            title={isStreaming ? 'Preview disabled while streaming' : 'Preview'}
-          >
-            Preview
-          </button>
+          {containsScripts ? (
+            <button
+              className={`html-preview-tab html-preview-tab-execute ${effectiveViewMode === 'preview' ? 'active' : ''}`}
+              onClick={() => {
+                if (isStreaming) return;
+                if (!jsExecutionAllowed) setJsExecutionAllowed(true);
+                setViewMode('preview');
+              }}
+              disabled={isStreaming}
+              title={isStreaming ? 'Execute disabled while streaming' : 'Execute JavaScript in sandboxed iframe'}
+            >
+              Execute
+            </button>
+          ) : (
+            <button
+              className={`html-preview-tab ${effectiveViewMode === 'preview' ? 'active' : ''}`}
+              onClick={() => !isStreaming && setViewMode('preview')}
+              disabled={isStreaming}
+              title={isStreaming ? 'Preview disabled while streaming' : 'Preview'}
+            >
+              Preview
+            </button>
+          )}
           <button
             className={`html-preview-tab ${effectiveViewMode === 'raw' ? 'active' : ''}`}
             onClick={() => setViewMode('raw')}
@@ -215,9 +257,10 @@ const HtmlPreview = memo(function HtmlPreview({ html, className = '', isStreamin
         ) : effectiveViewMode === 'preview' ? (
           <div className="html-preview-iframe-wrapper">
             <iframe
+              key={`iframe-${jsExecutionAllowed}`}
               ref={iframeRef}
               className="html-preview-iframe"
-              sandbox="allow-same-origin"
+              sandbox={jsExecutionAllowed ? 'allow-same-origin allow-scripts' : 'allow-same-origin'}
               title="HTML Preview"
               scrolling="no"
             />
@@ -237,14 +280,29 @@ const HtmlPreview = memo(function HtmlPreview({ html, className = '', isStreamin
           <div className="html-preview-modal">
             <div className="html-preview-modal-header">
               <div className="html-preview-tabs">
-                <button
-                  className={`html-preview-tab ${effectiveViewMode === 'preview' ? 'active' : ''}`}
-                  onClick={() => !isStreaming && setViewMode('preview')}
-                  disabled={isStreaming}
-                  title={isStreaming ? 'Preview disabled while streaming' : 'Preview'}
-                >
-                  Preview
-                </button>
+                {containsScripts ? (
+                  <button
+                    className={`html-preview-tab html-preview-tab-execute ${effectiveViewMode === 'preview' ? 'active' : ''}`}
+                    onClick={() => {
+                      if (isStreaming) return;
+                      if (!jsExecutionAllowed) setJsExecutionAllowed(true);
+                      setViewMode('preview');
+                    }}
+                    disabled={isStreaming}
+                    title={isStreaming ? 'Execute disabled while streaming' : 'Execute JavaScript in sandboxed iframe'}
+                  >
+                    Execute
+                  </button>
+                ) : (
+                  <button
+                    className={`html-preview-tab ${effectiveViewMode === 'preview' ? 'active' : ''}`}
+                    onClick={() => !isStreaming && setViewMode('preview')}
+                    disabled={isStreaming}
+                    title={isStreaming ? 'Preview disabled while streaming' : 'Preview'}
+                  >
+                    Preview
+                  </button>
+                )}
                 <button
                   className={`html-preview-tab ${effectiveViewMode === 'raw' ? 'active' : ''}`}
                   onClick={() => setViewMode('raw')}
@@ -264,9 +322,10 @@ const HtmlPreview = memo(function HtmlPreview({ html, className = '', isStreamin
               {effectiveViewMode === 'preview' ? (
                 <div className="html-preview-iframe-wrapper">
                   <iframe
+                    key={`modal-iframe-${jsExecutionAllowed}`}
                     ref={modalIframeRef}
                     className="html-preview-iframe"
-                    sandbox="allow-same-origin"
+                    sandbox={jsExecutionAllowed ? 'allow-same-origin allow-scripts' : 'allow-same-origin'}
                     title="HTML Preview Fullscreen"
                     scrolling="no"
                   />

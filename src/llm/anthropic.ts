@@ -8,6 +8,7 @@ import type {
   LLMToolUse,
   StreamCallbacks,
 } from './types.js';
+import { LLM_DEFAULT_MAX_TOKENS } from '../constants.js';
 
 // Type alias for Anthropic content block parameters
 type ContentBlockParam = Anthropic.TextBlockParam | Anthropic.ImageBlockParam | Anthropic.ToolUseBlockParam | Anthropic.ToolResultBlockParam;
@@ -48,7 +49,7 @@ export class AnthropicProvider implements LLMProvider {
 
     const response = await this.client.messages.create({
       model: this.model,
-      max_tokens: options?.maxTokens ?? 4096,
+      max_tokens: options?.maxTokens ?? LLM_DEFAULT_MAX_TOKENS,
       system: options?.systemPrompt ?? systemContent,
       messages: conversationMessages,
       temperature: options?.temperature,
@@ -88,7 +89,7 @@ export class AnthropicProvider implements LLMProvider {
     try {
       const stream = await this.client.messages.stream({
         model: this.model,
-        max_tokens: options?.maxTokens ?? 4096,
+        max_tokens: options?.maxTokens ?? LLM_DEFAULT_MAX_TOKENS,
         system: options?.systemPrompt ?? systemContent,
         messages: conversationMessages,
         temperature: options?.temperature,
@@ -179,7 +180,7 @@ export class AnthropicProvider implements LLMProvider {
     try {
       stream = await this.client.messages.stream({
         model: this.model,
-        max_tokens: options?.maxTokens ?? 4096,
+        max_tokens: options?.maxTokens ?? LLM_DEFAULT_MAX_TOKENS,
         system: options?.systemPrompt ?? systemContent,
         messages: conversationMessages,
         temperature: options?.temperature,
@@ -365,7 +366,7 @@ export class AnthropicProvider implements LLMProvider {
 
     const response = await this.client.messages.create({
       model: this.model,
-      max_tokens: options?.maxTokens ?? 4096,
+      max_tokens: options?.maxTokens ?? LLM_DEFAULT_MAX_TOKENS,
       system: options?.systemPrompt ?? systemContent,
       messages: conversationMessages,
       temperature: options?.temperature,

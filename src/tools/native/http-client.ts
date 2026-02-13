@@ -5,6 +5,7 @@
  * Supports common curl flags for method, headers, data, auth, etc.
  */
 
+import { SUPERVISOR_NAME } from '../../constants.js';
 import type { NativeTool, NativeToolResult } from './types.js';
 
 export interface HttpClientConfig {
@@ -61,7 +62,7 @@ curl -X POST https://api.example.com/data -H "Content-Type: application/json" -d
 
   constructor(config: HttpClientConfig = {}) {
     this.defaultTimeout = config.timeout || 30000;
-    this.defaultUserAgent = config.userAgent || 'OllieBot/1.0 HttpClient';
+    this.defaultUserAgent = config.userAgent || `${SUPERVISOR_NAME}/1.0 HttpClient`;
   }
 
   async execute(params: Record<string, unknown>): Promise<NativeToolResult> {

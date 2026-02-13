@@ -6,6 +6,7 @@ import { execSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import type { Skill, SkillMetadata, SkillSource } from './types.js';
 import { SkillParser } from './parser.js';
+import { SKILL_EXECUTION_TIMEOUT_MS } from '../constants.js';
 
 // Get the directory of this module (for builtin skills)
 const __filename = fileURLToPath(import.meta.url);
@@ -121,7 +122,7 @@ export class SkillManager {
       execSync('npm install', {
         cwd: scriptsDir,
         stdio: 'pipe',
-        timeout: 120000, // 2 minute timeout
+        timeout: SKILL_EXECUTION_TIMEOUT_MS,
       });
 
       console.log(`[SkillManager] Dependencies installed for ${scriptsDir}`);
@@ -251,7 +252,7 @@ export class SkillManager {
 
     return `## Available Skills
 
-Skills provide domain knowledge and workflows. Use read_skill tool with skill_id to activate.`;
+Skills provide domain knowledge and workflows. Use read_agent_skill tool with skill_id to activate.`;
   }
 
   /**

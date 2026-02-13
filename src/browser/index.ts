@@ -1,7 +1,7 @@
 /**
  * Browser Automation Module
  *
- * Provides browser automation capabilities for OllieBot with:
+ * Provides browser automation capabilities with:
  * - Strategy abstraction (Computer Use vs DOM)
  * - Multiple provider support
  * - Debug mode with live preview
@@ -19,7 +19,7 @@ export * from './events.js';
 
 // Session management
 export { BrowserSessionInstance } from './session.js';
-export { BrowserSessionManager, type IBroadcaster, type ILLMService } from './manager.js';
+export { BrowserSessionManager, type ILLMService } from './manager.js';
 
 // Strategies
 export {

@@ -21,6 +21,7 @@ import type {
   OpenAIToolCall,
   OpenAIToolChoice,
 } from './openai-types.js';
+import { LLM_DEFAULT_MAX_TOKENS, API_MAX_RETRIES, API_BACKOFF_BASE_MS } from '../constants.js';
 
 /**
  * Sanitize tool name to match OpenAI's pattern: ^[a-zA-Z0-9_-]+$
@@ -63,7 +64,7 @@ export abstract class OpenAIBaseProvider implements LLMProvider {
     url: string,
     options: RequestInit,
     logPrefix: string,
-    maxRetries: number = 3
+    maxRetries: number = API_MAX_RETRIES
   ): Promise<Response> {
     let lastError: Error | null = null;
 
@@ -82,7 +83,7 @@ export abstract class OpenAIBaseProvider implements LLMProvider {
           lastError = new Error(`${logPrefix} API error: ${response.status} ${errorText}`);
 
           if (attempt < maxRetries) {
-            const backoffMs = Math.pow(2, attempt) * 1000 + Math.random() * 1000;
+            const backoffMs = Math.pow(2, attempt) * API_BACKOFF_BASE_MS + Math.random() * API_BACKOFF_BASE_MS;
             console.warn(`${logPrefix} Retrying after ${response.status} error (attempt ${attempt + 1}/${maxRetries}), waiting ${Math.round(backoffMs)}ms`);
             await new Promise(resolve => setTimeout(resolve, backoffMs));
             continue;
@@ -97,7 +98,7 @@ export abstract class OpenAIBaseProvider implements LLMProvider {
         lastError = error instanceof Error ? error : new Error(String(error));
 
         if (attempt < maxRetries) {
-          const backoffMs = Math.pow(2, attempt) * 1000 + Math.random() * 1000;
+          const backoffMs = Math.pow(2, attempt) * API_BACKOFF_BASE_MS + Math.random() * API_BACKOFF_BASE_MS;
           console.warn(`${logPrefix} Retrying after network error (attempt ${attempt + 1}/${maxRetries}), waiting ${Math.round(backoffMs)}ms`);
           await new Promise(resolve => setTimeout(resolve, backoffMs));
           continue;
@@ -116,7 +117,7 @@ export abstract class OpenAIBaseProvider implements LLMProvider {
 
     const requestBody: Record<string, unknown> = {
       messages: openaiMessages,
-      max_completion_tokens: options?.maxTokens ?? 4096,
+      max_completion_tokens: options?.maxTokens ?? LLM_DEFAULT_MAX_TOKENS,
       temperature: options?.temperature ?? 0.7,
     };
 
@@ -174,9 +175,10 @@ export abstract class OpenAIBaseProvider implements LLMProvider {
 
     const requestBody: Record<string, unknown> = {
       messages: openaiMessages,
-      max_completion_tokens: options?.maxTokens ?? 4096,
+      max_completion_tokens: options?.maxTokens ?? LLM_DEFAULT_MAX_TOKENS,
       temperature: options?.temperature ?? 0.7,
       stream: true,
+      stream_options: { include_usage: true },
     };
 
     if (config.includeModelInBody) {
@@ -290,7 +292,7 @@ export abstract class OpenAIBaseProvider implements LLMProvider {
 
     const requestBody: Record<string, unknown> = {
       messages: openaiMessages,
-      max_completion_tokens: options?.maxTokens ?? 4096,
+      max_completion_tokens: options?.maxTokens ?? LLM_DEFAULT_MAX_TOKENS,
       temperature: options?.temperature ?? 0.7,
     };
 
@@ -378,7 +380,7 @@ export abstract class OpenAIBaseProvider implements LLMProvider {
 
     const requestBody: Record<string, unknown> = {
       messages: openaiMessages,
-      max_completion_tokens: options?.maxTokens ?? 4096,
+      max_completion_tokens: options?.maxTokens ?? LLM_DEFAULT_MAX_TOKENS,
       temperature: options?.temperature ?? 0.7,
       stream: true,
       stream_options: { include_usage: true },

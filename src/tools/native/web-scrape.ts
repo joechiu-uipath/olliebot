@@ -105,7 +105,7 @@ export class WebScrapeTool implements NativeTool {
       const response = await fetch(url, {
         signal: controller.signal,
         headers: {
-          'User-Agent': 'Mozilla/5.0 (compatible; OllieBot/1.0; +https://github.com/olliebot)',
+          'User-Agent': 'Mozilla/5.0 (compatible)',
           'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
           'Accept-Language': 'en-US,en;q=0.5',
         },

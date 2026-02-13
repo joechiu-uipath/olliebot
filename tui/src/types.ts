@@ -16,6 +16,7 @@ export interface Message {
   parameters?: Record<string, unknown>;
   result?: unknown;
   error?: string;
+  progress?: { current: number; total?: number; message?: string };
   // Delegation fields
   agentType?: string;
   mission?: string;
@@ -23,6 +24,13 @@ export interface Message {
   taskId?: string;
   taskName?: string;
   taskDescription?: string;
+  // LLM usage metrics
+  usage?: {
+    inputTokens: number;
+    outputTokens: number;
+    llmDurationMs: number;
+    modelId?: string;
+  };
 }
 
 // Conversation types
@@ -85,10 +93,13 @@ export type WsMessageType =
   | 'stream_start'
   | 'stream_chunk'
   | 'stream_end'
+  | 'stream_resume'
   | 'error'
   | 'connected'
   | 'tool_requested'
   | 'tool_execution_finished'
+  | 'tool_progress'
+  | 'tool_resume'
   | 'delegation'
   | 'task_run'
   | 'conversation_created'

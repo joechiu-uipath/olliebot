@@ -1,7 +1,7 @@
 /**
  * Browser Session Manager
  *
- * Manages browser automation sessions, including lifecycle, events, and WebChannel broadcasting.
+ * Manages browser automation sessions, including lifecycle, events, and event broadcasting.
  */
 
 import { chromium, type Browser } from 'playwright';
@@ -27,29 +27,22 @@ import {
 } from './events.js';
 import { createStrategy } from './strategies/index.js';
 import type { IBrowserStrategy } from './strategies/types.js';
-
-/**
- * Interface for WebChannel-like broadcast capability.
- */
-export interface IBroadcaster {
-  broadcast(data: unknown): void;
-}
+import type { Channel } from '../channels/types.js';
+import type { LLMMessage, LLMOptions, LLMResponse } from '../llm/types.js';
 
 /**
  * Interface for LLM service (needed by strategies).
+ * Uses proper types from llm/types.ts for type safety.
  */
 export interface ILLMService {
-  generate(
-    messages: Array<{ role: string; content: string | unknown[] }>,
-    options?: { systemPrompt?: string; maxTokens?: number }
-  ): Promise<{ content: string }>;
+  generate(messages: LLMMessage[], options?: LLMOptions): Promise<LLMResponse>;
 }
 
 export interface BrowserSessionManagerConfig {
   /** Default browser configuration */
   defaultConfig?: Partial<BrowserConfig>;
-  /** WebChannel for broadcasting events */
-  webChannel?: IBroadcaster;
+  /** Channel for sending events to clients */
+  channel?: Channel;
   /** LLM service for strategies */
   llmService?: ILLMService;
 }
@@ -60,14 +53,14 @@ export interface BrowserSessionManagerConfig {
  * Responsibilities:
  * - Creating and closing browser sessions
  * - Managing Playwright browser instance
- * - Broadcasting events to WebChannel
+ * - Broadcasting events to clients
  * - Session lifecycle management
  */
 export class BrowserSessionManager {
   private sessions: Map<string, BrowserSessionInstance> = new Map();
   private browser: Browser | null = null;
   private config: BrowserConfig;
-  private webChannel?: IBroadcaster;
+  private channel?: Channel;
   private llmService?: ILLMService;
   private isInitialized = false;
 
@@ -76,7 +69,7 @@ export class BrowserSessionManager {
       ...DEFAULT_BROWSER_CONFIG,
       ...managerConfig.defaultConfig,
     };
-    this.webChannel = managerConfig.webChannel;
+    this.channel = managerConfig.channel;
     this.llmService = managerConfig.llmService;
   }
 
@@ -303,12 +296,12 @@ export class BrowserSessionManager {
   // ===========================================================================
 
   /**
-   * Attaches a WebChannel for broadcasting events.
+   * Attaches a channel for sending events to clients.
    * Called by the server after initialization.
    */
-  attachWebChannel(webChannel: IBroadcaster): void {
-    this.webChannel = webChannel;
-    console.log('[Browser] WebChannel attached');
+  attachChannel(channel: Channel): void {
+    this.channel = channel;
+    console.log('[Browser] Channel attached');
   }
 
   /**
@@ -389,11 +382,11 @@ export class BrowserSessionManager {
   }
 
   /**
-   * Broadcasts an event to the WebChannel.
+   * Broadcasts an event to connected clients.
    */
   private broadcast(event: BrowserEvent): void {
-    if (this.webChannel) {
-      this.webChannel.broadcast(event);
+    if (this.channel) {
+      this.channel.broadcast(event);
     }
   }
 }

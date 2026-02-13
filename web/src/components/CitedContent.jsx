@@ -59,8 +59,18 @@ const CitationHighlight = memo(function CitationHighlight({ children, source, in
 
   const handleMouseEnter = (e) => {
     const rect = e.currentTarget.getBoundingClientRect();
+    const tooltipWidth = 320; // Approximate tooltip width
+    const viewportWidth = window.innerWidth;
+
+    // Calculate x position - shift left if it would overflow right edge
+    let x = 0;
+    if (rect.left + tooltipWidth > viewportWidth - 16) {
+      // Tooltip would overflow - shift it left
+      x = Math.min(0, viewportWidth - rect.left - tooltipWidth - 16);
+    }
+
     setTooltipPosition({
-      x: 0, // Relative to the highlight span
+      x,
       y: rect.height + 4,
     });
     setShowTooltip(true);

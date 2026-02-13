@@ -28,6 +28,17 @@ export interface ToolRequest {
   groupId?: string;
   // ID of the agent that initiated this request (for event filtering)
   callerId?: string;
+  // Tracing context for recording tool calls
+  traceId?: string;
+  spanId?: string;
+}
+
+// File attachment from tool execution (e.g., screenshots, generated images)
+export interface ToolResultFile {
+  name: string;
+  dataUrl: string;
+  size: number;
+  mediaType?: string;
 }
 
 // Tool execution result
@@ -40,6 +51,19 @@ export interface ToolResult {
   startTime: Date;
   endTime: Date;
   durationMs: number;
+  /**
+   * When true, the full output is displayed to the user via UI events but
+   * is NOT sent to the LLM. A minimal acknowledgment is sent instead.
+   */
+  displayOnly?: boolean;
+  /**
+   * Short summary sent to the LLM when displayOnly is true.
+   */
+  displayOnlySummary?: string;
+  /**
+   * File attachments (images, documents) from tool execution.
+   */
+  files?: ToolResultFile[];
 }
 
 // Event: Tool requested (emitted when tool execution starts)
@@ -70,10 +94,31 @@ export interface ToolExecutionFinishedEvent {
   timestamp: Date;
   // ID of the agent that initiated this request (for event filtering)
   callerId?: string;
+  // File attachments (images, documents) from tool execution
+  files?: ToolResultFile[];
+}
+
+// Event: Tool progress update (emitted during long-running tool execution)
+export interface ToolProgressEvent {
+  type: 'tool_progress';
+  requestId: string;
+  toolName: string;
+  source: ToolSource;
+  progress: {
+    /** Current count / step number */
+    current: number;
+    /** Total expected (if known) */
+    total?: number;
+    /** Human-readable progress message */
+    message?: string;
+  };
+  timestamp: Date;
+  // ID of the agent that initiated this request (for event filtering)
+  callerId?: string;
 }
 
 // Union of all tool events
-export type ToolEvent = ToolRequestedEvent | ToolExecutionFinishedEvent;
+export type ToolEvent = ToolRequestedEvent | ToolExecutionFinishedEvent | ToolProgressEvent;
 
 // Event callback type
 export type ToolEventCallback = (event: ToolEvent) => void;

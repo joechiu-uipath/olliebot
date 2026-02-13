@@ -1,7 +1,7 @@
 import { select, search } from '@inquirer/prompts';
 import { v4 as uuid } from 'uuid';
-import * as readline from 'readline';
-import type { Channel, Message, SendOptions } from './types.js';
+import type { Channel, Message, SendOptions, StreamStartOptions, StreamEndOptions } from './types.js';
+import { SUPERVISOR_ICON, SUPERVISOR_NAME } from '../constants.js';
 
 export interface Conversation {
   id: string;
@@ -71,15 +71,12 @@ export class ConsoleChannel implements Channel {
   readonly name = 'console';
 
   private messageHandler: ((message: Message) => Promise<void>) | null = null;
-  private actionHandler: ((action: string, data: unknown) => Promise<void>) | null = null;
   private connected = false;
-  private inputLoop: Promise<void> | null = null;
   private shouldStop = false;
   private activeStreams: Map<string, { agentName?: string; agentEmoji?: string }> = new Map();
   private conversationProvider: ConversationProvider | null = null;
   private systemProvider: SystemProvider | null = null;
   private slashCommands: SlashCommand[] = [];
-  private rl: readline.Interface | null = null;
 
   constructor(id: string = 'console-default') {
     this.id = id;
@@ -146,7 +143,7 @@ export class ConsoleChannel implements Channel {
     // Delay showing prompt and starting input loop to allow async initialization logs to complete
     // (e.g., ConfigWatcher ready event) - prevents console.log from corrupting inquirer prompt
     setTimeout(() => {
-      console.log('\n🤖 OllieBot Console Interface');
+      console.log(`\n${SUPERVISOR_ICON} ${SUPERVISOR_NAME} Console Interface`);
       console.log('Type your message and press Enter. Type "exit" to quit.');
       console.log('Press / for commands\n');
       this.startInputLoop();
@@ -154,7 +151,8 @@ export class ConsoleChannel implements Channel {
   }
 
   private startInputLoop(): void {
-    this.inputLoop = this.runInputLoop();
+    // Fire and forget - the loop runs until shouldStop is set
+    void this.runInputLoop();
   }
 
   private getPromptPrefix(): string {
@@ -201,10 +199,12 @@ export class ConsoleChannel implements Channel {
         if (userInput.trim() && this.messageHandler) {
           const message: Message = {
             id: uuid(),
-            channel: this.id,
             role: 'user',
             content: userInput,
             createdAt: new Date(),
+            metadata: {
+              conversationId: this.conversationProvider?.getCurrentConversationId() ?? undefined,
+            },
           };
           await this.messageHandler(message);
         }
@@ -457,7 +457,7 @@ export class ConsoleChannel implements Channel {
       if (msg.role === 'user') {
         console.log(`\n👤 You: ${this.truncateMessage(msg.content)}`);
       } else if (msg.role === 'assistant') {
-        console.log(`\n🤖 OllieBot: ${this.truncateMessage(msg.content)}`);
+        console.log(`\n${SUPERVISOR_ICON} ${SUPERVISOR_NAME}: ${this.truncateMessage(msg.content)}`);
       }
       // Skip system and tool messages for cleaner display
     }
@@ -625,7 +625,7 @@ export class ConsoleChannel implements Channel {
       const aliases = cmd.aliases.length > 0 ? ` (${cmd.aliases.map(a => '/' + a).join(', ')})` : '';
       console.log(`  /${cmd.name}${aliases} - ${cmd.description}`);
     });
-    console.log('  exit - Quit OllieBot\n');
+    console.log(`  exit - Quit ${SUPERVISOR_NAME}\n`);
   }
 
   private formatDate(isoString: string): string {
@@ -652,7 +652,12 @@ export class ConsoleChannel implements Channel {
       output = this.stripMarkdown(output);
     }
 
-    console.log(`\n🤖 OllieBot: ${output}\n`);
+    // Use agent metadata if provided, otherwise use default supervisor
+    const agentLabel = options?.agent?.agentEmoji && options?.agent?.agentName
+      ? `${options.agent.agentEmoji} ${options.agent.agentName}`
+      : `${SUPERVISOR_ICON} ${SUPERVISOR_NAME}`;
+
+    console.log(`\n${agentLabel}: ${output}\n`);
 
     // Show action buttons if provided
     if (options?.buttons && options.buttons.length > 0) {
@@ -664,7 +669,7 @@ export class ConsoleChannel implements Channel {
     }
   }
 
-  async sendError(error: string, details?: string): Promise<void> {
+  async sendError(error: string, details?: string, _conversationId?: string): Promise<void> {
     console.log(`\n❌ Error: ${error}`);
     if (details) {
       console.log(`   Details: ${details}`);
@@ -672,28 +677,12 @@ export class ConsoleChannel implements Channel {
     console.log('');
   }
 
-  async sendAsAgent(
-    content: string,
-    options?: { markdown?: boolean; agentName?: string; agentEmoji?: string }
-  ): Promise<void> {
+  // Streaming support
+  startStream(streamId: string, options?: StreamStartOptions): void {
     const agentLabel = options?.agentEmoji && options?.agentName
       ? `${options.agentEmoji} ${options.agentName}`
-      : '🤖 OllieBot';
-
-    let output = content;
-    if (!options?.markdown) {
-      output = this.stripMarkdown(output);
-    }
-
-    console.log(`\n${agentLabel}: ${output}\n`);
-  }
-
-  // Streaming support
-  startStream(streamId: string, agentInfo?: { agentId?: string; agentName?: string; agentEmoji?: string }): void {
-    const agentLabel = agentInfo?.agentEmoji && agentInfo?.agentName
-      ? `${agentInfo.agentEmoji} ${agentInfo.agentName}`
-      : '🤖 OllieBot';
-    this.activeStreams.set(streamId, { agentName: agentInfo?.agentName, agentEmoji: agentInfo?.agentEmoji });
+      : `${SUPERVISOR_ICON} ${SUPERVISOR_NAME}`;
+    this.activeStreams.set(streamId, { agentName: options?.agentName, agentEmoji: options?.agentEmoji });
     process.stdout.write(`\n${agentLabel}: `);
   }
 
@@ -703,7 +692,7 @@ export class ConsoleChannel implements Channel {
     }
   }
 
-  endStream(streamId: string): void {
+  endStream(streamId: string, _options?: StreamEndOptions): void {
     if (this.activeStreams.has(streamId)) {
       this.activeStreams.delete(streamId);
       process.stdout.write('\n\n');
@@ -723,8 +712,9 @@ export class ConsoleChannel implements Channel {
     this.messageHandler = handler;
   }
 
-  onAction(handler: (action: string, data: unknown) => Promise<void>): void {
-    this.actionHandler = handler;
+  // No-op for console - actions come from UI buttons which console doesn't have
+  onAction(_handler: (action: string, data: unknown) => Promise<void>): void {
+    // Console has no action buttons, nothing to handle
   }
 
   isConnected(): boolean {
@@ -734,8 +724,10 @@ export class ConsoleChannel implements Channel {
   async close(): Promise<void> {
     this.shouldStop = true;
     this.connected = false;
-    if (this.rl) {
-      this.rl.close();
-    }
+  }
+
+  // No-op for console channel - no connected clients to broadcast to
+  broadcast(_data: unknown): void {
+    // Console has no connected clients, nothing to broadcast
   }
 }

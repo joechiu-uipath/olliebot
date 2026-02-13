@@ -34,7 +34,7 @@ export class MemoryService {
     if (!existsSync(this.userMemoryPath)) {
       writeFileSync(this.userMemoryPath, `# User Memory
 
-This file is for your personal notes and preferences that OllieBot should remember.
+This file is for your personal notes and preferences the agent should remember.
 Edit this file directly to add information you want the agent to know about you.
 
 ## Examples

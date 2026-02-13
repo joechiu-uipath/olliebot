@@ -2,6 +2,7 @@ import 'dotenv/config';
 import { join } from 'path';
 import { initDb, closeDb, getDb } from './db/index.js';
 import { ensureWellKnownConversations, WellKnownConversations } from './db/well-known-conversations.js';
+import { SUPERVISOR_ICON, SUPERVISOR_NAME } from './constants.js';
 import { SupervisorAgentImpl, getAgentRegistry } from './agents/index.js';
 import {
   LLMService,
@@ -12,7 +13,7 @@ import {
   type LLMProvider,
 } from './llm/index.js';
 import { ConsoleChannel } from './channels/index.js';
-import { OllieBotServer } from './server/index.js';
+import { AssistantServer } from './server/index.js';
 import { MCPClient } from './mcp/index.js';
 import type { MCPServerConfig } from './mcp/types.js';
 import { SkillManager } from './skills/index.js';
@@ -33,16 +34,21 @@ import {
   AnalyzeImageTool,
   CreateImageTool,
   RememberTool,
-  ReadSkillTool,
-  RunSkillScriptTool,
+  ReadAgentSkillTool,
+  RunAgentSkillScriptTool,
   HttpClientTool,
   DelegateTool,
   QueryRAGProjectTool,
   SpeakTool,
+  GeneratePythonTool,
+  RunPythonTool,
+  WebsiteCrawlerTool,
+} from './tools/index.js';
+import {
   ReadFrontendCodeTool,
   ModifyFrontendCodeTool,
   CheckFrontendCodeTool,
-} from './tools/index.js';
+} from './self-coding/index.js';
 import { TaskManager } from './tasks/index.js';
 import { MemoryService } from './memory/index.js';
 import { UserToolManager } from './tools/user/index.js';
@@ -54,6 +60,15 @@ import {
   BrowserActionTool,
   BrowserScreenshotTool,
 } from './browser/index.js';
+import {
+  DesktopSessionManager,
+  DesktopSessionTool,
+  DesktopActionTool,
+  DesktopScreenshotTool,
+} from './desktop/index.js';
+import { getUserSettingsService } from './settings/index.js';
+import { LogBuffer } from './mcp-server/index.js';
+import { getTraceStore } from './tracing/index.js';
 
 /**
  * Parse MCP server configurations from various formats.
@@ -148,6 +163,12 @@ const CONFIG = {
   // MCP Configuration (JSON string of server configs)
   mcpServers: process.env.MCP_SERVERS || '[]',
 
+  // MCP Server (OllieBot as MCP server) — disabled by default
+  mcpServerEnabled: process.env.MCP_SERVER_ENABLED === 'true',
+  // MCP Server authentication
+  mcpServerSecret: process.env.MCP_SERVER_SECRET || '',
+  mcpServerAuthDisabled: process.env.MCP_SERVER_AUTH_DISABLED === 'true',
+
   // Native tool API keys
   imageGenProvider: (process.env.IMAGE_GEN_PROVIDER || 'openai') as 'openai' | 'azure_openai',
   imageGenModel: process.env.IMAGE_GEN_MODEL || 'dall-e-3',
@@ -230,7 +251,13 @@ function createEmbeddingProvider() {
 
 
 async function main(): Promise<void> {
-  console.log('🤖 OllieBot Starting...\n');
+  // Install log buffer early so all boot logs are captured (before any console.log)
+  const logBuffer = new LogBuffer();
+  if (CONFIG.mcpServerEnabled) {
+    logBuffer.install();
+  }
+
+  console.log(`${SUPERVISOR_ICON} ${SUPERVISOR_NAME} Starting...\n`);
 
   // Validate at least one API key is available
   const hasApiKey =
@@ -250,6 +277,11 @@ async function main(): Promise<void> {
   await initDb(CONFIG.dbPath);
   ensureWellKnownConversations();
 
+  // Initialize trace store for execution logging
+  const traceStore = getTraceStore();
+  traceStore.init();
+  console.log('[Init] Trace store initialized');
+
   // Initialize LLM service with Main and Fast providers
   console.log('[Init] Initializing LLM service...');
   const mainProvider = createLLMProvider(CONFIG.mainProvider, CONFIG.mainModel);
@@ -258,6 +290,7 @@ async function main(): Promise<void> {
   const llmService = new LLMService({
     main: mainProvider,
     fast: fastProvider,
+    traceStore,
   });
 
   console.log(`[Init] Main LLM: ${CONFIG.mainProvider}/${CONFIG.mainModel}`);
@@ -272,9 +305,18 @@ async function main(): Promise<void> {
   console.log('[Init] Initializing MCP client...');
   const mcpClient = new MCPClient();
 
+  // Load user settings to check for disabled MCPs
+  const userSettings = getUserSettingsService();
+  const disabledMcps = userSettings.getDisabledMcps();
+
   const mcpServers = parseMCPServers(CONFIG.mcpServers);
   for (const serverConfig of mcpServers) {
     try {
+      // Check if this MCP is disabled in user settings
+      if (disabledMcps.includes(serverConfig.id)) {
+        serverConfig.enabled = false;
+        console.log(`[Init] MCP server ${serverConfig.id} is disabled by user settings`);
+      }
       await mcpClient.registerServer(serverConfig);
     } catch (error) {
       console.warn(`[Init] Failed to register MCP server ${serverConfig.id}:`, error);
@@ -313,6 +355,7 @@ async function main(): Promise<void> {
   console.log('[Init] Initializing tool runner...');
   const toolRunner = new ToolRunner({
     mcpClient,
+    traceStore,
   });
 
   // Register native tools
@@ -341,6 +384,13 @@ async function main(): Promise<void> {
   // Web scraping (uses LLM for summarization)
   toolRunner.registerNativeTool(new WebScrapeTool({ llmService }));
 
+  // Website crawler (display-only result — full URL list shown in UI, summary sent to LLM)
+  // Passes RAG service to enable automatic content saving to RAG projects
+  toolRunner.registerNativeTool(new WebsiteCrawlerTool({
+    ragService: ragProjectService ?? undefined,
+    ragDir: CONFIG.ragDir,
+  }));
+
   toolRunner.registerNativeTool(new TakeScreenshotTool());
   toolRunner.registerNativeTool(new AnalyzeImageTool(llmService));
 
@@ -366,6 +416,11 @@ async function main(): Promise<void> {
   // Memory tool (always available)
   toolRunner.registerNativeTool(new RememberTool(memoryService));
 
+  // Python tools (code generation and execution with Pyodide)
+  toolRunner.registerNativeTool(new GeneratePythonTool({ llmService }));
+  toolRunner.registerNativeTool(new RunPythonTool());
+  console.log('[Init] Python tools enabled (generate_python + run_python with Plotly support)');
+
   // Speak tool (TTS - requires API key based on provider)
   const voiceApiKey = CONFIG.voiceProvider === 'azure_openai'
     ? CONFIG.azureOpenaiApiKey
@@ -387,8 +442,8 @@ async function main(): Promise<void> {
   }
 
   // Skill tools (for Agent Skills spec)
-  toolRunner.registerNativeTool(new ReadSkillTool(skillManager));
-  toolRunner.registerNativeTool(new RunSkillScriptTool(skillManager));
+  toolRunner.registerNativeTool(new ReadAgentSkillTool(skillManager));
+  toolRunner.registerNativeTool(new RunAgentSkillScriptTool(skillManager));
 
   // Self-modifying code tools (for frontend code modification)
   toolRunner.registerNativeTool(new ReadFrontendCodeTool());
@@ -401,7 +456,7 @@ async function main(): Promise<void> {
   const browserConfig = loadBrowserConfig();
   const browserManager = new BrowserSessionManager({
     defaultConfig: browserConfig,
-    llmService: llmService as unknown as import('./browser/manager.js').ILLMService,
+    llmService,
   });
 
   // Register browser tools
@@ -410,6 +465,16 @@ async function main(): Promise<void> {
   toolRunner.registerNativeTool(new BrowserActionTool(browserManager));
   toolRunner.registerNativeTool(new BrowserScreenshotTool(browserManager));
   console.log('[Init] Browser tools registered');
+
+  // Initialize Desktop Session Manager
+  console.log('[Init] Initializing desktop session manager...');
+  const desktopManager = new DesktopSessionManager();
+
+  // Register desktop tools
+  toolRunner.registerNativeTool(new DesktopSessionTool(desktopManager));
+  toolRunner.registerNativeTool(new DesktopActionTool(desktopManager));
+  toolRunner.registerNativeTool(new DesktopScreenshotTool(desktopManager));
+  console.log('[Init] Desktop tools registered');
 
   // Register RAG project query tool (if service is available)
   if (ragProjectService) {
@@ -490,6 +555,12 @@ async function main(): Promise<void> {
     console.log('[Init] Starting in console mode...');
     const consoleChannel = new ConsoleChannel();
 
+    // Navigation state for console UI - tracks which conversation the user is viewing
+    // This is separate from supervisor's request-scoped conversation handling
+    const navigationState = {
+      currentConversationId: null as string | null,
+    };
+
     // Wire up conversation provider for console commands
     consoleChannel.setConversationProvider({
       listConversations: (limit = 20) => {
@@ -507,29 +578,14 @@ async function main(): Promise<void> {
           createdAt: m.createdAt,
         }));
       },
-      getCurrentConversationId: () => supervisor.getCurrentConversationId(),
-      setConversationId: (id) => supervisor.setConversationId(id),
-      startNewConversation: () => supervisor.startNewConversation(),
+      getCurrentConversationId: () => navigationState.currentConversationId,
+      setConversationId: (id) => { navigationState.currentConversationId = id; },
+      startNewConversation: () => { navigationState.currentConversationId = null; },
     });
 
     // Wire up system provider for tasks, tools, MCP
     consoleChannel.setSystemProvider({
-      getTasks: () => {
-        const db = getDb();
-        const tasks = db.tasks.findAll({ limit: 20 });
-        return tasks.map(t => {
-          const config = t.jsonConfig as { description?: string; trigger?: { schedule?: string } };
-          return {
-            id: t.id,
-            name: t.name,
-            description: config.description || '',
-            schedule: config.trigger?.schedule || null,
-            status: t.status,
-            lastRun: t.lastRun,
-            nextRun: t.nextRun,
-          };
-        });
-      },
+      getTasks: () => taskManager.getTasksForApi(),
       getTools: () => {
         const tools = toolRunner.getToolsForLLM();
         const mcpServers = mcpClient?.getServers() || [];
@@ -623,7 +679,7 @@ async function main(): Promise<void> {
   } else {
     // Server mode - HTTP + WebSocket
     console.log('[Init] Starting in server mode...');
-    const server = new OllieBotServer({
+    const server = new AssistantServer({
       port: CONFIG.port,
       supervisor,
       mcpClient,
@@ -631,8 +687,10 @@ async function main(): Promise<void> {
       toolRunner,
       llmService,
       browserManager,
+      desktopManager,
       taskManager,
       ragProjectService: ragProjectService || undefined,
+      traceStore,
       mainProvider: CONFIG.mainProvider,
       mainModel: CONFIG.mainModel,
       voiceProvider: CONFIG.voiceProvider,
@@ -641,6 +699,13 @@ async function main(): Promise<void> {
       azureOpenaiEndpoint: CONFIG.azureOpenaiEndpoint,
       azureOpenaiApiVersion: CONFIG.azureOpenaiApiVersion,
       openaiApiKey: CONFIG.openaiApiKey,
+      // MCP Server configuration
+      mcpServerEnabled: CONFIG.mcpServerEnabled,
+      mcpServerSecret: CONFIG.mcpServerSecret,
+      mcpServerAuthDisabled: CONFIG.mcpServerAuthDisabled,
+      logBuffer,
+      fastProvider: CONFIG.fastProvider,
+      fastModel: CONFIG.fastModel,
     });
     await server.start();
 
@@ -651,7 +716,7 @@ async function main(): Promise<void> {
         const taskDescription = (task.jsonConfig as { description?: string }).description || '';
 
         // Create a task message for the supervisor
-        // Route to the well-known :feed: conversation for background tasks
+        // Route to the well-known `feed` conversation for background tasks
         const taskMessage = {
           id: crypto.randomUUID(),
           channel: 'web-main',  // Use web channel so responses are visible in UI
@@ -682,18 +747,21 @@ async function main(): Promise<void> {
     taskManager.startScheduler();
 
     console.log(`
-✅ OllieBot ready! (Multi-Agent Architecture)
+✅ ${SUPERVISOR_NAME} ready!
 
   🌐 Web UI:     http://localhost:${CONFIG.port}
   📡 WebSocket:  ws://localhost:${CONFIG.port}
   📚 API:        http://localhost:${CONFIG.port}/api
 
   📁 Config:     ${CONFIG.tasksDir}
-  🗄️  Database:   ${CONFIG.dbPath}
+  🗄️ Database:   ${CONFIG.dbPath}
   🧠 Main LLM:   ${CONFIG.mainProvider}/${CONFIG.mainModel}
   ⚡ Fast LLM:   ${CONFIG.fastProvider}/${CONFIG.fastModel}
+     Img Gen:    ${CONFIG.imageGenProvider}/${CONFIG.imageGenModel}
+     Voice:      ${CONFIG.voiceProvider}/${CONFIG.voiceModel}
+  Deep Research: ${CONFIG.deepResearchProvider}/${CONFIG.deepResearchModel} 
 
-  🤖 Supervisor: ${supervisor.identity.emoji} ${supervisor.identity.name}
+  ${SUPERVISOR_ICON} Supervisor: ${supervisor.identity.emoji} ${supervisor.identity.name}
 `);
   }
 
@@ -702,6 +770,7 @@ async function main(): Promise<void> {
     console.log('\n[Shutdown] Gracefully shutting down...');
     await registry.shutdown();
     await browserManager.shutdown();
+    await desktopManager.closeAllSessions();
     await taskManager.close();
     await userToolManager.close();
     await skillManager.close();

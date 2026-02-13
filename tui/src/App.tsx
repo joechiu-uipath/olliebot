@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { Box, Text, useInput, useApp, useStdout } from 'ink';
 import { useWebSocket } from './hooks/useWebSocket.js';
 import { Sidebar } from './components/Sidebar.js';
@@ -43,6 +43,10 @@ export function App() {
     skills: false,
   });
 
+  // Progress debounce state (refs to avoid re-creating the callback)
+  const progressTimers = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const pendingProgress = useRef<Record<string, { current: number; total?: number; message?: string }>>({});
+
   // Handle WebSocket messages
   const handleWsMessage = useCallback((data: WsMessage) => {
     if (data.type === 'message') {
@@ -82,13 +86,53 @@ export function App() {
         m.id === msg.streamId ? { ...m, content: m.content + msg.chunk } : m
       ));
     } else if (data.type === 'stream_end') {
-      const msg = data as WsMessage & { streamId: string; conversationId?: string };
+      const msg = data as WsMessage & {
+        streamId: string;
+        conversationId?: string;
+        usage?: { inputTokens: number; outputTokens: number; llmDurationMs: number; modelId?: string };
+      };
       if (msg.conversationId && msg.conversationId !== currentConversationId) return;
 
       setMessages(prev => prev.map(m =>
-        m.id === msg.streamId ? { ...m, isStreaming: false } : m
+        m.id === msg.streamId ? { ...m, isStreaming: false, usage: msg.usage } : m
       ));
       setIsResponsePending(false);
+    } else if (data.type === 'stream_resume') {
+      // Handle stream resumption when switching back to a conversation
+      const msg = data as WsMessage & {
+        streamId?: string;
+        conversationId: string;
+        agentName?: string;
+        agentEmoji?: string;
+        accumulatedContent?: string;
+        active?: boolean;
+      };
+      if (msg.conversationId !== currentConversationId) return;
+
+      // No active stream for this conversation
+      if (msg.active === false || !msg.streamId) return;
+
+      setMessages(prev => {
+        const existingStream = prev.find(m => m.id === msg.streamId);
+        if (existingStream) {
+          // Update existing stream message
+          return prev.map(m =>
+            m.id === msg.streamId
+              ? { ...m, content: msg.accumulatedContent || '', isStreaming: true }
+              : m
+          );
+        }
+        // Create new streaming message
+        return [...prev, {
+          id: msg.streamId!,
+          role: 'assistant' as const,
+          content: msg.accumulatedContent || '',
+          isStreaming: true,
+          agentName: msg.agentName,
+          agentEmoji: msg.agentEmoji,
+        }];
+      });
+      setIsResponsePending(true);
     } else if (data.type === 'error') {
       const msg = data as WsMessage & { error: string; details?: string; conversationId?: string };
       if (msg.conversationId && msg.conversationId !== currentConversationId) return;
@@ -121,15 +165,44 @@ export function App() {
       const msg = data as WsMessage & { requestId: string; success: boolean; durationMs: number; error?: string; result?: unknown; conversationId?: string };
       if (msg.conversationId && msg.conversationId !== currentConversationId) return;
 
+      const toolId = `tool-${msg.requestId}`;
+      // Clear any pending progress debounce
+      if (progressTimers.current[toolId]) {
+        clearTimeout(progressTimers.current[toolId]);
+        delete progressTimers.current[toolId];
+        delete pendingProgress.current[toolId];
+      }
       setMessages(prev => prev.map(m =>
-        m.id === `tool-${msg.requestId}` ? {
+        m.id === toolId ? {
           ...m,
           status: msg.success ? 'completed' : 'failed',
           durationMs: msg.durationMs,
           error: msg.error,
           result: msg.result,
+          progress: undefined,
         } : m
       ));
+    } else if (data.type === 'tool_progress') {
+      const msg = data as WsMessage & { requestId: string; progress: { current: number; total?: number; message?: string }; conversationId?: string };
+      if (msg.conversationId && msg.conversationId !== currentConversationId) return;
+
+      const toolId = `tool-${msg.requestId}`;
+      pendingProgress.current[toolId] = msg.progress;
+
+      if (progressTimers.current[toolId]) return;
+
+      progressTimers.current[toolId] = setTimeout(() => {
+        const progress = pendingProgress.current[toolId];
+        delete progressTimers.current[toolId];
+        delete pendingProgress.current[toolId];
+        if (!progress) return;
+
+        setMessages(prev => prev.map(m =>
+          m.id === toolId && m.status === 'running'
+            ? { ...m, progress }
+            : m
+        ));
+      }, 500);
     } else if (data.type === 'delegation') {
       const msg = data as WsMessage & { agentId: string; agentName: string; agentEmoji: string; agentType: string; mission: string; conversationId?: string };
       if (msg.conversationId && msg.conversationId !== currentConversationId) return;
@@ -163,52 +236,58 @@ export function App() {
     }
   }, [currentConversationId]);
 
+  // Load all data from API (called on initial mount and websocket reconnect)
+  const loadData = useCallback(async () => {
+    try {
+      // Load conversations
+      const convRes = await fetch(`${API_URL}/api/conversations`);
+      if (convRes.ok) {
+        const convData = await convRes.json() as Array<Record<string, unknown>>;
+        setConversations(convData.map((c) => ({
+          id: c.id as string,
+          title: c.title as string,
+          updatedAt: (c.updatedAt || c.updated_at) as string | undefined,
+          isWellKnown: (c.isWellKnown || false) as boolean,
+          icon: c.icon as string | undefined,
+        })));
+        // Default to Feed conversation if none selected
+        setCurrentConversationId(prev => {
+          if (prev) return prev; // Keep current selection on reconnect
+          const feed = convData.find((c) => c.id === 'feed');
+          return feed ? feed.id as string : null;
+        });
+      }
+
+      // Load tasks
+      const tasksRes = await fetch(`${API_URL}/api/tasks`);
+      if (tasksRes.ok) setTasks(await tasksRes.json() as ScheduledTask[]);
+
+      // Load tools
+      const toolsRes = await fetch(`${API_URL}/api/tools`);
+      if (toolsRes.ok) setTools(await toolsRes.json() as ToolsData);
+
+      // Load MCPs
+      const mcpsRes = await fetch(`${API_URL}/api/mcps`);
+      if (mcpsRes.ok) setMcpServers(await mcpsRes.json() as McpServer[]);
+
+      // Load skills
+      const skillsRes = await fetch(`${API_URL}/api/skills`);
+      if (skillsRes.ok) setSkills(await skillsRes.json() as Skill[]);
+    } catch {
+      // API might not be available yet
+    }
+  }, []);
+
   const { isConnected, sendMessage } = useWebSocket({
     url: WS_URL,
     onMessage: handleWsMessage,
+    onOpen: loadData, // Reload data on every connect/reconnect
   });
 
-  // Load initial data
+  // Load initial data on mount
   useEffect(() => {
-    const loadData = async () => {
-      try {
-        // Load conversations
-        const convRes = await fetch(`${API_URL}/api/conversations`);
-        if (convRes.ok) {
-          const convData = await convRes.json() as Array<Record<string, unknown>>;
-          setConversations(convData.map((c) => ({
-            id: c.id as string,
-            title: c.title as string,
-            updatedAt: (c.updatedAt || c.updated_at) as string | undefined,
-            isWellKnown: (c.isWellKnown || false) as boolean,
-            icon: c.icon as string | undefined,
-          })));
-          // Default to Feed conversation
-          const feed = convData.find((c) => c.id === ':feed:');
-          if (feed) setCurrentConversationId(feed.id as string);
-        }
-
-        // Load tasks
-        const tasksRes = await fetch(`${API_URL}/api/tasks`);
-        if (tasksRes.ok) setTasks(await tasksRes.json() as ScheduledTask[]);
-
-        // Load tools
-        const toolsRes = await fetch(`${API_URL}/api/tools`);
-        if (toolsRes.ok) setTools(await toolsRes.json() as ToolsData);
-
-        // Load MCPs
-        const mcpsRes = await fetch(`${API_URL}/api/mcps`);
-        if (mcpsRes.ok) setMcpServers(await mcpsRes.json() as McpServer[]);
-
-        // Load skills
-        const skillsRes = await fetch(`${API_URL}/api/skills`);
-        if (skillsRes.ok) setSkills(await skillsRes.json() as Skill[]);
-      } catch {
-        // API might not be available yet
-      }
-    };
     loadData();
-  }, []);
+  }, [loadData]);
 
   // Load messages when conversation changes
   useEffect(() => {
@@ -222,18 +301,12 @@ export function App() {
     let cancelled = false;
     const loadMessages = async () => {
       try {
-        const url = `${API_URL}/api/conversations/${currentConversationId}/messages`;
+        const url = `${API_URL}/api/conversations/${currentConversationId}/messages?limit=100`;
         const res = await fetch(url);
-        // Debug: log response status
-        process.stderr.write(`[TUI] Fetch ${url} -> ${res.status}\n`);
         if (res.ok && !cancelled) {
-          const data = await res.json() as Array<Record<string, unknown>>;
-          // Debug: log message count and first few messages for Feed
-          process.stderr.write(`[TUI] Loaded ${data.length} messages for ${currentConversationId}\n`);
-          if (currentConversationId === ':feed:' && data.length > 0) {
-            process.stderr.write(`[TUI] Feed sample: ${JSON.stringify(data[0], null, 2)}\n`);
-          }
-          setMessages(data.map((msg) => ({
+          const data = await res.json() as { items: Array<Record<string, unknown>>; pagination: unknown };
+          const messages = data.items || [];
+          setMessages(messages.map((msg) => ({
             id: msg.id as string,
             role: (msg.messageType === 'tool_event' ? 'tool' :
                   msg.messageType === 'delegation' ? 'delegation' :
@@ -247,6 +320,9 @@ export function App() {
             mission: msg.delegationMission as string | undefined,
             taskName: msg.taskName as string | undefined,
           })));
+
+          // Request active stream state for this conversation (to resume streaming display)
+          sendMessage({ type: 'get-active-stream', conversationId: currentConversationId });
         }
       } catch {
         // Keep messages empty on error
@@ -257,7 +333,7 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [currentConversationId]);
+  }, [currentConversationId, sendMessage]);
 
   // Global key handling
   useInput((input, key) => {

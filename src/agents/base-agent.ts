@@ -9,6 +9,7 @@ import type {
   AgentConfig,
   AgentCommunication,
   AgentMessage,
+  AgentTurnUsage,
 } from './types.js';
 import type { Channel, Message } from '../channels/types.js';
 import type { LLMService } from '../llm/service.js';
@@ -18,7 +19,7 @@ import type { SkillManager } from '../skills/manager.js';
 import type { RagDataManager } from '../rag-projects/data-manager.js';
 import { generatePostHocCitations, toStoredCitationData } from '../citations/generator.js';
 import type { CitationSource, StoredCitationData } from '../citations/types.js';
-import type { WebChannel } from '../channels/web.js';
+import { RAG_CACHE_TTL_MS } from '../constants.js';
 
 export abstract class AbstractAgent implements BaseAgent {
   readonly identity: AgentIdentity;
@@ -27,7 +28,7 @@ export abstract class AbstractAgent implements BaseAgent {
 
   protected _state: AgentState;
   protected llmService: LLMService;
-  protected channels: Map<string, Channel> = new Map();
+  protected channel: Channel | null = null;
   protected conversationHistory: Message[] = [];
   protected agentRegistry: AgentRegistry | null = null;
   protected toolRunner: ToolRunner | null = null;
@@ -117,16 +118,16 @@ export abstract class AbstractAgent implements BaseAgent {
   /**
    * Refresh the RAG data cache if the agent has query tool access.
    * Call this before generating responses to ensure fresh data.
-   * Cache expires after 60 seconds.
+   * Cache expires after RAG_CACHE_TTL_MS.
    */
   async refreshRagDataCache(): Promise<void> {
     if (!this.ragDataManager) {
       return;
     }
 
-    // Check if cache is still valid (60 second TTL)
+    // Check if cache is still valid
     const now = Date.now();
-    if (this.ragDataCache !== null && now - this.ragDataCacheTime < 60000) {
+    if (this.ragDataCache !== null && now - this.ragDataCacheTime < RAG_CACHE_TTL_MS) {
       return;
     }
 
@@ -155,6 +156,11 @@ export abstract class AbstractAgent implements BaseAgent {
    * - 'user.*' = all user tools
    * - 'mcp.*' = all MCP tools
    * - '!delegate' = exclude specific tool (blacklist)
+   *
+   * Private tools:
+   * - Private tools are excluded from the '*' wildcard - they don't appear in the general tool list
+   * - Agents only get private tools if explicitly included in their canAccessTools patterns
+   * - This allows specialist agents to access private tools without supervisors needing '!' exclusions
    */
   protected getToolsForLLM(): LLMTool[] {
     if (!this.toolRunner) {
@@ -184,17 +190,25 @@ export abstract class AbstractAgent implements BaseAgent {
 
     // Filter tools: must match an inclusion AND not match any exclusion
     return tools.filter((tool) => {
+      const isPrivate = this.toolRunner!.isPrivateTool(tool.name);
+
       // Check exclusions first
       if (exclusions.some(pattern => matchesPattern(tool.name, pattern))) {
         return false;
       }
-      // Check inclusions
+
+      // Private tools are only included if explicitly named (not via '*' wildcard)
+      if (isPrivate) {
+        return inclusions.some(pattern => pattern !== '*' && matchesPattern(tool.name, pattern));
+      }
+
+      // Check inclusions for non-private tools
       return inclusions.some(pattern => matchesPattern(tool.name, pattern));
     });
   }
 
   registerChannel(channel: Channel): void {
-    this.channels.set(channel.id, channel);
+    this.channel = channel;
   }
 
   async init(): Promise<void> {
@@ -208,52 +222,64 @@ export abstract class AbstractAgent implements BaseAgent {
 
   abstract handleMessage(message: Message): Promise<void>;
 
-  async sendToChannel(
-    channel: Channel,
-    content: string,
-    options?: { markdown?: boolean }
-  ): Promise<void> {
-    // Create agent-attributed message
-    const agentMessage: AgentMessage = {
-      id: uuid(),
-      channel: channel.id,
-      role: 'assistant',
-      content,
-      agentId: this.identity.id,
-      agentName: this.identity.name,
-      agentEmoji: this.identity.emoji,
-      createdAt: new Date(),
-    };
+  async sendMessage(content: string, options?: {
+    citations?: StoredCitationData;
+    reasoningMode?: string;
+    conversationId?: string;
+  }): Promise<void> {
+    if (!this.channel) {
+      console.error(`[${this.identity.name}] Cannot send message: no channel registered`);
+      return;
+    }
 
-    // Send with agent metadata
-    await this.sendAgentMessage(channel, agentMessage, options);
+    // Send with agent metadata and conversation context
+    await this.channel.send(content, {
+      markdown: true,
+      agent: {
+        agentId: this.identity.id,
+        agentName: this.identity.name,
+        agentEmoji: this.identity.emoji,
+      },
+      conversationId: options?.conversationId,
+    });
+
+    // Save to conversation history and database
+    this.saveAssistantMessage(content, options);
 
     this._state.lastActivity = new Date();
   }
 
-  protected async sendAgentMessage(
-    channel: Channel,
-    message: AgentMessage,
-    options?: { markdown?: boolean }
-  ): Promise<void> {
-    // Check if channel supports agent-attributed messages
-    const extendedChannel = channel as ExtendedChannel;
-
-    if (typeof extendedChannel.sendAsAgent === 'function') {
-      await extendedChannel.sendAsAgent(message.content, {
-        ...options,
-        agentId: message.agentId,
-        agentName: message.agentName,
-        agentEmoji: message.agentEmoji,
-      });
-    } else {
-      // Fallback to regular send
-      await channel.send(message.content, options);
-    }
+  /**
+   * Save an assistant message to conversation history and database.
+   * Called automatically by sendMessage(). Can be called directly for streaming
+   * cases where content was already sent chunk by chunk.
+   * Subclasses should override to add agent-specific metadata.
+   */
+  protected saveAssistantMessage(content: string, options?: { citations?: StoredCitationData; usage?: AgentTurnUsage }): void {
+    // Default implementation just adds to conversation history
+    // Subclasses override to persist to database with agent-specific metadata
+    const message: Message = {
+      id: uuid(),
+      role: 'assistant',
+      content,
+      metadata: {
+        agentId: this.identity.id,
+        agentName: this.identity.name,
+        agentEmoji: this.identity.emoji,
+        ...(options?.citations && { citations: options.citations }),
+        ...(options?.usage && { usage: options.usage }),
+      },
+      createdAt: new Date(),
+    };
+    this.conversationHistory.push(message);
   }
 
-  async sendError(channel: Channel, error: string, details?: string): Promise<void> {
-    await channel.sendError(error, details);
+  async sendError(error: string, details?: string, conversationId?: string): Promise<void> {
+    if (!this.channel) {
+      console.error(`[${this.identity.name}] Cannot send error: no channel registered`);
+      return;
+    }
+    await this.channel.sendError(error, details, conversationId);
   }
 
   async receiveFromAgent(comm: AgentCommunication): Promise<void> {
@@ -391,31 +417,23 @@ export abstract class AbstractAgent implements BaseAgent {
   }
 
   /**
-   * End a stream with citation data
+   * End a stream with citation data and optional usage metrics
    */
   protected endStreamWithCitations(
     channel: Channel,
     streamId: string,
     conversationId: string | undefined,
-    citationData: StoredCitationData | undefined
+    citationData: StoredCitationData | undefined,
+    usage?: AgentTurnUsage
   ): void {
-    const webChannel = channel as WebChannel;
-    webChannel.endStream(streamId, conversationId, citationData);
+    channel.endStream(streamId, {
+      conversationId,
+      citations: citationData,
+      usage,
+    });
   }
 }
 
-// Extended channel interface for agent-attributed messages
-export interface ExtendedChannel extends Channel {
-  sendAsAgent(
-    content: string,
-    options?: {
-      markdown?: boolean;
-      agentId?: string;
-      agentName?: string;
-      agentEmoji?: string;
-    }
-  ): Promise<void>;
-}
 
 // Specialist template type
 export interface SpecialistTemplate {
@@ -443,4 +461,8 @@ export interface AgentRegistry {
   // Delegation methods
   getDelegationConfigForSpecialist(type: string): import('./types.js').AgentDelegationConfig;
   canDelegate(sourceAgentType: string, targetAgentType: string, currentWorkflowId: string | null): boolean;
+  // Command trigger methods
+  getCommandTriggers(): Map<string, string>;
+  isCommandOnly(agentType: string): boolean;
+  getAutoDelegatableTypes(): string[];
 }

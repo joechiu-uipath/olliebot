@@ -9,6 +9,7 @@
 import { readFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import type { PromptReference, TargetType } from './types.js';
+import { SUPERVISOR_NAME } from '../constants.js';
 
 // Directory paths
 const USER_PROMPTS_DIR = join(process.cwd(), 'user', 'sub-agents');
@@ -52,7 +53,7 @@ Always provide clear, achievable action items.`,
 };
 
 // Supervisor system prompt (the main orchestrator prompt)
-const SUPERVISOR_PROMPT = `You are OllieBot, a supervisor agent that orchestrates a team of specialized agents.
+const SUPERVISOR_PROMPT = `You are ${SUPERVISOR_NAME}, a supervisor agent that orchestrates a team of specialized agents.
 
 Your capabilities:
 - Directly answer simple questions yourself

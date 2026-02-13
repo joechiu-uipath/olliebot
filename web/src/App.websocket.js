@@ -21,7 +21,7 @@ export function createMessageHandler(deps) {
     getNavigate,
     // State setters
     setMessages,
-    setTotalMessageCount,
+
     setIsResponsePending,
     setIsConnected,
     setConversations,
@@ -32,6 +32,11 @@ export function createMessageHandler(deps) {
     setSelectedBrowserSessionId,
     setClickMarkers,
     setExpandedAccordions,
+    // Desktop session state setters
+    setDesktopSessions,
+    setDesktopScreenshots,
+    setSelectedDesktopSessionId,
+    setDesktopClickMarkers,
     setRagProjects,
     setRagIndexingProgress,
     // Eval state setters
@@ -40,17 +45,44 @@ export function createMessageHandler(deps) {
     setEvalResults,
     setEvalError,
     setEvalLoading,
+    // Scroll callback
+    scrollToBottom,
   } = deps;
+
+  /**
+   * Message types that are scoped to a specific conversation.
+   * These will be filtered out if they don't match the current conversation.
+   * All other message types are global (browser sessions, desktop sessions, RAG, etc.)
+   */
+  const CONVERSATION_SCOPED_TYPES = new Set([
+    'message',
+    'stream_start',
+    'stream_chunk',
+    'stream_end',
+    'stream_resume',
+    'error',
+    'tool_requested',
+    'tool_execution_finished',
+    'tool_progress',
+    'tool_resume',
+    'delegation',
+    'task_run',
+  ]);
 
   /**
    * Helper to check if message belongs to current conversation
    */
   const isForCurrentConversation = (msgConversationId) => {
-    // If no conversationId specified, assume it's for current conversation
-    if (!msgConversationId) return true;
-    // If no current conversation, accept all messages
     const currentId = getCurrentConversationId();
-    if (!currentId) return true;
+    // If no conversationId specified in the message, only show in Feed
+    // (prevents background task events from appearing in user conversations)
+    if (!msgConversationId) {
+      return currentId === 'feed';
+    }
+    // If no current conversation selected, only show Feed messages
+    if (!currentId) {
+      return msgConversationId === 'feed';
+    }
     // Otherwise, check if it matches
     return msgConversationId === currentId;
   };
@@ -59,6 +91,11 @@ export function createMessageHandler(deps) {
    * Main message handler - processes WebSocket messages by type
    */
   return function handleMessage(data) {
+    // Early exit for conversation-scoped messages that don't match current conversation
+    if (CONVERSATION_SCOPED_TYPES.has(data.type) && !isForCurrentConversation(data.conversationId)) {
+      return;
+    }
+
     switch (data.type) {
       case 'message':
         handleRegularMessage(data);
@@ -71,6 +108,9 @@ export function createMessageHandler(deps) {
         break;
       case 'stream_end':
         handleStreamEnd(data);
+        break;
+      case 'stream_resume':
+        handleStreamResume(data);
         break;
       case 'error':
         handleError(data);
@@ -86,6 +126,12 @@ export function createMessageHandler(deps) {
         break;
       case 'tool_execution_finished':
         handleToolFinished(data);
+        break;
+      case 'tool_progress':
+        handleToolProgress(data);
+        break;
+      case 'tool_resume':
+        handleToolResume(data);
         break;
       case 'delegation':
         handleDelegation(data);
@@ -116,6 +162,21 @@ export function createMessageHandler(deps) {
         break;
       case 'browser_click_marker':
         handleBrowserClickMarker(data);
+        break;
+      case 'desktop_session_created':
+        handleDesktopSessionCreated(data);
+        break;
+      case 'desktop_session_updated':
+        handleDesktopSessionUpdated(data);
+        break;
+      case 'desktop_session_closed':
+        handleDesktopSessionClosed(data);
+        break;
+      case 'desktop_screenshot':
+        handleDesktopScreenshot(data);
+        break;
+      case 'desktop_click_marker':
+        handleDesktopClickMarker(data);
         break;
       case 'rag_indexing_started':
         handleRagIndexingStarted(data);
@@ -152,12 +213,10 @@ export function createMessageHandler(deps) {
   // ============================================================================
 
   function handleRegularMessage(data) {
-    if (!isForCurrentConversation(data.conversationId)) return;
-
     const messageId = data.id || `msg-${Date.now()}`;
     setMessages((prev) => {
       if (prev.some((m) => m.id === messageId)) return prev;
-      setTotalMessageCount((c) => c + 1);
+
       return [
         ...prev,
         {
@@ -175,9 +234,6 @@ export function createMessageHandler(deps) {
   }
 
   function handleStreamStart(data) {
-    if (!isForCurrentConversation(data.conversationId)) return;
-
-    setTotalMessageCount((c) => c + 1);
     setMessages((prev) => {
       const lastUserMsg = [...prev].reverse().find(m => m.role === 'user');
       return [
@@ -199,8 +255,6 @@ export function createMessageHandler(deps) {
   }
 
   function handleStreamChunk(data) {
-    if (!isForCurrentConversation(data.conversationId)) return;
-
     setMessages((prev) =>
       prev.map((m) =>
         m.id === data.streamId
@@ -211,25 +265,67 @@ export function createMessageHandler(deps) {
   }
 
   function handleStreamEnd(data) {
-    if (!isForCurrentConversation(data.conversationId)) return;
-
     setMessages((prev) =>
       prev.map((m) =>
         m.id === data.streamId
-          ? { ...m, isStreaming: false, citations: data.citations }
+          ? { ...m, isStreaming: false, citations: data.citations, usage: data.usage }
           : m
       )
     );
     setIsResponsePending(false);
   }
 
-  function handleError(data) {
-    if (!isForCurrentConversation(data.conversationId)) return;
+  /**
+   * Handle stream_resume - restore an in-progress stream when switching back to a conversation
+   */
+  function handleStreamResume(data) {
+    // If no active stream for this conversation, nothing to do
+    if (data.active === false || !data.streamId) {
+      return;
+    }
 
+    // Check if we already have this stream message
+    setMessages((prev) => {
+      const existingStream = prev.find((m) => m.id === data.streamId);
+      if (existingStream) {
+        // Stream message already exists - update it with accumulated content
+        return prev.map((m) =>
+          m.id === data.streamId
+            ? { ...m, content: data.accumulatedContent, isStreaming: true }
+            : m
+        );
+      }
+
+      // Stream message doesn't exist - create it
+      return [
+        ...prev,
+        {
+          id: data.streamId,
+          role: 'assistant',
+          content: data.accumulatedContent || '',
+          isStreaming: true,
+          agentName: data.agentName,
+          agentEmoji: data.agentEmoji,
+          agentType: data.agentType,
+          timestamp: data.startTime,
+        },
+      ];
+    });
+
+    // Mark response as pending since stream is still active
+    setIsResponsePending(true);
+
+    // Scroll to bottom to show the resumed stream
+    if (scrollToBottom) {
+      setTimeout(() => scrollToBottom(), 50);
+    }
+  }
+
+  function handleError(data) {
     const errorId = data.id || `err-${Date.now()}`;
     setMessages((prev) => {
       if (prev.some((m) => m.id === errorId)) return prev;
-      setTotalMessageCount((c) => c + 1);
+
       return [
         ...prev,
         {
@@ -245,12 +341,10 @@ export function createMessageHandler(deps) {
   }
 
   function handleToolRequested(data) {
-    if (!isForCurrentConversation(data.conversationId)) return;
-
     const toolId = `tool-${data.requestId}`;
     setMessages((prev) => {
       if (prev.some((m) => m.id === toolId)) return prev;
-      setTotalMessageCount((c) => c + 1);
+
       return [
         ...prev,
         {
@@ -270,6 +364,54 @@ export function createMessageHandler(deps) {
     });
   }
 
+  /**
+   * Handle tool_resume - restore an in-progress tool when switching back to a conversation
+   */
+  function handleToolResume(data) {
+    const toolId = `tool-${data.requestId}`;
+    setMessages((prev) => {
+      const existingTool = prev.find((m) => m.id === toolId);
+      if (existingTool) {
+        // Tool message already exists - update it with progress if available
+        if (data.progress) {
+          return prev.map((m) =>
+            m.id === toolId
+              ? { ...m, progress: data.progress, status: 'running' }
+              : m
+          );
+        }
+        return prev;
+      }
+
+      // Tool message doesn't exist - create it with progress
+      return [
+        ...prev,
+        {
+          id: toolId,
+          role: 'tool',
+          toolName: data.toolName,
+          source: data.source,
+          parameters: data.parameters,
+          status: 'running',
+          timestamp: data.startTime || data.timestamp,
+          agentId: data.agentId,
+          agentName: data.agentName,
+          agentEmoji: data.agentEmoji,
+          agentType: data.agentType,
+          progress: data.progress,
+        },
+      ];
+    });
+
+    // Mark response as pending since tool is still running
+    setIsResponsePending(true);
+
+    // Scroll to bottom to show the resumed tool
+    if (scrollToBottom) {
+      setTimeout(() => scrollToBottom(), 50);
+    }
+  }
+
   function handlePlayAudio(data) {
     if (data.audio && typeof data.audio === 'string') {
       playAudioData(data.audio, data.mimeType || 'audio/pcm;rate=24000');
@@ -277,11 +419,10 @@ export function createMessageHandler(deps) {
   }
 
   function handleToolFinished(data) {
-    if (!isForCurrentConversation(data.conversationId)) return;
-
+    const toolId = `tool-${data.requestId}`;
     setMessages((prev) =>
       prev.map((m) =>
-        m.id === `tool-${data.requestId}`
+        m.id === toolId
           ? {
               ...m,
               status: data.success ? 'completed' : 'failed',
@@ -289,19 +430,33 @@ export function createMessageHandler(deps) {
               error: data.error,
               parameters: data.parameters,
               result: data.result,
+              files: data.files,
+              progress: undefined,
             }
           : m
       )
     );
   }
 
-  function handleDelegation(data) {
-    if (!isForCurrentConversation(data.conversationId)) return;
+  function handleToolProgress(data) {
+    const toolId = `tool-${data.requestId}`;
+    const progress = data.progress;
 
+    // Update immediately (debouncing caused issues when tool_finished arrived quickly)
+    setMessages((prev) =>
+      prev.map((m) =>
+        m.id === toolId && m.status === 'running'
+          ? { ...m, progress }
+          : m
+      )
+    );
+  }
+
+  function handleDelegation(data) {
     const delegationId = `delegation-${data.agentId}`;
     setMessages((prev) => {
       if (prev.some((m) => m.id === delegationId)) return prev;
-      setTotalMessageCount((c) => c + 1);
+
       return [
         ...prev,
         {
@@ -321,7 +476,7 @@ export function createMessageHandler(deps) {
     const taskRunId = `task-run-${data.taskId}-${Date.now()}`;
     setMessages((prev) => {
       if (prev.some((m) => m.taskId === data.taskId && m.role === 'task_run')) return prev;
-      setTotalMessageCount((c) => c + 1);
+
       return [
         ...prev,
         {
@@ -388,7 +543,7 @@ export function createMessageHandler(deps) {
       if (prev.some((s) => s.id === data.session.id)) return prev;
       return [...prev, data.session];
     });
-    setExpandedAccordions((prev) => ({ ...prev, browserSessions: true }));
+    setExpandedAccordions((prev) => ({ ...prev, computerUse: true }));
   }
 
   function handleBrowserSessionUpdated(data) {
@@ -430,6 +585,74 @@ export function createMessageHandler(deps) {
     setClickMarkers((prev) => [...prev, marker]);
     setTimeout(() => {
       setClickMarkers((prev) => prev.filter((m) => m.id !== marker.id));
+    }, 1500);
+  }
+
+  // ============================================================================
+  // Desktop Session Handlers
+  // ============================================================================
+
+  function handleDesktopSessionCreated(data) {
+    setDesktopSessions((prev) => {
+      if (prev.some((s) => s.id === data.session.id)) return prev;
+      return [...prev, data.session];
+    });
+    setExpandedAccordions((prev) => ({ ...prev, computerUse: true }));
+  }
+
+  function handleDesktopSessionUpdated(data) {
+    setDesktopSessions((prev) =>
+      prev.map((s) =>
+        s.id === data.sessionId ? { ...s, ...data.updates } : s
+      )
+    );
+  }
+
+  function handleDesktopSessionClosed(data) {
+    setDesktopSessions((prev) => prev.filter((s) => s.id !== data.sessionId));
+    setDesktopScreenshots((prev) => {
+      const next = { ...prev };
+      delete next[data.sessionId];
+      return next;
+    });
+    setSelectedDesktopSessionId((prev) => prev === data.sessionId ? null : prev);
+    setDesktopClickMarkers((prev) => prev.filter((m) => m.sessionId !== data.sessionId));
+    // If the session was closed while the create tool was still running,
+    // unlock the chat input so the user isn't stuck waiting for the LLM
+    // to finish commenting on the abort. The LLM response (if any) will
+    // still arrive and update messages in the background.
+    setIsResponsePending(false);
+    setMessages((prev) =>
+      prev.map((m) => {
+        if (m.isStreaming) return { ...m, isStreaming: false };
+        // Mark any running desktop_session tool calls as cancelled
+        if (m.role === 'tool' && m.toolName === 'desktop_session' && m.status === 'running') {
+          return { ...m, status: 'failed', error: 'Session closed' };
+        }
+        return m;
+      })
+    );
+  }
+
+  function handleDesktopScreenshot(data) {
+    setDesktopScreenshots((prev) => ({
+      ...prev,
+      [data.sessionId]: {
+        screenshot: data.screenshot,
+        timestamp: data.timestamp,
+      },
+    }));
+  }
+
+  function handleDesktopClickMarker(data) {
+    const marker = {
+      ...data.marker,
+      id: `marker-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      sessionId: data.sessionId,
+    };
+    setDesktopClickMarkers((prev) => [...prev, marker]);
+    setTimeout(() => {
+      setDesktopClickMarkers((prev) => prev.filter((m) => m.id !== marker.id));
     }, 1500);
   }
 

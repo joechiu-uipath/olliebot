@@ -7,7 +7,7 @@
 
 import { readFileSync, existsSync, readdirSync, statSync } from 'fs';
 import { join, resolve, relative } from 'path';
-import type { NativeTool, NativeToolResult } from './types.js';
+import type { NativeTool, NativeToolResult } from '../../tools/native/types.js';
 
 // Base path for frontend code - all reads must be within this directory
 const WEB_BASE_PATH = resolve(process.cwd(), 'web');
@@ -39,6 +39,8 @@ All paths are relative to the /web directory.`;
     },
     required: ['path'],
   };
+
+  readonly private = true;
 
   async execute(params: Record<string, unknown>): Promise<NativeToolResult> {
     const { path: filePath } = params as unknown as ReadFrontendCodeParams;

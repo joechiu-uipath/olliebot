@@ -7,7 +7,7 @@
 
 import { readFileSync, writeFileSync, existsSync, unlinkSync, mkdirSync } from 'fs';
 import { dirname, resolve, relative } from 'path';
-import type { NativeTool, NativeToolResult } from './types.js';
+import type { NativeTool, NativeToolResult } from '../../tools/native/types.js';
 
 // Base path for frontend code - all modifications must be within this directory
 const WEB_BASE_PATH = resolve(process.cwd(), 'web');
@@ -96,6 +96,8 @@ TIPS:
     },
     required: ['file_path', 'operation'],
   };
+
+  readonly private = true;
 
   async execute(params: Record<string, unknown>): Promise<NativeToolResult> {
     const {

@@ -1,28 +1,33 @@
 // Worker Agent - handles delegated tasks from supervisor
 
 import { v4 as uuid } from 'uuid';
-import { AbstractAgent, type AgentRegistry } from './base-agent.js';
+import { AbstractAgent } from './base-agent.js';
 import type {
   AgentConfig,
   AgentCommunication,
   AgentIdentity,
+  TaskResultPayload,
+  AgentTurnUsage,
 } from './types.js';
 import type { Channel, Message } from '../channels/types.js';
 import type { LLMService } from '../llm/service.js';
 import type { LLMMessage } from '../llm/types.js';
 import { getDb } from '../db/index.js';
-import type { WebChannel } from '../channels/web.js';
 import { formatToolResultBlocks } from '../utils/index.js';
 import { logSystemPrompt } from '../utils/prompt-logger.js';
 import type { CitationSource, CitationSourceType, StoredCitationData } from '../citations/types.js';
 import { SUB_AGENT_TIMEOUT_MS } from '../deep-research/constants.js';
+import { WORKER_HISTORY_LIMIT, AGENT_MAX_TOOL_ITERATIONS } from '../constants.js';
 import { getMessageEventService } from '../services/message-event-service.js';
+import { getTraceStore } from '../tracing/index.js';
 
 export class WorkerAgent extends AbstractAgent {
   private currentTaskId?: string;
   private parentId: string;
   public conversationId: string | null = null; // Set by supervisor when spawning
   public turnId: string | null = null; // Set by supervisor when spawning - ID of originating message for this turn
+  public traceId: string | null = null; // Set by supervisor for trace context propagation
+  public parentSpanId: string | null = null; // Set by parent agent for span hierarchy
   private subAgents: Map<string, WorkerAgent> = new Map();
   private agentType: string; // The type of this agent (e.g., 'deep-research-lead')
   private currentWorkflowId: string | null = null; // Current workflow context
@@ -75,19 +80,17 @@ export class WorkerAgent extends AbstractAgent {
     this._state.lastActivity = new Date();
     this._state.status = 'working';
 
-    const channel = this.channels.get(message.channel);
-    if (!channel) return;
+    if (!this.channel) return;
 
     try {
       const response = await this.generateResponse([
-        ...this.conversationHistory.slice(-5),
+        ...this.conversationHistory.slice(-WORKER_HISTORY_LIMIT),
         message,
       ]);
 
-      await this.sendToChannel(channel, response, { markdown: true });
-      this.saveAssistantMessage(message.channel, response);
+      await this.sendMessage(response, { conversationId: this.conversationId || undefined });
     } catch (error) {
-      await this.sendError(channel, 'Failed to process message', String(error));
+      await this.sendError('Failed to process message', String(error), this.conversationId || undefined);
     }
 
     this._state.status = 'idle';
@@ -101,6 +104,32 @@ export class WorkerAgent extends AbstractAgent {
     this._state.status = 'working';
     this._state.currentTask = mission;
     this.currentTaskId = uuid();
+
+    // Start trace span for this worker
+    const traceStore = getTraceStore();
+    let spanId: string | null = null;
+    if (this.traceId) {
+      spanId = traceStore.startSpan({
+        traceId: this.traceId,
+        parentSpanId: this.parentSpanId ?? undefined,
+        agentId: this.identity.id,
+        agentName: this.identity.name,
+        agentEmoji: this.identity.emoji,
+        agentType: this.agentType,
+        agentRole: 'worker',
+        mission,
+      });
+
+      // Push LLM context so all calls in this worker are associated
+      this.llmService.pushContext({
+        traceId: this.traceId,
+        spanId,
+        agentId: this.identity.id,
+        agentName: this.identity.name,
+        conversationId: this.conversationId || undefined,
+        purpose: mission,
+      });
+    }
 
     // Refresh RAG data cache before generating response
     await this.refreshRagDataCache();
@@ -119,13 +148,12 @@ export class WorkerAgent extends AbstractAgent {
 
       if (hasTools) {
         // Use tool-enabled execution
-        await this.executeWithTools(originalMessage, mission, channel, tools);
+        await this.executeWithTools(originalMessage, mission, channel, tools, spanId);
       } else {
         // Fallback to simple generation without tools
         const contextMessages: Message[] = [
           {
             id: uuid(),
-            channel: channel.id,
             role: 'system',
             content: `Your mission: ${mission}\n\nRespond as ${this.identity.name} (${this.identity.emoji}).`,
             createdAt: new Date(),
@@ -134,8 +162,7 @@ export class WorkerAgent extends AbstractAgent {
         ];
 
         const response = await this.generateResponse(contextMessages);
-        await this.sendToChannel(channel, response, { markdown: true });
-        this.saveAssistantMessage(channel.id, response);
+        await this.sendMessage(response, { conversationId: this.conversationId || undefined });
 
         // Report completion
         await this.sendToAgent(this.parentId, {
@@ -148,10 +175,16 @@ export class WorkerAgent extends AbstractAgent {
           },
         });
       }
+
+      // End span successfully
+      if (spanId) traceStore.endSpan(spanId);
     } catch (error) {
       console.error(`[${this.identity.name}] Task failed:`, error);
 
-      await this.sendError(channel, `${this.identity.name} encountered an error`, String(error));
+      // End span with error
+      if (spanId) traceStore.endSpan(spanId, 'error', String(error));
+
+      await this.sendError(`${this.identity.name} encountered an error`, String(error), this.conversationId || undefined);
 
       // Report failure to supervisor
       await this.sendToAgent(this.parentId, {
@@ -163,6 +196,11 @@ export class WorkerAgent extends AbstractAgent {
           status: 'failed',
         },
       });
+    } finally {
+      // Pop LLM context
+      if (this.traceId) {
+        this.llmService.popContext();
+      }
     }
 
     this._state.status = 'idle';
@@ -176,13 +214,23 @@ export class WorkerAgent extends AbstractAgent {
     originalMessage: Message,
     mission: string,
     channel: Channel,
-    tools: ReturnType<typeof this.getToolsForLLM>
+    tools: ReturnType<typeof this.getToolsForLLM>,
+    spanId: string | null
   ): Promise<void> {
     const streamId = uuid();
     let fullResponse = '';
 
     // Citation tracking - sources collected from tool executions
     const collectedSources: CitationSource[] = [];
+
+    // Usage tracking - accumulated across tool iterations
+    const turnUsage: AgentTurnUsage = {
+      inputTokens: 0,
+      outputTokens: 0,
+      llmDurationMs: 0,
+      modelId: undefined,
+      traceId: this.traceId ?? undefined,
+    };
 
     // Log tools and skills info
     const toolInfo = tools.length < 5
@@ -211,12 +259,11 @@ export class WorkerAgent extends AbstractAgent {
           return; // This event is for a different agent
         }
 
-        const webChannel = channel as WebChannel;
         const messageEventService = getMessageEventService();
-        messageEventService.setWebChannel(webChannel);
+        messageEventService.setChannel(channel);
 
         // Use centralized service that broadcasts AND persists
-        messageEventService.emitToolEvent(event, this.conversationId, channel.id, {
+        messageEventService.emitToolEvent(event, this.conversationId, {
           id: this.identity.id,
           name: this.identity.name,
           emoji: this.identity.emoji,
@@ -253,9 +300,8 @@ export class WorkerAgent extends AbstractAgent {
       // Tool execution loop
       let continueLoop = true;
       let iterationCount = 0;
-      const maxIterations = 10;
 
-      while (continueLoop && iterationCount < maxIterations) {
+      while (continueLoop && iterationCount < AGENT_MAX_TOOL_ITERATIONS) {
         iterationCount++;
 
         const llmStartTime = Date.now();
@@ -281,6 +327,15 @@ export class WorkerAgent extends AbstractAgent {
         );
 
         const llmDuration = Date.now() - llmStartTime;
+
+        // Accumulate usage
+        turnUsage.llmDurationMs += llmDuration;
+        turnUsage.inputTokens += response.usage?.inputTokens ?? 0;
+        turnUsage.outputTokens += response.usage?.outputTokens ?? 0;
+        if (response.model && !turnUsage.modelId) {
+          turnUsage.modelId = response.model;
+        }
+
         const toolCount = response.toolUse?.length || 0;
         const toolNames = response.toolUse?.map(t => t.name).join(', ') || '';
         // Log LLM response: duration, whether it requested tools or finished with text
@@ -294,8 +349,12 @@ export class WorkerAgent extends AbstractAgent {
         if (response.toolUse && response.toolUse.length > 0) {
           // Execute requested tools with citation extraction
           // Pass this.identity.id as callerId so tool events are attributed to this agent only
+          // Pass traceId for tool call persistence in trace store
           const toolRequests = response.toolUse.map((tu) =>
-            this.toolRunner!.createRequest(tu.id, tu.name, tu.input, undefined, this.identity.id)
+            this.toolRunner!.createRequest(tu.id, tu.name, tu.input, undefined, this.identity.id, {
+              traceId: this.traceId ?? undefined,
+              spanId: spanId ?? undefined,
+            })
           );
 
           const { results, citations } = await this.toolRunner!.executeToolsWithCitations(toolRequests);
@@ -349,7 +408,8 @@ export class WorkerAgent extends AbstractAgent {
                   const subAgentResult = await this.delegateToSubAgent(
                     delegationParams,
                     originalMessage,
-                    channel
+                    channel,
+                    spanId
                   );
 
                   return {
@@ -400,10 +460,9 @@ export class WorkerAgent extends AbstractAgent {
                   if (event.callerId && event.callerId !== this.identity.id) {
                     return; // This event is for a different agent
                   }
-                  const webChannel = channel as WebChannel;
                   const messageEventService = getMessageEventService();
-                  messageEventService.setWebChannel(webChannel);
-                  messageEventService.emitToolEvent(event, this.conversationId, channel.id, {
+                  messageEventService.setChannel(channel);
+                  messageEventService.emitToolEvent(event, this.conversationId, {
                     id: this.identity.id,
                     name: this.identity.name,
                     emoji: this.identity.emoji,
@@ -435,8 +494,8 @@ export class WorkerAgent extends AbstractAgent {
         }
       }
 
-      if (iterationCount >= maxIterations) {
-        console.warn(`[${this.identity.name}] Max iterations reached`);
+      if (iterationCount >= AGENT_MAX_TOOL_ITERATIONS) {
+        console.warn(`[${this.identity.name}] Max iterations (${AGENT_MAX_TOOL_ITERATIONS}) reached`);
       }
 
       // Merge citations from sub-agents into collected sources
@@ -454,13 +513,15 @@ export class WorkerAgent extends AbstractAgent {
       // Generate citations using post-hoc analysis
       const citationData = await this.buildCitationData(fullResponse, collectedSources);
 
-      // End stream with citations
-      this.endStreamWithCitations(channel, streamId, this.conversationId || undefined, citationData);
+      // End stream with citations and usage
+      this.endStreamWithCitations(channel, streamId, this.conversationId || undefined, citationData, turnUsage);
 
       // Save and report
-      this.saveAssistantMessage(channel.id, fullResponse, citationData);
+      this.saveAssistantMessage(fullResponse, { citations: citationData, usage: turnUsage });
       console.log(`[${this.identity.name}] Task done (${iterationCount} iter, ${fullResponse.length} chars)`);
 
+      // Pass both citations (matched) and all collected sources to parent
+      // The parent can use allSources even if no claims were matched
       await this.sendToAgent(this.parentId, {
         type: 'task_result',
         toAgent: this.parentId,
@@ -469,6 +530,7 @@ export class WorkerAgent extends AbstractAgent {
           result: fullResponse,
           status: 'completed',
           citations: citationData, // Pass citations to parent for aggregation
+          allSources: collectedSources, // Pass all sources so parent can use them
         },
       });
     } finally {
@@ -476,14 +538,6 @@ export class WorkerAgent extends AbstractAgent {
         unsubscribeTool();
       }
     }
-  }
-
-  async requestHelp(question: string, channelId: string): Promise<void> {
-    await this.sendToAgent(this.parentId, {
-      type: 'request_help',
-      toAgent: this.parentId,
-      payload: { question, channelId },
-    });
   }
 
   /**
@@ -498,7 +552,8 @@ export class WorkerAgent extends AbstractAgent {
       customEmoji?: string;
     },
     originalMessage: Message,
-    channel: Channel
+    channel: Channel,
+    currentSpanId: string | null
   ): Promise<string> {
     const { type, mission, rationale, customName, customEmoji } = params;
 
@@ -542,6 +597,8 @@ export class WorkerAgent extends AbstractAgent {
     }
     subAgent.conversationId = this.conversationId;
     subAgent.turnId = this.turnId;
+    subAgent.traceId = this.traceId;
+    subAgent.parentSpanId = currentSpanId;
 
     // Set workflow context for restricted agents
     if (this.currentWorkflowId) {
@@ -570,9 +627,8 @@ export class WorkerAgent extends AbstractAgent {
     this.agentRegistry.registerAgent(subAgent);
 
     // Emit delegation event via MessageEventService (broadcasts AND persists)
-    const webChannel = channel as WebChannel;
     const messageEventService = getMessageEventService();
-    messageEventService.setWebChannel(webChannel);
+    messageEventService.setChannel(channel);
     messageEventService.emitDelegationEvent(
       {
         agentId: subAgent.identity.id,
@@ -585,7 +641,6 @@ export class WorkerAgent extends AbstractAgent {
         rationale,
       },
       this.conversationId,
-      channel.id,
       this.turnId || undefined
     );
 
@@ -682,16 +737,15 @@ export class WorkerAgent extends AbstractAgent {
         await this.shutdown();
         break;
       case 'task_assignment': {
-        const payload = comm.payload as { mission: string; channelId: string; message: Message };
-        const channel = this.channels.get(payload.channelId);
-        if (channel) {
-          await this.handleDelegatedTask(payload.message, payload.mission, channel);
+        const payload = comm.payload as { mission: string; message: Message };
+        if (this.channel) {
+          await this.handleDelegatedTask(payload.message, payload.mission, this.channel);
         }
         break;
       }
       case 'task_result': {
         // Handle results from sub-agents
-        const payload = comm.payload as { taskId: string; result?: string; error?: string; status: string; citations?: StoredCitationData };
+        const payload = comm.payload as TaskResultPayload;
         const pendingResult = this.pendingSubAgentResults.get(comm.fromAgent);
 
         if (pendingResult) {
@@ -701,10 +755,25 @@ export class WorkerAgent extends AbstractAgent {
             console.log(`[${this.identity.name}] Sub-agent ${comm.fromAgent} completed task`);
 
             // Collect citations from sub-agent for aggregation
-            if (payload.citations?.sources) {
-              console.log(`[${this.identity.name}] Collected ${payload.citations.sources.length} citation(s) from sub-agent ${comm.fromAgent}`);
+            // Prefer cited sources, but fall back to all collected sources if none were cited
+            const sourcesToUse = payload.citations?.sources?.length
+              ? payload.citations.sources
+              : payload.allSources || [];
+
+            if (sourcesToUse.length > 0) {
+              console.log(`[${this.identity.name}] Collected ${sourcesToUse.length} source(s) from sub-agent ${comm.fromAgent}`);
               this.subAgentCitations.push(
-                ...payload.citations.sources.map(src => ({ ...src, subAgentId: comm.fromAgent }))
+                ...sourcesToUse.map(src => ({
+                  id: src.id,
+                  type: src.type,
+                  toolName: src.toolName,
+                  uri: src.uri,
+                  title: src.title,
+                  domain: src.domain,
+                  snippet: src.snippet,
+                  pageNumber: src.pageNumber,
+                  subAgentId: comm.fromAgent,
+                }))
               );
             }
 
@@ -725,7 +794,7 @@ export class WorkerAgent extends AbstractAgent {
     }
   }
 
-  private saveAssistantMessage(channelId: string, content: string, citations?: StoredCitationData): void {
+  protected override saveAssistantMessage(content: string, options?: { citations?: StoredCitationData; usage?: AgentTurnUsage }): void {
     const metadata: Record<string, unknown> = {
       agentId: this.identity.id,
       agentName: this.identity.name,
@@ -734,13 +803,17 @@ export class WorkerAgent extends AbstractAgent {
     };
 
     // Include citations in metadata if present
-    if (citations && citations.sources.length > 0) {
-      metadata.citations = citations;
+    if (options?.citations && options.citations.sources.length > 0) {
+      metadata.citations = options.citations;
+    }
+
+    // Include usage in metadata if present
+    if (options?.usage) {
+      metadata.usage = options.usage;
     }
 
     const message: Message = {
       id: uuid(),
-      channel: channelId,
       role: 'assistant',
       content,
       metadata,
@@ -762,7 +835,6 @@ export class WorkerAgent extends AbstractAgent {
       db.messages.create({
         id: message.id,
         conversationId: this.conversationId,
-        channel: message.channel,
         role: message.role,
         content: message.content,
         metadata: message.metadata || {},

@@ -101,14 +101,14 @@ describe('getAgentCapabilities', () => {
         role: 'specialist',
         description: 'Test agent',
       },
-      canAccessTools: ['read_skill', 'read_frontend_code', 'delegate'],
+      canAccessTools: ['read_agent_skill', 'read_frontend_code', 'delegate'],
       allowedSkills: ['frontend-modifier'], // Only one skill
     };
 
     const result = getAgentCapabilities(template, ALL_SKILL_IDS);
 
     expect(result.agentType).toBe('coding-planner');
-    expect(result.tools).toEqual(['read_skill', 'read_frontend_code', 'delegate']);
+    expect(result.tools).toEqual(['read_agent_skill', 'read_frontend_code', 'delegate']);
     expect(result.skills).toEqual(['frontend-modifier']); // Only frontend-modifier
   });
 
@@ -186,7 +186,7 @@ describe('Self-Coding Agents Configuration', () => {
       role: 'specialist',
       description: 'Analyzes frontend modification requests, creates change plans, and delegates to workers',
     },
-    canAccessTools: ['read_skill', 'read_frontend_code', 'delegate'],
+    canAccessTools: ['read_agent_skill', 'read_frontend_code', 'delegate'],
     allowedSkills: ['frontend-modifier'],
   };
 
@@ -198,7 +198,7 @@ describe('Self-Coding Agents Configuration', () => {
       role: 'specialist',
       description: 'Executes individual code changes using the modify_frontend_code tool',
     },
-    canAccessTools: ['read_skill', 'read_frontend_code', 'modify_frontend_code'],
+    canAccessTools: ['read_agent_skill', 'read_frontend_code', 'modify_frontend_code'],
     allowedSkills: ['frontend-modifier'],
   };
 
@@ -237,9 +237,9 @@ describe('Self-Coding Agents Configuration', () => {
       expect(caps.skills).not.toContain('pptx');
     });
 
-    it('should have read_skill, read_frontend_code, and delegate tools', () => {
+    it('should have read_agent_skill, read_frontend_code, and delegate tools', () => {
       const caps = getAgentCapabilities(CODING_PLANNER_TEMPLATE, ALL_SKILL_IDS);
-      expect(caps.tools).toContain('read_skill');
+      expect(caps.tools).toContain('read_agent_skill');
       expect(caps.tools).toContain('read_frontend_code');
       expect(caps.tools).toContain('delegate');
     });
@@ -251,9 +251,9 @@ describe('Self-Coding Agents Configuration', () => {
       expect(caps.skills).toEqual(['frontend-modifier']);
     });
 
-    it('should have read_skill, read_frontend_code, and modify_frontend_code tools', () => {
+    it('should have read_agent_skill, read_frontend_code, and modify_frontend_code tools', () => {
       const caps = getAgentCapabilities(CODING_WORKER_TEMPLATE, ALL_SKILL_IDS);
-      expect(caps.tools).toContain('read_skill');
+      expect(caps.tools).toContain('read_agent_skill');
       expect(caps.tools).toContain('read_frontend_code');
       expect(caps.tools).toContain('modify_frontend_code');
     });

@@ -7,7 +7,7 @@
  *
  * Usage:
  *   const service = new MessageEventService(webChannel);
- *   service.emitToolEvent(event, conversationId, channelId, agentInfo);
+ *   service.emitToolEvent(event, conversationId, agentInfo);
  *   service.emitDelegationEvent(...);
  *   service.emitTaskRunEvent(...);
  *   service.emitErrorEvent(...);
@@ -15,8 +15,9 @@
 
 import { v4 as uuid } from 'uuid';
 import { getDb } from '../db/index.js';
-import type { WebChannel } from '../channels/web.js';
+import type { Channel } from '../channels/types.js';
 import type { ToolEvent } from '../tools/types.js';
+import { TOOL_RESULT_MEDIA_LIMIT_BYTES, TOOL_RESULT_TEXT_LIMIT_BYTES } from '../constants.js';
 
 export interface AgentInfo {
   id: string;
@@ -48,13 +49,53 @@ export interface ErrorEventData {
 }
 
 export class MessageEventService {
-  constructor(private webChannel: WebChannel | null = null) {}
+  private channel: Channel | null = null;
+
+  constructor(channel: Channel | null = null) {
+    this.channel = channel;
+  }
 
   /**
-   * Set/update the WebChannel (can be set after construction)
+   * Set/update the channel (can be set after construction)
    */
-  setWebChannel(channel: WebChannel): void {
-    this.webChannel = channel;
+  setChannel(channel: Channel): void {
+    this.channel = channel;
+  }
+
+  /**
+   * Check if a result contains media content (images, audio, etc.) that should not be truncated.
+   * Detects:
+   * - Data URLs (data:*;base64,) for images, audio, or any other media type
+   * - Legacy audio fields (result.audio or result.output.audio)
+   */
+  private hasMediaContent(result: unknown): boolean {
+    if (!result || typeof result !== 'object') {
+      return false;
+    }
+
+    try {
+      const jsonStr = JSON.stringify(result);
+      // Check for any data URL (covers images, audio, video, etc.)
+      if (jsonStr.includes('data:') && jsonStr.includes(';base64,')) {
+        return true;
+      }
+    } catch {
+      // If stringification fails, fall through to legacy checks
+    }
+
+    // Legacy audio detection (for backwards compatibility)
+    const resultObj = result as Record<string, unknown>;
+    if ('audio' in resultObj && typeof resultObj.audio === 'string') {
+      return true;
+    }
+    if (resultObj.output && typeof resultObj.output === 'object') {
+      const output = resultObj.output as Record<string, unknown>;
+      if ('audio' in output && typeof output.audio === 'string') {
+        return true;
+      }
+    }
+
+    return false;
   }
 
   /**
@@ -64,45 +105,90 @@ export class MessageEventService {
   emitToolEvent(
     event: ToolEvent,
     conversationId: string | null,
-    channelId: string,
     agentInfo: AgentInfo,
     turnId?: string
   ): void {
     // Broadcast to UI
-    if (this.webChannel && typeof this.webChannel.broadcast === 'function') {
+    if (this.channel) {
+      // Progress events: broadcast immediately, no persistence needed
+      if (event.type === 'tool_progress') {
+        this.channel.broadcast({
+          type: 'tool_progress',
+          requestId: event.requestId,
+          toolName: event.toolName,
+          source: event.source,
+          progress: event.progress,
+          conversationId: conversationId || undefined,
+          turnId: turnId || undefined,
+          timestamp: event.timestamp.toISOString(),
+          agentId: agentInfo.id,
+          agentName: agentInfo.name,
+          agentEmoji: agentInfo.emoji,
+          agentType: agentInfo.type,
+        });
+        return; // Progress events are broadcast-only, not persisted
+      }
+
       // Check if result contains audio data - if so, broadcast play_audio event
+      // Audio can be in result.audio (legacy) or result.output.audio (nested from native tools)
       if (event.type === 'tool_execution_finished' && event.result !== undefined) {
         const result = event.result as Record<string, unknown>;
-        if (result && typeof result === 'object' && 'audio' in result && typeof result.audio === 'string') {
+        let audioData: string | undefined;
+        let mimeType: string | undefined;
+        let voice: unknown;
+        let model: unknown;
+
+        if (result && typeof result === 'object') {
+          if ('audio' in result && typeof result.audio === 'string') {
+            // Legacy: audio at top level
+            audioData = result.audio;
+            mimeType = result.mimeType as string | undefined;
+            voice = result.voice;
+            model = result.model;
+          } else if (result.output && typeof result.output === 'object') {
+            // Nested: audio in output (from native tool wrapper)
+            const output = result.output as Record<string, unknown>;
+            if ('audio' in output && typeof output.audio === 'string') {
+              audioData = output.audio;
+              mimeType = output.mimeType as string | undefined;
+              voice = output.voice;
+              model = output.model;
+            }
+          }
+        }
+
+        if (audioData) {
           // Broadcast play_audio event for immediate playback
-          this.webChannel.broadcast({
+          this.channel.broadcast({
             type: 'play_audio',
-            audio: result.audio,
-            mimeType: result.mimeType || 'audio/pcm;rate=24000',
-            voice: result.voice,
-            model: result.model,
+            audio: audioData,
+            mimeType: mimeType || 'audio/pcm;rate=24000',
+            voice,
+            model,
           });
         }
       }
 
-      // Truncate result for broadcast (UI display) - only for finished events
-      // Exception: don't truncate audio data (needed for on-demand playback)
+      // For broadcast: pass result object directly (not pre-stringified)
+      // The WebSocket layer will JSON.stringify the entire message
+      // For large results without media, we truncate to avoid memory issues
       let resultForBroadcast: unknown = undefined;
       if (event.type === 'tool_execution_finished' && event.result !== undefined) {
         try {
           const fullResult = JSON.stringify(event.result);
-          const result = event.result as Record<string, unknown>;
-          const hasAudioData = result && typeof result === 'object' && 'audio' in result && typeof result.audio === 'string';
-          const limit = 10000;
-          resultForBroadcast = hasAudioData || fullResult.length <= limit
-            ? fullResult
-            : fullResult.substring(0, limit) + '...(truncated)';
+          // For media content or small results, pass object directly
+          // For large non-media results, truncate
+          if (this.hasMediaContent(event.result) || fullResult.length <= TOOL_RESULT_TEXT_LIMIT_BYTES) {
+            resultForBroadcast = event.result; // Pass object directly
+          } else {
+            resultForBroadcast = fullResult.substring(0, TOOL_RESULT_TEXT_LIMIT_BYTES) + '...(truncated)';
+          }
         } catch {
           resultForBroadcast = String(event.result);
         }
       }
 
-      this.webChannel.broadcast({
+      this.channel.broadcast({
         ...event,
         result: resultForBroadcast,
         conversationId: conversationId || undefined,
@@ -139,29 +225,30 @@ export class MessageEventService {
         return;
       }
 
-      // Safely stringify result for storage
-      let resultStr: string | undefined;
+      // Store result as object (not pre-stringified) for consistency with broadcast
+      // The DB layer handles JSON serialization of metadata
+      let resultForStorage: unknown = undefined;
       if (event.result !== undefined) {
         try {
           const fullResult = JSON.stringify(event.result);
-          // Don't truncate image data URLs or audio data
-          const hasImageData = fullResult.includes('data:image/');
-          const hasAudioData = typeof event.result === 'object' && event.result !== null &&
-            'audio' in event.result && typeof (event.result as Record<string, unknown>).audio === 'string';
-          const limit = (hasImageData || hasAudioData) ? 5000000 : 10000;
-          resultStr =
-            fullResult.length > limit
-              ? fullResult.substring(0, limit) + '...(truncated)'
-              : fullResult;
+          // Media content gets a much higher limit to preserve images, audio, etc.
+          // Non-media content is limited to avoid database bloat
+          const limit = this.hasMediaContent(event.result) ? TOOL_RESULT_MEDIA_LIMIT_BYTES : TOOL_RESULT_TEXT_LIMIT_BYTES;
+          // For media content or small results, store object directly
+          // For large non-media results, store truncated string
+          if (fullResult.length <= limit) {
+            resultForStorage = event.result; // Store object directly
+          } else {
+            resultForStorage = fullResult.substring(0, limit) + '...(truncated)';
+          }
         } catch {
-          resultStr = String(event.result);
+          resultForStorage = String(event.result);
         }
       }
 
       db.messages.create({
         id: messageId,
         conversationId,
-        channel: channelId,
         role: 'tool',
         content: '',
         metadata: {
@@ -172,7 +259,7 @@ export class MessageEventService {
           durationMs: event.durationMs as number,
           error: event.error as string | undefined,
           parameters: event.parameters as Record<string, unknown> | undefined,
-          result: resultStr,
+          result: resultForStorage,
           agentId: agentInfo.id,
           agentName: agentInfo.name,
           agentEmoji: agentInfo.emoji,
@@ -193,14 +280,13 @@ export class MessageEventService {
   emitDelegationEvent(
     data: DelegationEventData,
     conversationId: string | null,
-    channelId: string,
     turnId?: string
   ): void {
     const timestamp = new Date().toISOString();
 
     // Broadcast to UI
-    if (this.webChannel && typeof this.webChannel.broadcast === 'function') {
-      this.webChannel.broadcast({
+    if (this.channel) {
+      this.channel.broadcast({
         type: 'delegation',
         agentId: data.agentId,
         agentName: data.agentName,
@@ -237,7 +323,6 @@ export class MessageEventService {
       db.messages.create({
         id: messageId,
         conversationId,
-        channel: channelId,
         role: 'system',
         content: '',
         metadata: {
@@ -266,8 +351,7 @@ export class MessageEventService {
    */
   emitTaskRunEvent(
     data: TaskRunEventData,
-    conversationId: string | null,
-    channelId: string
+    conversationId: string | null
   ): string {
     const timestamp = new Date().toISOString();
     const messageId = `task-run-${data.taskId}`;
@@ -276,8 +360,8 @@ export class MessageEventService {
     const turnId = messageId;
 
     // Broadcast to UI
-    if (this.webChannel && typeof this.webChannel.broadcast === 'function') {
-      this.webChannel.broadcast({
+    if (this.channel) {
+      this.channel.broadcast({
         type: 'task_run',
         taskId: data.taskId,
         taskName: data.taskName,
@@ -308,7 +392,6 @@ export class MessageEventService {
       db.messages.create({
         id: messageId,
         conversationId,
-        channel: channelId,
         role: 'system',
         content: '',
         metadata: {
@@ -332,15 +415,14 @@ export class MessageEventService {
    */
   emitErrorEvent(
     data: ErrorEventData,
-    conversationId: string | null,
-    channelId: string
+    conversationId: string | null
   ): void {
     const timestamp = new Date().toISOString();
     const messageId = `error-${uuid()}`;
 
     // Broadcast to UI
-    if (this.webChannel && typeof this.webChannel.broadcast === 'function') {
-      this.webChannel.broadcast({
+    if (this.channel) {
+      this.channel.broadcast({
         type: 'error',
         id: messageId,
         error: data.error,
@@ -364,7 +446,6 @@ export class MessageEventService {
       db.messages.create({
         id: messageId,
         conversationId,
-        channel: channelId,
         role: 'system',
         content: '',
         metadata: {
@@ -390,6 +471,6 @@ export function getMessageEventService(): MessageEventService {
   return globalMessageEventService;
 }
 
-export function setMessageEventServiceChannel(channel: WebChannel): void {
-  getMessageEventService().setWebChannel(channel);
+export function setMessageEventServiceChannel(channel: Channel): void {
+  getMessageEventService().setChannel(channel);
 }

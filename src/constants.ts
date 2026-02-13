@@ -1,0 +1,280 @@
+/**
+ * Application-wide constants
+ */
+
+export const SUPERVISOR_ICON = '🐙';
+export const SUPERVISOR_NAME = 'OllieBot';
+export const DEFAULT_AGENT_ICON = '🤖';
+
+// ============================================================
+// AGENT TIMEOUT CONFIGURATION
+// ============================================================
+
+/**
+ * Timeout for sub-agent delegation in milliseconds.
+ * This is how long a parent agent will wait for a sub-agent to complete.
+ *
+ * IMPORTANT: If research workers are timing out, increase this value.
+ * The timeout should account for:
+ * - Multiple web searches (each ~1s)
+ * - Multiple web scrapes (each ~10-20s)
+ * - LLM processing time
+ * - Network latency
+ *
+ * Current: 10 minutes (600,000ms)
+ */
+export const SUB_AGENT_TIMEOUT_MS = 600_000;
+
+// ============================================================
+// CITATION GENERATOR CONFIGURATION
+// ============================================================
+
+/**
+ * Maximum characters to include from source snippets in citation prompts.
+ * Longer snippets provide more context but increase token usage.
+ */
+export const CITATION_SOURCE_SNIPPET_LIMIT = 500;
+
+/**
+ * Number of sources to process per batch in citation generation.
+ * Larger batches are more efficient but may hit token limits.
+ */
+export const CITATION_BATCH_SIZE = 50;
+
+/**
+ * Maximum concurrent citation batches to process in parallel.
+ * Higher values are faster but may hit API rate limits.
+ */
+export const CITATION_MAX_CONCURRENT_BATCHES = 3;
+
+/**
+ * Minimum response length (chars) to trigger citation generation.
+ * Very short responses are skipped to avoid unnecessary processing.
+ */
+export const CITATION_MIN_RESPONSE_LENGTH = 50;
+
+/**
+ * Substring length for fallback citation matching.
+ * When exact match fails, try matching the first N characters.
+ */
+export const CITATION_FALLBACK_SUBSTRING_LENGTH = 40;
+
+/**
+ * Code percentage threshold for skipping citation generation.
+ * If more than this fraction of the response is code, skip citations.
+ */
+export const CITATION_CODE_THRESHOLD = 0.8;
+
+/**
+ * Max tokens for citation LLM response.
+ */
+export const CITATION_LLM_MAX_TOKENS = 4000;
+
+// ============================================================
+// CONVERSATION HISTORY CONFIGURATION
+// ============================================================
+
+/**
+ * Number of recent messages to include when generating responses.
+ * More messages provide better context but increase token usage.
+ */
+export const CONVERSATION_HISTORY_LIMIT = 10;
+
+/**
+ * Number of recent messages for worker agents (smaller context).
+ * Workers handle focused tasks and need less conversation history.
+ */
+export const WORKER_HISTORY_LIMIT = 5;
+
+// ============================================================
+// AGENTIC LOOP CONFIGURATION
+// ============================================================
+
+/**
+ * Maximum iterations for the tool execution loop.
+ * Each iteration = one LLM call that may request tools.
+ * The loop continues until:
+ * - LLM returns a response without tool calls, OR
+ * - This limit is reached
+ *
+ * Higher values allow more complex multi-step tasks but risk infinite loops.
+ * Current: 10 iterations
+ */
+export const AGENT_MAX_TOOL_ITERATIONS = 10;
+
+/**
+ * Maximum concurrent tasks a supervisor can manage.
+ * Limits how many sub-agents can be spawned simultaneously.
+ */
+export const SUPERVISOR_MAX_CONCURRENT_TASKS = 10;
+
+// ============================================================
+// CACHE & TIMEOUT CONFIGURATION
+// ============================================================
+
+/**
+ * TTL for RAG data cache in milliseconds.
+ * Agents refresh their RAG context after this duration.
+ * Current: 60 seconds
+ */
+export const RAG_CACHE_TTL_MS = 60_000;
+
+/**
+ * How long to keep processed message IDs in memory to prevent re-processing.
+ * Protects against duplicate processing from timeouts/retries.
+ * Current: 5 minutes
+ */
+export const MESSAGE_DEDUP_WINDOW_MS = 300_000;
+
+/**
+ * Time window for finding a "recent" conversation to continue.
+ * If user sends a message without conversationId, we look for a
+ * conversation updated within this window before creating a new one.
+ * Current: 1 hour
+ */
+export const RECENT_CONVERSATION_WINDOW_MS = 60 * 60 * 1000;
+
+// ============================================================
+// AUTO-NAMING CONFIGURATION
+// ============================================================
+
+/**
+ * Number of messages before triggering auto-naming.
+ * Conversation gets an LLM-generated title after this many messages.
+ */
+export const AUTO_NAME_MESSAGE_THRESHOLD = 3;
+
+/**
+ * Number of messages to load for generating conversation title.
+ */
+export const AUTO_NAME_MESSAGES_TO_LOAD = 5;
+
+/**
+ * Max characters to use from each message for title generation context.
+ */
+export const AUTO_NAME_CONTENT_PREVIEW_LENGTH = 200;
+
+/**
+ * Max tokens for the LLM call that generates conversation titles.
+ */
+export const AUTO_NAME_LLM_MAX_TOKENS = 20;
+
+/**
+ * Max length for conversation titles (truncated if longer).
+ */
+export const CONVERSATION_TITLE_MAX_LENGTH = 60;
+
+/**
+ * Max length for auto-generated title from first message (before LLM naming).
+ */
+export const CONVERSATION_TITLE_PREVIEW_LENGTH = 30;
+
+// ============================================================
+// LLM DEFAULT PARAMETERS
+// ============================================================
+
+/**
+ * Default max tokens for LLM responses when not specified.
+ */
+export const LLM_DEFAULT_MAX_TOKENS = 8192;
+
+/**
+ * Max tokens for summarization tasks (Fast LLM).
+ */
+export const LLM_SUMMARIZE_MAX_TOKENS = 1500;
+
+/**
+ * Max tokens for task config parsing.
+ */
+export const LLM_TASK_CONFIG_MAX_TOKENS = 2000;
+
+/**
+ * Max retries for LLM API calls with exponential backoff.
+ */
+export const API_MAX_RETRIES = 3;
+
+/**
+ * Base delay for exponential backoff in milliseconds.
+ * Actual delay = 2^attempt * base + random(0-1000)ms
+ */
+export const API_BACKOFF_BASE_MS = 1000;
+
+// ============================================================
+// DATA SIZE LIMITS
+// ============================================================
+
+/**
+ * Max size for tool results containing media (images, etc.) in bytes.
+ * Larger results are truncated before storage.
+ * Current: 5MB
+ */
+export const TOOL_RESULT_MEDIA_LIMIT_BYTES = 5_000_000;
+
+/**
+ * Max size for tool results containing text/JSON in bytes.
+ * Larger results are truncated before storage.
+ * Current: 10KB
+ */
+export const TOOL_RESULT_TEXT_LIMIT_BYTES = 10_000;
+
+/**
+ * Maximum file upload size for RAG document ingestion.
+ * Current: 50MB
+ */
+export const MAX_FILE_UPLOAD_SIZE_BYTES = 50 * 1024 * 1024;
+
+// ============================================================
+// RAG CONFIGURATION
+// ============================================================
+
+/**
+ * Default chunk size for text splitting during RAG ingestion.
+ * Smaller chunks = more precise retrieval but more storage.
+ */
+export const RAG_DEFAULT_CHUNK_SIZE = 1000;
+
+/**
+ * Default overlap between chunks for RAG ingestion.
+ * Overlap helps preserve context across chunk boundaries.
+ */
+export const RAG_DEFAULT_CHUNK_OVERLAP = 100;
+
+/**
+ * Default number of results to return from RAG queries.
+ */
+export const RAG_DEFAULT_TOP_K = 10;
+
+// ============================================================
+// QUERY & FETCH LIMITS
+// ============================================================
+
+/**
+ * Default limit for conversation list queries.
+ */
+export const DEFAULT_CONVERSATIONS_LIMIT = 50;
+
+/**
+ * Default limit for message history queries.
+ */
+export const DEFAULT_MESSAGES_LIMIT = 100;
+
+/**
+ * Default limit for task list queries.
+ */
+export const DEFAULT_TASKS_LIMIT = 20;
+
+/**
+ * Maximum allowed limit for paginated queries.
+ * Prevents excessive memory usage from unbounded queries.
+ */
+export const MAX_QUERY_LIMIT = 100;
+
+// ============================================================
+// SKILL EXECUTION
+// ============================================================
+
+/**
+ * Timeout for skill script execution in milliseconds.
+ * Current: 2 minutes
+ */
+export const SKILL_EXECUTION_TIMEOUT_MS = 120_000;

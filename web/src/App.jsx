@@ -3,17 +3,21 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { Virtuoso } from 'react-virtuoso';
 import { useWebSocket } from './hooks/useWebSocket';
 
-import { BrowserSessions } from './components/BrowserSessions';
+import { ComputerUseSessions } from './components/ComputerUseSessions';
 import { BrowserPreview } from './components/BrowserPreview';
+import { DesktopPreview } from './components/DesktopPreview';
 import RAGProjects from './components/RAGProjects';
 import { CitationPanel } from './components/CitationPanel';
 import { PDFViewerModal } from './components/PDFViewerModal';
 import { ChatInput } from './components/ChatInput';
 import { AudioPlayer } from './components/AudioPlayer';
 import { MessageContent } from './components/MessageContent';
+import { CodeBlock } from './components/CodeBlock';
 
 // Extracted eval mode (fully self-contained)
 import { useEvalMode, EvalSidebarContent, EvalMainContent } from './App.Eval';
+// Extracted logs mode
+import { useLogsMode, LogsSidebarContent, LogsMainContent } from './App.Logs';
 
 // Extracted utilities
 import { transformMessages, shouldCollapseByDefault } from './utils/messageHelpers';
@@ -23,7 +27,24 @@ import { createMessageHandler } from './App.websocket';
 const MODES = {
   CHAT: 'chat',
   EVAL: 'eval',
+  TRACES: 'traces',
 };
+
+// Branding constants
+const SUPERVISOR_ICON = '🐙';
+const SUPERVISOR_NAME = 'OllieBot';
+const DEFAULT_AGENT_ICON = '🤖';
+
+// Display limits
+const DELEGATION_MISSION_MAX_LENGTH = 500;
+
+// API constants
+const MESSAGE_PAGE_SIZE = 20;
+
+// Virtuoso reverse-scroll: start index high so prepending older messages
+// (which decrements this) never reaches zero. The exact value doesn't matter
+// as long as it exceeds the maximum number of messages a conversation can have.
+const VIRTUOSO_START_INDEX = 100000;
 
 // Module-level flag to prevent double-fetching in React Strict Mode
 // (Strict Mode unmounts/remounts component, so refs don't persist)
@@ -35,7 +56,9 @@ function App() {
   const location = useLocation();
 
   // Derive mode from URL path
-  const mode = location.pathname.startsWith('/eval') ? MODES.EVAL : MODES.CHAT;
+  const mode = location.pathname.startsWith('/eval') ? MODES.EVAL
+    : location.pathname.startsWith('/traces') ? MODES.TRACES
+    : MODES.CHAT;
 
   const [messages, setMessages] = useState([]);
   const [attachments, setAttachments] = useState([]);
@@ -55,7 +78,7 @@ function App() {
     skills: false,
     mcps: false,
     tools: false,
-    browserSessions: false,
+    computerUse: false,
     ragProjects: false,
   });
   const [agentTasks, setAgentTasks] = useState([]);
@@ -69,6 +92,12 @@ function App() {
   const [selectedBrowserSessionId, setSelectedBrowserSessionId] = useState(null);
   const [browserScreenshots, setBrowserScreenshots] = useState({});
   const [clickMarkers, setClickMarkers] = useState([]);
+
+  // Desktop session state
+  const [desktopSessions, setDesktopSessions] = useState([]);
+  const [selectedDesktopSessionId, setSelectedDesktopSessionId] = useState(null);
+  const [desktopScreenshots, setDesktopScreenshots] = useState({});
+  const [desktopClickMarkers, setDesktopClickMarkers] = useState([]);
 
   // RAG projects state
   const [ragProjects, setRagProjects] = useState([]);
@@ -94,15 +123,13 @@ function App() {
   const renameInputRef = useRef(null);
 
   // Auto-scroll state
-  const [isUserScrolled, setIsUserScrolled] = useState(false);
   const [showScrollButton, setShowScrollButton] = useState(false);
 
   // Pagination state for virtualization
   const [hasMoreOlder, setHasMoreOlder] = useState(true);
   const [isLoadingOlder, setIsLoadingOlder] = useState(false);
   const [oldestCursor, setOldestCursor] = useState(null);
-  const [totalMessageCount, setTotalMessageCount] = useState(0); // Total messages for reference
-  const [firstItemIndex, setFirstItemIndex] = useState(100000); // Start high for prepending
+  const [firstItemIndex, setFirstItemIndex] = useState(VIRTUOSO_START_INDEX);
 
   // Expanded tool events
   const [expandedTools, setExpandedTools] = useState(new Set());
@@ -112,6 +139,9 @@ function App() {
 
   // Eval mode - managed by useEvalMode hook (state lives in App.Eval.jsx)
   const evalMode = useEvalMode();
+
+  // Logs mode - managed by useLogsMode hook (state lives in App.Logs.jsx)
+  const logsMode = useLogsMode();
 
   // Response pending state (disable input while waiting)
   const [isResponsePending, setIsResponsePending] = useState(false);
@@ -126,11 +156,16 @@ function App() {
 
   // Reasoning mode state
   const [reasoningMode, setReasoningMode] = useState(null); // null | 'high' | 'xhigh'
-  const [messageType, setMessageType] = useState(null); // null | 'deep_research'
+  const [messageType, setMessageType] = useState(null); // null | 'deep_research' (legacy, may be removed)
   const [modelCapabilities, setModelCapabilities] = useState({ reasoningEfforts: [] });
+  const [commandTriggers, setCommandTriggers] = useState([]); // Agent command triggers from backend
+  const [agentCommand, setAgentCommand] = useState(null); // { command: 'Deep Research', icon: '🔬' }
 
   const virtuosoRef = useRef(null);
   const chatInputRef = useRef(null);
+
+  // Ref for scrollToBottom function (used by WebSocket handler)
+  const scrollToBottomRef = useRef(null);
 
   // Ref to track current conversation ID for use in callbacks
   const currentConversationIdRef = useRef(currentConversationId);
@@ -177,7 +212,6 @@ function App() {
     getNavigate: () => navigateRef.current,
     // State setters (stable by React guarantee)
     setMessages,
-    setTotalMessageCount,
     setIsResponsePending,
     setIsConnected,
     setConversations,
@@ -188,6 +222,11 @@ function App() {
     setSelectedBrowserSessionId,
     setClickMarkers,
     setExpandedAccordions,
+    // Desktop session state setters
+    setDesktopSessions,
+    setDesktopScreenshots,
+    setSelectedDesktopSessionId,
+    setDesktopClickMarkers,
     setRagProjects,
     setRagIndexingProgress,
     // Eval state (shared WebSocket, no separate connection needed)
@@ -196,6 +235,8 @@ function App() {
     setEvalResults,
     setEvalError,
     setEvalLoading,
+    // Scroll callback (accessed via ref since it's defined later)
+    scrollToBottom: () => scrollToBottomRef.current?.(),
   }));
 
   // Callback to set evalJobId - updates both ref (for WebSocket handler) and state
@@ -237,7 +278,7 @@ function App() {
     setConversations(mappedConversations);
 
     // Set default conversation
-    const feedConversation = mappedConversations.find(c => c.id === ':feed:');
+    const feedConversation = mappedConversations.find(c => c.id === 'feed');
     if (feedConversation) {
       setCurrentConversationId(feedConversation.id);
     } else if (mappedConversations.length > 0) {
@@ -249,20 +290,17 @@ function App() {
     if (feedData && feedData.items) {
       const pagination = feedData.pagination || {};
       const items = transformMessages(feedData.items);
-      const total = pagination.totalCount || items.length;
       setMessages(items);
       // Initialize pagination state
       setHasMoreOlder(pagination.hasOlder || false);
       setOldestCursor(pagination.oldestCursor || null);
-      setTotalMessageCount(total);
       // Reset to starting high index for prepending
-      setFirstItemIndex(100000);
+      setFirstItemIndex(VIRTUOSO_START_INDEX);
     } else {
       // Fallback for backwards compatibility
       setMessages([]);
       setHasMoreOlder(false);
       setOldestCursor(null);
-      setTotalMessageCount(0);
       setFirstItemIndex(0);
     }
 
@@ -281,6 +319,11 @@ function App() {
     // Agent templates (for collapse settings, display names, etc.)
     if (data.agentTemplates) {
       setAgentTemplates(data.agentTemplates);
+    }
+
+    // Command triggers for #menu (agent commands like #Deep Research, #Modify)
+    if (data.commandTriggers) {
+      setCommandTriggers(data.commandTriggers);
     }
   }, []);
 
@@ -321,8 +364,23 @@ function App() {
   };
   const handleClose = () => setIsConnected(false);
 
+  // Ref for logs event handler to keep combined handler stable
+  const logsHandlerRef = useRef(logsMode.handleLogEvent);
+  useEffect(() => { logsHandlerRef.current = logsMode.handleLogEvent; }, [logsMode.handleLogEvent]);
+
+  // Combined WebSocket handler: main handler + logs handler
+  const [combinedMessageHandler] = useState(() => {
+    return (data) => {
+      handleMessage(data);
+      // Forward log events to logs mode
+      if (data.type && data.type.startsWith('log_')) {
+        logsHandlerRef.current?.(data);
+      }
+    };
+  });
+
   const { sendMessage, connectionState } = useWebSocket({
-    onMessage: handleMessage,
+    onMessage: combinedMessageHandler,
     onOpen: handleOpen,
     onClose: handleClose,
   });
@@ -346,6 +404,8 @@ function App() {
   // Sync URL to state for chat mode deep linking
   // Ref to prevent re-triggering when we programmatically set state
   const isNavigatingRef = useRef(false);
+  // Fetch counter to prevent stale responses from overwriting newer ones
+  const messageFetchCounter = useRef(0);
 
   useEffect(() => {
     if (isNavigatingRef.current) {
@@ -355,42 +415,30 @@ function App() {
 
     const path = location.pathname;
 
-    // Handle chat routes
-    if (path === '/' || path === '/chat') {
-      // Default to feed view
-      if (currentConversationId !== ':feed:' && conversations.some(c => c.id === ':feed:')) {
-        setCurrentConversationId(':feed:');
-        // Load feed messages with pagination
-        fetch('/api/conversations/:feed:/messages?limit=20&includeTotal=true')
-          .then(res => res.ok ? res.json() : { items: [], pagination: {} })
-          .then(data => {
-            const pagination = data.pagination || {};
-            setMessages(transformMessages(data.items || []));
-            setHasMoreOlder(pagination.hasOlder || false);
-            setOldestCursor(pagination.oldestCursor || null);
-            setFirstItemIndex(100000);
-          })
-          .catch(() => {
-            setMessages([]);
-            setHasMoreOlder(false);
-            setOldestCursor(null);
-          });
-      }
-    } else if (path.startsWith('/chat/')) {
+    // Handle chat routes - all conversations use /chat/:id pattern
+    if (path.startsWith('/chat/')) {
       const convId = decodeURIComponent(path.slice(6)); // Remove '/chat/'
       if (convId && convId !== currentConversationId) {
         setCurrentConversationId(convId);
         // Load conversation messages with pagination
-        fetch(`/api/conversations/${encodeURIComponent(convId)}/messages?limit=20&includeTotal=true`)
+        const apiConvId = encodeURIComponent(convId);
+        const fetchId = ++messageFetchCounter.current;
+        fetch(`/api/conversations/${apiConvId}/messages?limit=${MESSAGE_PAGE_SIZE}&includeTotal=true`)
           .then(res => res.ok ? res.json() : { items: [], pagination: {} })
           .then(data => {
+            // Only update if this is still the latest fetch
+            if (fetchId !== messageFetchCounter.current) return;
             const pagination = data.pagination || {};
             setMessages(transformMessages(data.items || []));
             setHasMoreOlder(pagination.hasOlder || false);
             setOldestCursor(pagination.oldestCursor || null);
-            setFirstItemIndex(100000);
+            setFirstItemIndex(VIRTUOSO_START_INDEX);
+
+            // Request active stream/tool state for this conversation (to resume in-progress displays)
+            sendMessage({ type: 'get-active-stream', conversationId: convId });
           })
           .catch(() => {
+            if (fetchId !== messageFetchCounter.current) return;
             setMessages([]);
             setHasMoreOlder(false);
             setOldestCursor(null);
@@ -398,18 +446,30 @@ function App() {
       }
     }
     // Note: Eval routes are handled by useEvalMode hook in App.Eval.jsx
-  }, [location.pathname, conversations, currentConversationId, transformMessages]);
+  }, [location.pathname, conversations, currentConversationId, transformMessages, sendMessage]);
 
-  // Redirect root to /chat
+  // Redirect root and /chat to Feed conversation
   useEffect(() => {
-    if (location.pathname === '/') {
-      navigate('/chat', { replace: true });
+    if (location.pathname === '/' || location.pathname === '/chat') {
+      navigate('/chat/feed', { replace: true });
     }
   }, [location.pathname, navigate]);
 
+  // Request active stream/tool state when WebSocket connects (handles page refresh case)
+  const hasRequestedActiveStateRef = useRef(false);
+  useEffect(() => {
+    if (isConnected && currentConversationId && !hasRequestedActiveStateRef.current) {
+      hasRequestedActiveStateRef.current = true;
+      sendMessage({ type: 'get-active-stream', conversationId: currentConversationId });
+    }
+    // Reset when WebSocket disconnects so we request again after reconnect
+    if (!isConnected) {
+      hasRequestedActiveStateRef.current = false;
+    }
+  }, [isConnected, currentConversationId, sendMessage]);
+
   // Scroll to bottom handler for Virtuoso
   const scrollToBottom = useCallback(() => {
-    setIsUserScrolled(false);
     setShowScrollButton(false);
     virtuosoRef.current?.scrollToIndex({
       index: messages.length - 1,
@@ -417,6 +477,11 @@ function App() {
       align: 'end',
     });
   }, [messages.length]);
+
+  // Keep ref updated for WebSocket handler access
+  useEffect(() => {
+    scrollToBottomRef.current = scrollToBottom;
+  }, [scrollToBottom]);
 
   // Load older messages when scrolling near unloaded area
   const loadOlderMessages = useCallback(async () => {
@@ -426,13 +491,22 @@ function App() {
     if (!convId) return;
 
     setIsLoadingOlder(true);
+    // Capture current fetch counter to verify conversation hasn't changed
+    const fetchId = messageFetchCounter.current;
     let res = null;
     try {
+      const apiConvId = encodeURIComponent(convId);
       res = await fetch(
-        `/api/conversations/${encodeURIComponent(convId)}/messages?limit=20&before=${encodeURIComponent(oldestCursor)}`
+        `/api/conversations/${apiConvId}/messages?limit=20&before=${encodeURIComponent(oldestCursor)}`
       );
     } catch (error) {
       console.error('Failed to load older messages:', error);
+    }
+
+    // Bail if conversation changed while fetching
+    if (fetchId !== messageFetchCounter.current) {
+      setIsLoadingOlder(false);
+      return;
     }
 
     let data = null;
@@ -460,10 +534,9 @@ function App() {
   // Handle Virtuoso atBottomStateChange
   const handleAtBottomStateChange = useCallback((atBottom) => {
     setShowScrollButton(!atBottom);
-    if (atBottom) {
-      setIsUserScrolled(false);
-    }
   }, []);
+
+
 
   // Helper to insert a new conversation after well-known ones
   const insertConversation = (prev, newConv) => {
@@ -519,12 +592,10 @@ function App() {
 
     // Clear local messages and reset pagination
     setMessages([]);
-    setIsUserScrolled(false);
     setShowScrollButton(false);
     setIsResponsePending(false);
     setHasMoreOlder(false);
     setOldestCursor(null);
-    setFirstItemIndex(100000);
   };
 
   // Delete conversation (soft delete)
@@ -554,21 +625,21 @@ function App() {
         const nextConv = remaining[0];
         setCurrentConversationId(nextConv.id);
         // Navigate to the next conversation
-        if (nextConv.id === ':feed:') {
-          navigate('/chat');
-        } else {
-          navigate(`/chat/${encodeURIComponent(nextConv.id)}`);
-        }
+        navigate(`/chat/${encodeURIComponent(nextConv.id)}`);
         // Load messages for new current conversation with pagination
-        fetch(`/api/conversations/${encodeURIComponent(nextConv.id)}/messages?limit=20&includeTotal=true`)
+        const apiConvId = encodeURIComponent(nextConv.id);
+        const fetchId = ++messageFetchCounter.current;
+        fetch(`/api/conversations/${apiConvId}/messages?limit=${MESSAGE_PAGE_SIZE}&includeTotal=true`)
           .then(res => res.ok ? res.json() : null)
           .then(data => {
+            // Only update if this is still the latest fetch
+            if (fetchId !== messageFetchCounter.current) return;
             if (data) {
               const pagination = data.pagination || {};
               setMessages(transformMessages(data.items || []));
               setHasMoreOlder(pagination.hasOlder || false);
               setOldestCursor(pagination.oldestCursor || null);
-              setFirstItemIndex(100000);
+              setFirstItemIndex(VIRTUOSO_START_INDEX);
             }
           });
       } else {
@@ -576,9 +647,36 @@ function App() {
         setMessages([]);
         setHasMoreOlder(false);
         setOldestCursor(null);
-        setFirstItemIndex(100000);
-        navigate('/chat');
+        setFirstItemIndex(VIRTUOSO_START_INDEX);
+        navigate('/chat/feed');
       }
+    }
+  };
+
+  // Clear all messages in a conversation (for well-known conversations like Feed)
+  const handleClearConversation = async (convId, e) => {
+    e.stopPropagation();
+    setOpenMenuId(null);
+
+    let clearSuccess = false;
+    try {
+      const apiConvId = encodeURIComponent(convId);
+      const res = await fetch(`/api/conversations/${apiConvId}/messages`, {
+        method: 'DELETE',
+      });
+      clearSuccess = res.ok;
+    } catch (error) {
+      console.error('Failed to clear conversation:', error);
+    }
+
+    if (!clearSuccess) return;
+
+    // If this is the current conversation, clear local messages
+    if (convId === currentConversationId) {
+      setMessages([]);
+      setHasMoreOlder(false);
+      setOldestCursor(null);
+      setFirstItemIndex(VIRTUOSO_START_INDEX);
     }
   };
 
@@ -681,29 +779,34 @@ function App() {
 
     // Mark that we're navigating to prevent URL sync effect from re-triggering
     isNavigatingRef.current = true;
-    setIsUserScrolled(false);
     setShowScrollButton(false);
+    // Reset pending state - the previous conversation's response shouldn't block the new one
+    setIsResponsePending(false);
 
     // Navigate to the conversation URL
-    // Special handling for :feed: - use /chat without ID
-    if (convId === ':feed:') {
-      navigate('/chat');
-    } else {
-      navigate(`/chat/${encodeURIComponent(convId)}`);
-    }
+    navigate(`/chat/${encodeURIComponent(convId)}`);
 
     // Update state and load messages with pagination
     setCurrentConversationId(convId);
-    fetch(`/api/conversations/${encodeURIComponent(convId)}/messages?limit=20&includeTotal=true`)
+    const apiConvId = encodeURIComponent(convId);
+    // Increment fetch counter to invalidate any in-flight fetches
+    const fetchId = ++messageFetchCounter.current;
+    fetch(`/api/conversations/${apiConvId}/messages?limit=${MESSAGE_PAGE_SIZE}&includeTotal=true`)
       .then(res => res.ok ? res.json() : { items: [], pagination: {} })
       .then(data => {
+        // Only update if this is still the latest fetch
+        if (fetchId !== messageFetchCounter.current) return;
         const pagination = data.pagination || {};
         setMessages(transformMessages(data.items || []));
         setHasMoreOlder(pagination.hasOlder || false);
         setOldestCursor(pagination.oldestCursor || null);
-        setFirstItemIndex(100000);
+        setFirstItemIndex(VIRTUOSO_START_INDEX);
+
+        // Request active stream state for this conversation (to resume streaming display)
+        sendMessage({ type: 'get-active-stream', conversationId: convId });
       })
       .catch(() => {
+        if (fetchId !== messageFetchCounter.current) return;
         setMessages([]);
         setHasMoreOlder(false);
         setOldestCursor(null);
@@ -715,11 +818,13 @@ function App() {
   const attachmentsRef = useRef(attachments);
   const reasoningModeRef = useRef(reasoningMode);
   const messageTypeRef = useRef(messageType);
+  const agentCommandRef = useRef(agentCommand);
 
   // Keep refs in sync (currentConversationIdRef is already synced above)
   useEffect(() => { attachmentsRef.current = attachments; }, [attachments]);
   useEffect(() => { reasoningModeRef.current = reasoningMode; }, [reasoningMode]);
   useEffect(() => { messageTypeRef.current = messageType; }, [messageType]);
+  useEffect(() => { agentCommandRef.current = agentCommand; }, [agentCommand]);
 
   // Convert file to base64 (defined before handleSubmit which uses it)
   const fileToBase64 = (file) => {
@@ -738,12 +843,10 @@ function App() {
     const currentAttachments = attachmentsRef.current;
     const currentReasoningMode = reasoningModeRef.current;
     const currentMessageType = messageTypeRef.current;
+    const currentAgentCommand = agentCommandRef.current;
     const convId = currentConversationIdRef.current;
 
     if (!inputText.trim() && currentAttachments.length === 0) return;
-
-    // Re-enable auto-scroll when sending a message (Virtuoso's followOutput will handle it)
-    setIsUserScrolled(false);
 
     // Process attachments to base64
     const processedAttachments = await Promise.all(
@@ -773,11 +876,19 @@ function App() {
       timestamp: new Date().toISOString(),
       reasoningMode: currentReasoningMode,
       messageType: currentMessageType,
+      agentCommand: currentAgentCommand,
     };
-    setTotalMessageCount((c) => c + 1);
     setMessages((prev) => [...prev, userMessage]);
 
-    // Send via WebSocket with conversation ID, attachments, reasoning effort, and message type
+    // Scroll to bottom after adding user message (user expects to see the response)
+    setTimeout(() => {
+      virtuosoRef.current?.scrollToIndex({
+        index: 'LAST',
+        behavior: 'smooth',
+      });
+    }, 50);
+
+    // Send via WebSocket with conversation ID, attachments, reasoning effort, message type, and agent command
     sendMessage({
       type: 'message',
       messageId: messageId,
@@ -786,10 +897,12 @@ function App() {
       conversationId: convId,
       reasoningEffort: currentReasoningMode,
       messageType: currentMessageType,
+      agentCommand: currentAgentCommand,
     });
     setAttachments([]);
     setReasoningMode(null);
     setMessageType(null);
+    setAgentCommand(null);
     setIsResponsePending(true);
   }, [sendMessage]);
 
@@ -868,20 +981,149 @@ function App() {
     }
   };
 
+  // Toggle MCP enabled/disabled status
+  const handleToggleMcp = async (mcpId, currentEnabled) => {
+    const newEnabled = !currentEnabled;
+    try {
+      const res = await fetch(`/api/mcps/${mcpId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: newEnabled }),
+      });
+
+      if (res.ok) {
+        const updatedMcp = await res.json();
+        // Update local state
+        setMcps((prev) =>
+          prev.map((mcp) =>
+            mcp.id === mcpId ? { ...mcp, enabled: updatedMcp.enabled, toolCount: updatedMcp.toolCount } : mcp
+          )
+        );
+        // Also update tools if the MCP was enabled/disabled
+        // Refetch tools to reflect the change
+        try {
+          const toolsRes = await fetch('/api/tools');
+          if (toolsRes.ok) {
+            const toolsData = await toolsRes.json();
+            setTools(toolsData);
+          }
+        } catch (e) {
+          console.warn('Failed to refresh tools after MCP toggle:', e);
+        }
+      } else {
+        console.error('Failed to toggle MCP:', await res.text());
+      }
+    } catch (error) {
+      console.error('Error toggling MCP:', error);
+    }
+  };
+
   // Helper to check if a value is a data URL image
   const isDataUrlImage = (value) => {
     return typeof value === 'string' && value.startsWith('data:image/');
   };
 
   // Helper to check if result contains audio data (tool-agnostic)
+  // Audio can be in obj.audio (legacy) or obj.output.audio (nested from native tools)
   const isAudioResult = (obj) => {
     if (!obj || typeof obj !== 'object') return false;
     // Check for audio field with base64 data (long string)
-    return obj.audio && typeof obj.audio === 'string' && obj.audio.length > 100;
+    if (obj.audio && typeof obj.audio === 'string' && obj.audio.length > 100) {
+      return true;
+    }
+    // Check nested output.audio structure
+    if (obj.output && typeof obj.output === 'object' && obj.output.audio && typeof obj.output.audio === 'string' && obj.output.audio.length > 100) {
+      return true;
+    }
+    return false;
+  };
+
+  // Helper to extract audio data from result (handles both legacy and nested structures)
+  const getAudioData = (obj) => {
+    if (obj.audio && typeof obj.audio === 'string') {
+      return { audio: obj.audio, mimeType: obj.mimeType };
+    }
+    if (obj.output && typeof obj.output === 'object' && obj.output.audio) {
+      return { audio: obj.output.audio, mimeType: obj.output.mimeType };
+    }
+    return null;
+  };
+
+  // Helper to render output that might contain markdown code blocks
+  const renderOutput = (output) => {
+    if (typeof output !== 'string') {
+      // Object output - render as property list
+      const entries = Object.entries(output).filter(([key]) =>
+        !['audio', 'mimeType', 'files'].includes(key)
+      );
+      if (entries.length === 0) return null;
+      return (
+        <div className="tool-result-properties">
+          {entries.map(([key, value]) => (
+            <div key={key} className="tool-result-property">
+              <span className="tool-result-key">{key}:</span>{' '}
+              <span className="tool-result-value">
+                {typeof value === 'string' ? value : JSON.stringify(value)}
+              </span>
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    // Normalize escaped newlines (literal \n) to actual newlines
+    let normalizedOutput = output;
+    if (output.includes('\\n')) {
+      normalizedOutput = output.replace(/\\n/g, '\n');
+    }
+
+    // Check for markdown code blocks (```language ... ```)
+    const codeBlockRegex = /^```(\w+)?\n([\s\S]*?)\n```$/;
+    const match = normalizedOutput.match(codeBlockRegex);
+    if (match) {
+      const language = match[1] || 'text';
+      const code = match[2];
+      return <CodeBlock language={language}>{code}</CodeBlock>;
+    }
+
+    // Plain text output (use normalized version so newlines display properly)
+    return <pre className="tool-details-content" style={{ margin: 0, whiteSpace: 'pre-wrap' }}>{normalizedOutput}</pre>;
   };
 
   // Render tool result with special handling for images and audio
-  const renderToolResult = (result) => {
+  // files parameter is for files passed separately from result (e.g., from tool events)
+  const renderToolResult = (result, files) => {
+    // Handle files passed as separate parameter (takes precedence)
+    if (files && Array.isArray(files) && files.length > 0) {
+      const imageFiles = files.filter(f => f.dataUrl && f.dataUrl.startsWith('data:image/'));
+      const audioFiles = files.filter(f => f.dataUrl && f.dataUrl.startsWith('data:audio/'));
+      const hasMediaFiles = imageFiles.length > 0 || audioFiles.length > 0;
+
+      if (hasMediaFiles) {
+        return (
+          <div className="tool-result-with-media">
+            {imageFiles.map((file, idx) => (
+              <div key={`img-${idx}`} className="tool-result-image">
+                {imageFiles.length > 1 && <div className="tool-result-image-label">{file.name}:</div>}
+                <img src={file.dataUrl} alt={file.name} style={{ maxWidth: '100%', maxHeight: '400px', borderRadius: '4px' }} />
+              </div>
+            ))}
+            {audioFiles.map((file, idx) => (
+              <div key={`audio-${idx}`} className="tool-result-audio">
+                {audioFiles.length > 1 && <div className="tool-result-audio-label">{file.name}:</div>}
+                <AudioPlayer
+                  audioDataUrl={file.dataUrl}
+                  mimeType={file.mediaType}
+                />
+              </div>
+            ))}
+            {/* Also render the result output if present */}
+            {result && renderOutput(result)}
+          </div>
+        );
+      }
+    }
+
     if (!result) return null;
 
     // If result is a string, try to parse it as JSON first
@@ -898,8 +1140,8 @@ function App() {
 
       // Try to parse as JSON (result might be stringified, possibly double-stringified)
       let trimmed = result.trim();
-      // Handle double-stringified JSON (starts with " and contains escaped quotes)
-      if (trimmed.startsWith('"') && trimmed.includes('\\"')) {
+      // Handle double-stringified JSON (starts and ends with ")
+      if (trimmed.startsWith('"') && trimmed.endsWith('"')) {
         let unwrapped = null;
         try {
           unwrapped = JSON.parse(trimmed);
@@ -923,24 +1165,69 @@ function App() {
         }
         parsedResult = parsed;
       } else {
-        return <pre className="tool-details-content">{result}</pre>;
+        // Not JSON - check if it's a code block or plain text
+        return renderOutput(trimmed);
       }
     }
 
     // If parsedResult is an object, check for special content types
     if (typeof parsedResult === 'object' && parsedResult !== null) {
+      // Check for files array with dataUrl (from tools like run_python, speak, create_image)
+      if (parsedResult.files && Array.isArray(parsedResult.files) && parsedResult.files.length > 0) {
+        // Categorize files by type
+        const imageFiles = parsedResult.files.filter(f => f.dataUrl && f.dataUrl.startsWith('data:image/'));
+        const audioFiles = parsedResult.files.filter(f => f.dataUrl && f.dataUrl.startsWith('data:audio/'));
+        const hasMediaFiles = imageFiles.length > 0 || audioFiles.length > 0;
+
+        if (hasMediaFiles) {
+          return (
+            <div className="tool-result-with-media">
+              {/* Render images */}
+              {imageFiles.map((file, idx) => (
+                <div key={`img-${idx}`} className="tool-result-image">
+                  {imageFiles.length > 1 && <div className="tool-result-image-label">{file.name}:</div>}
+                  <img src={file.dataUrl} alt={file.name} style={{ maxWidth: '100%', maxHeight: '400px', borderRadius: '4px' }} />
+                </div>
+              ))}
+              {/* Render audio players */}
+              {audioFiles.map((file, idx) => (
+                <div key={`audio-${idx}`} className="tool-result-audio">
+                  {audioFiles.length > 1 && <div className="tool-result-audio-label">{file.name}:</div>}
+                  <AudioPlayer
+                    audioDataUrl={file.dataUrl}
+                    mimeType={file.mediaType}
+                  />
+                </div>
+              ))}
+              {/* Render output with syntax highlighting support */}
+              {parsedResult.output && (
+                <div className="tool-result-output" style={{ marginTop: '0.5rem' }}>
+                  {renderOutput(parsedResult.output)}
+                </div>
+              )}
+            </div>
+          );
+        }
+      }
+
       // Check for audio result (any tool returning audio data)
       if (isAudioResult(parsedResult)) {
-        // Get non-audio properties to display alongside player
+        const audioData = getAudioData(parsedResult);
+        // Get non-audio properties to display alongside player (exclude audio, output with audio, mimeType)
         const nonAudioEntries = Object.entries(parsedResult).filter(
-          ([key]) => key !== 'audio'
+          ([key, value]) => {
+            if (key === 'audio' || key === 'mimeType') return false;
+            // If output contains audio, skip it (audio player handles it)
+            if (key === 'output' && typeof value === 'object' && value && 'audio' in value) return false;
+            return true;
+          }
         );
 
         return (
           <div className="tool-result-with-audio">
             <AudioPlayer
-              audioBase64={parsedResult.audio}
-              mimeType={parsedResult.mimeType || 'audio/pcm;rate=24000'}
+              audioBase64={audioData.audio}
+              mimeType={audioData.mimeType || 'audio/pcm;rate=24000'}
             />
             {nonAudioEntries.length > 0 && (
               <div className="tool-result-properties">
@@ -991,6 +1278,21 @@ function App() {
           </div>
         );
       }
+
+      // Check for output property (from tools like generate_python, run_python without files)
+      if (parsedResult.output !== undefined) {
+        return (
+          <div className="tool-result-with-output">
+            {renderOutput(parsedResult.output)}
+            {/* Show error if present */}
+            {parsedResult.error && (
+              <div className="tool-result-error" style={{ marginTop: '0.5rem', color: '#ff6b6b' }}>
+                <pre className="tool-details-content" style={{ margin: 0 }}>{parsedResult.error}</pre>
+              </div>
+            )}
+          </div>
+        );
+      }
     }
 
     // Default: render as JSON
@@ -1003,6 +1305,13 @@ function App() {
     if (bytes < 1024) return `${bytes} B`;
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
+
+  // Format token count with k shorthand
+  const formatTokenCount = (tokens) => {
+    if (!tokens && tokens !== 0) return '0';
+    if (tokens < 1000) return String(tokens);
+    return `${(tokens / 1000).toFixed(1)}k`;
   };
 
   // Toggle accordion - memoized since it only uses state setter
@@ -1069,10 +1378,6 @@ function App() {
 
   // Note: Eval mode handlers are now in useEvalMode hook (App.Eval.jsx)
 
-  // Handle browser session selection - memoized
-  const handleSelectBrowserSession = useCallback((sessionId) => {
-    setSelectedBrowserSessionId(sessionId);
-  }, []);
 
   // Close browser preview
   const handleCloseBrowserPreview = useCallback(() => {
@@ -1094,10 +1399,56 @@ function App() {
     sendMessage({ type: 'browser-action', action: 'close', sessionId });
   }, [sendMessage]);
 
-  // Toggle browser sessions accordion - memoized
-  const handleToggleBrowserSessions = useCallback(() => {
-    toggleAccordion('browserSessions');
+  // Toggle computer use accordion - memoized
+  const handleToggleComputerUse = useCallback(() => {
+    toggleAccordion('computerUse');
   }, [toggleAccordion]);
+
+  // Select session for preview - routes to browser or desktop based on kind
+  const handleSelectSession = useCallback((sessionId, kind) => {
+    if (kind === 'desktop') {
+      setSelectedDesktopSessionId(sessionId);
+    } else {
+      setSelectedBrowserSessionId(sessionId);
+    }
+  }, []);
+
+  // Close desktop preview
+  const handleCloseDesktopPreview = useCallback(() => {
+    setSelectedDesktopSessionId(null);
+  }, []);
+
+  // Close desktop session (terminate the sandbox) - memoized
+  const handleCloseDesktopSession = useCallback((sessionId) => {
+    // Optimistically remove from UI immediately
+    setDesktopSessions((prev) => prev.filter((s) => s.id !== sessionId));
+    setDesktopScreenshots((prev) => {
+      const next = { ...prev };
+      delete next[sessionId];
+      return next;
+    });
+    // Use functional update to check selected session without dependency
+    setSelectedDesktopSessionId((prev) => prev === sessionId ? null : prev);
+    // Unlock chat input — the user explicitly chose to stop, don't make them
+    // wait for the LLM to comment on the abort. Any in-flight LLM response
+    // will still arrive and update messages in the background.
+    setIsResponsePending(false);
+    // Mark any streaming message as done so it doesn't show the spinner
+    setMessages((prev) =>
+      prev.map((m) => {
+        if (m.isStreaming) return { ...m, isStreaming: false };
+        // Also mark any running desktop_session tool calls as cancelled
+        // so the tool indicator stops spinning (tool_execution_finished
+        // may never arrive if the abort kills the pipeline).
+        if (m.role === 'tool' && m.toolName === 'desktop_session' && m.status === 'running') {
+          return { ...m, status: 'failed', error: 'Session closed by user' };
+        }
+        return m;
+      })
+    );
+    // Send close request to server
+    sendMessage({ type: 'desktop-action', action: 'close', sessionId });
+  }, [sendMessage]);
 
   // Toggle RAG projects accordion - memoized
   const handleToggleRagProjects = useCallback(() => {
@@ -1150,6 +1501,11 @@ function App() {
     (s) => s.id === selectedBrowserSessionId
   );
 
+  // Get selected desktop session object
+  const selectedDesktopSession = desktopSessions.find(
+    (s) => s.id === selectedDesktopSessionId
+  );
+
   // Render a single message item for Virtuoso (index-based for totalCount mode)
   // Render a single message item for Virtuoso
   const renderMessageItem = useCallback((index, msg) => {
@@ -1171,6 +1527,19 @@ function App() {
             <span className="tool-name">{msg.toolName}</span>
             {msg.parameters?.task && (
               <span className="tool-mission">{msg.parameters.task}</span>
+            )}
+            {msg.status === 'running' && msg.progress && (
+              <span className="tool-progress">
+                <span className="tool-progress-bar">
+                  <span
+                    className="tool-progress-fill"
+                    style={{ width: msg.progress.total ? `${Math.min(100, (msg.progress.current / msg.progress.total) * 100)}%` : '0%' }}
+                  />
+                </span>
+                {msg.progress.message && (
+                  <span className="tool-progress-message">{msg.progress.message}</span>
+                )}
+              </span>
             )}
             {msg.durationMs !== undefined && (
               <span className="tool-duration">{msg.durationMs}ms</span>
@@ -1198,10 +1567,10 @@ function App() {
                   </pre>
                 </div>
               )}
-              {msg.result && (
+              {(msg.result || msg.files) && (
                 <div className="tool-details-section">
                   <div className="tool-details-label">Response</div>
-                  {renderToolResult(msg.result)}
+                  {renderToolResult(msg.result, msg.files)}
                 </div>
               )}
               {msg.error && (
@@ -1218,13 +1587,19 @@ function App() {
 
     if (msg.role === 'delegation') {
       // Compact delegation display
+      const mission = msg.mission || '';
+      const truncatedMission = mission.length > DELEGATION_MISSION_MAX_LENGTH
+        ? mission.slice(0, DELEGATION_MISSION_MAX_LENGTH) + '...'
+        : mission;
       return (
         <div className="delegation-event">
           <span className="delegation-icon">🎯</span>
           <span className="delegation-agent">
             {msg.agentEmoji} {msg.agentName}
           </span>
-          <span className="delegation-mission">{msg.mission}</span>
+          <span className="delegation-mission" title={mission}>
+            {truncatedMission}
+          </span>
         </div>
       );
     }
@@ -1263,12 +1638,28 @@ function App() {
           {expandedAgentMessages.has(msg.id) && (
             <div className={`message ${msg.role}${msg.isError ? ' error' : ''}${msg.isStreaming ? ' streaming' : ''}`}>
               <div className="message-avatar">
-                {msg.isError ? '⚠️' : (msg.agentEmoji || '🐙')}
+                {msg.isError ? '⚠️' : (msg.agentEmoji || DEFAULT_AGENT_ICON)}
               </div>
               <div className="message-content">
                 <MessageContent content={msg.content} html={msg.html} isStreaming={msg.isStreaming} citations={msg.citations} messageId={msg.id} />
                 {msg.role === 'assistant' && msg.citations && !msg.isStreaming && (
                   <CitationPanel citations={msg.citations} messageId={msg.id} />
+                )}
+                {msg.role === 'assistant' && msg.usage && !msg.isStreaming && (
+                  <div className="message-usage-footer">
+                    {formatTokenCount(msg.usage.inputTokens)} in / {formatTokenCount(msg.usage.outputTokens)} out · {msg.usage.llmDurationMs > 0 ? Math.round(msg.usage.outputTokens / (msg.usage.llmDurationMs / 1000)) : '?'} tok/s · {(msg.usage.llmDurationMs / 1000).toFixed(1)}s{msg.usage.modelId ? ` · ${msg.usage.modelId}` : ''}
+                    {msg.usage.traceId && (
+                      <button
+                        type="button"
+                        className="trace-link"
+                        onClick={() => navigate(`/traces?traceId=${msg.usage.traceId}`)}
+                        title="View trace details"
+                        aria-label="View trace details"
+                      >
+                        📋
+                      </button>
+                    )}
+                  </div>
                 )}
               </div>
             </div>
@@ -1281,7 +1672,7 @@ function App() {
     return (
       <div className={`message ${msg.role}${msg.isError ? ' error' : ''}${msg.isStreaming ? ' streaming' : ''}`}>
         <div className="message-avatar">
-          {msg.isError ? '⚠️' : msg.role === 'user' ? '👤' : (msg.agentEmoji || '🐙')}
+          {msg.isError ? '⚠️' : msg.role === 'user' ? '👤' : (msg.agentEmoji || DEFAULT_AGENT_ICON)}
         </div>
         <div className="message-content">
           {msg.agentName && msg.role === 'assistant' && (
@@ -1290,6 +1681,22 @@ function App() {
           <MessageContent content={msg.content} html={msg.html} isStreaming={msg.isStreaming} citations={msg.citations} messageId={msg.id} />
           {msg.role === 'assistant' && msg.citations && !msg.isStreaming && (
             <CitationPanel citations={msg.citations} messageId={msg.id} />
+          )}
+          {msg.role === 'assistant' && msg.usage && !msg.isStreaming && (
+            <div className="message-usage-footer">
+              {formatTokenCount(msg.usage.inputTokens)} in / {formatTokenCount(msg.usage.outputTokens)} out · {msg.usage.llmDurationMs > 0 ? Math.round(msg.usage.outputTokens / (msg.usage.llmDurationMs / 1000)) : '?'} tok/s · {(msg.usage.llmDurationMs / 1000).toFixed(1)}s{msg.usage.modelId ? ` · ${msg.usage.modelId}` : ''}
+              {msg.usage.traceId && (
+                <button
+                  type="button"
+                  className="trace-link"
+                  onClick={() => navigate(`/traces?traceId=${msg.usage.traceId}`)}
+                  title="View trace details"
+                  aria-label="View trace details"
+                >
+                  📋
+                </button>
+              )}
+            </div>
           )}
           {msg.attachments && msg.attachments.length > 0 && (
             <div className="message-attachments">
@@ -1308,7 +1715,13 @@ function App() {
               ))}
             </div>
           )}
-          {msg.messageType && (
+          {msg.agentCommand && (
+            <div className="message-reasoning-chip message-command-chip">
+              <span className="reasoning-chip-icon">{msg.agentCommand.icon}</span>
+              <span className="reasoning-chip-label">{msg.agentCommand.command}</span>
+            </div>
+          )}
+          {msg.messageType && !msg.agentCommand && (
             <div className="message-reasoning-chip message-type-chip">
               <span className="reasoning-chip-icon">🔬</span>
               <span className="reasoning-chip-label">
@@ -1391,6 +1804,10 @@ function App() {
           <EvalSidebarContent evalMode={evalMode} />
         )}
 
+        {sidebarOpen && mode === MODES.TRACES && (
+          <LogsSidebarContent logsMode={logsMode} />
+        )}
+
         {sidebarOpen && mode === MODES.CHAT && (
           <>
           <div className="conversation-list">
@@ -1439,34 +1856,45 @@ function App() {
                     </>
                   )}
                 </div>
-                {/* Hide actions menu for well-known conversations */}
-                {!conv.isWellKnown && (
-                  <div className="conversation-actions">
-                    <button
-                      className="actions-menu-btn"
-                      onClick={(e) => toggleActionsMenu(conv.id, e)}
-                      title="Actions"
-                    >
-                      ⋯
-                    </button>
-                    {openMenuId === conv.id && (
-                      <div className="actions-menu">
-                        <button
-                          className="actions-menu-item"
-                          onClick={(e) => handleRenameConversation(conv.id, e)}
-                        >
-                          Rename
-                        </button>
+                {/* Actions menu - different options for well-known vs regular conversations */}
+                <div className="conversation-actions">
+                  <button
+                    className="actions-menu-btn"
+                    onClick={(e) => toggleActionsMenu(conv.id, e)}
+                    title="Actions"
+                  >
+                    ⋯
+                  </button>
+                  {openMenuId === conv.id && (
+                    <div className="actions-menu">
+                      {conv.isWellKnown ? (
+                        /* Well-known conversations (like Feed) only have Clear option */
                         <button
                           className="actions-menu-item delete"
-                          onClick={(e) => handleDeleteConversation(conv.id, e)}
+                          onClick={(e) => handleClearConversation(conv.id, e)}
                         >
-                          Delete
+                          Clear
                         </button>
-                      </div>
-                    )}
-                  </div>
-                )}
+                      ) : (
+                        /* Regular conversations have Rename and Delete */
+                        <>
+                          <button
+                            className="actions-menu-item"
+                            onClick={(e) => handleRenameConversation(conv.id, e)}
+                          >
+                            Rename
+                          </button>
+                          <button
+                            className="actions-menu-item delete"
+                            onClick={(e) => handleDeleteConversation(conv.id, e)}
+                          >
+                            Delete
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
               </div>
             ))}
 
@@ -1711,6 +2139,14 @@ function App() {
                   ) : (
                     mcps.map((mcp) => (
                       <div key={mcp.id} className="accordion-item mcp-item">
+                        <label className="mcp-toggle" title={mcp.enabled ? 'Disable MCP' : 'Enable MCP'}>
+                          <input
+                            type="checkbox"
+                            checked={mcp.enabled}
+                            onChange={() => handleToggleMcp(mcp.id, mcp.enabled)}
+                          />
+                          <span className="mcp-toggle-slider"></span>
+                        </label>
                         <span className={`mcp-status ${mcp.enabled ? 'connected' : 'disconnected'}`}>●</span>
                         <span className="mcp-name">{mcp.name}</span>
                         {mcp.toolCount > 0 && (
@@ -1725,15 +2161,18 @@ function App() {
               )}
             </div>
 
-            {/* Browser Sessions Accordion - always visible */}
-            <BrowserSessions
-              sessions={browserSessions}
-              screenshots={browserScreenshots}
-              selectedSessionId={selectedBrowserSessionId}
-              onSelectSession={handleSelectBrowserSession}
-              onCloseSession={handleCloseBrowserSession}
-              expanded={expandedAccordions.browserSessions}
-              onToggle={handleToggleBrowserSessions}
+            {/* Computer Use Sessions Accordion - browser + desktop */}
+            <ComputerUseSessions
+              browserSessions={browserSessions}
+              desktopSessions={desktopSessions}
+              browserScreenshots={browserScreenshots}
+              desktopScreenshots={desktopScreenshots}
+              selectedSessionId={selectedBrowserSessionId || selectedDesktopSessionId}
+              onSelectSession={handleSelectSession}
+              onCloseBrowserSession={handleCloseBrowserSession}
+              onCloseDesktopSession={handleCloseDesktopSession}
+              expanded={expandedAccordions.computerUse}
+              onToggle={handleToggleComputerUse}
             />
           </div>
           </>
@@ -1754,14 +2193,14 @@ function App() {
               </button>
             )}
             <div className="logo">
-              <span className="logo-icon">🐙</span>
-              <h1>OllieBot</h1>
+              <span className="logo-icon">{SUPERVISOR_ICON}</span>
+              <h1>{SUPERVISOR_NAME}</h1>
             </div>
             {/* Mode Switcher */}
             <div className="mode-switcher">
               <button
                 className={`mode-btn ${mode === MODES.CHAT ? 'active' : ''}`}
-                onClick={() => navigate('/chat')}
+                onClick={() => navigate(currentConversationId ? `/chat/${encodeURIComponent(currentConversationId)}` : '/chat/feed')}
               >
                 <span className="mode-icon">💬</span>
                 Chat
@@ -1773,6 +2212,13 @@ function App() {
                 <span className="mode-icon">📊</span>
                 Eval
               </button>
+              <button
+                className={`mode-btn ${mode === MODES.TRACES ? 'active' : ''}`}
+                onClick={() => navigate('/traces')}
+              >
+                <span className="mode-icon">📋</span>
+                Traces
+              </button>
             </div>
           </div>
           <div className={`status ${isConnected ? 'connected' : 'disconnected'}`}>
@@ -1783,6 +2229,9 @@ function App() {
         {/* Eval Mode Content */}
         {mode === MODES.EVAL && <EvalMainContent evalMode={evalMode} evalState={evalState} />}
 
+        {/* Logs Mode Content */}
+        {mode === MODES.TRACES && <LogsMainContent logsMode={logsMode} />}
+
         {/* Chat Mode Content */}
         {mode === MODES.CHAT && (
         <>
@@ -1790,17 +2239,19 @@ function App() {
           <div className="messages">
           {messages.length === 0 ? (
             <div className="welcome">
-              <h2>Welcome to OllieBot</h2>
+              <h2>Welcome to {SUPERVISOR_NAME}</h2>
               <p>Your personal support agent is ready to help.</p>
             </div>
           ) : (
             <Virtuoso
+              key={currentConversationId}
               ref={virtuosoRef}
               data={messages}
               firstItemIndex={firstItemIndex}
               initialTopMostItemIndex={messages.length - 1}
               followOutput={(isAtBottom) => isAtBottom ? 'smooth' : false}
               atBottomStateChange={handleAtBottomStateChange}
+              atBottomThreshold={100}
               startReached={loadOlderMessages}
               increaseViewportBy={{ top: 200, bottom: 200 }}
               components={{
@@ -1829,6 +2280,17 @@ function App() {
             onCloseSession={handleCloseBrowserSession}
           />
         )}
+
+        {/* Desktop Preview Modal */}
+        {selectedDesktopSession && (
+          <DesktopPreview
+            session={selectedDesktopSession}
+            screenshot={desktopScreenshots[selectedDesktopSessionId]}
+            clickMarkers={desktopClickMarkers}
+            onClose={handleCloseDesktopPreview}
+            onCloseSession={handleCloseDesktopSession}
+          />
+        )}
         </main>
 
         <footer
@@ -1850,6 +2312,9 @@ function App() {
             onReasoningModeChange={setReasoningMode}
             onMessageTypeChange={setMessageType}
             modelCapabilities={modelCapabilities}
+            commandTriggers={commandTriggers}
+            agentCommand={agentCommand}
+            onAgentCommandChange={setAgentCommand}
           />
         </footer>
         </>

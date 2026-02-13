@@ -26,8 +26,8 @@ interface RunSkillScriptParams {
   timeout?: number;
 }
 
-export class RunSkillScriptTool implements NativeTool {
-  name = 'run_skill_script';
+export class RunAgentSkillScriptTool implements NativeTool {
+  name = 'run_agent_skill_script';
   description = `Execute a script from a skill's scripts/ directory.
 Use this when a SKILL.md instructs you to run a script.
 
@@ -174,8 +174,8 @@ Example usage:
       // Execute the script
       const workingDir = cwd ? resolve(cwd) : dirname(resolvedPath);
 
-      console.log(`[RunSkillScript] Running: ${command} ${scriptArgs.join(' ')}`);
-      console.log(`[RunSkillScript] CWD: ${workingDir}`);
+      console.log(`[RunAgentSkillScript] Running: ${command} ${scriptArgs.join(' ')}`);
+      console.log(`[RunAgentSkillScript] CWD: ${workingDir}`);
 
       const result = await this.runProcess(command, scriptArgs, {
         cwd: workingDir,
@@ -184,14 +184,14 @@ Example usage:
       });
 
       if (result.exitCode === 0) {
-        console.log(`[RunSkillScript] ✓ ${skill_id}/${script_name}`);
+        console.log(`[RunAgentSkillScript] ✓ ${skill_id}/${script_name}`);
       } else {
-        console.error(`[RunSkillScript] ✗ ${skill_id}/${script_name} (exit: ${result.exitCode})`);
+        console.error(`[RunAgentSkillScript] ✗ ${skill_id}/${script_name} (exit: ${result.exitCode})`);
         if (result.stderr) {
-          console.error(`[RunSkillScript] stderr: ${result.stderr}`);
+          console.error(`[RunAgentSkillScript] stderr: ${result.stderr}`);
         }
         if (result.stdout) {
-          console.error(`[RunSkillScript] stdout: ${result.stdout}`);
+          console.error(`[RunAgentSkillScript] stdout: ${result.stdout}`);
         }
       }
 
@@ -209,7 +209,7 @@ Example usage:
           : undefined,
       };
     } catch (error) {
-      console.error('[RunSkillScript] Error:', error);
+      console.error('[RunAgentSkillScript] Error:', error);
       return {
         success: false,
         error: `Script execution failed: ${error instanceof Error ? error.message : String(error)}`,

@@ -23,6 +23,7 @@ import {
   type SummarizationProvider,
   DEFAULT_PROJECT_SETTINGS,
 } from './types.js';
+import { RAG_DEFAULT_TOP_K } from '../constants.js';
 
 const DOCUMENTS_FOLDER = 'documents';
 const OLLIEBOT_FOLDER = '.olliebot';
@@ -398,7 +399,7 @@ export class RAGProjectService extends EventEmitter {
           try {
             manifest.summary = await this.summarizationProvider.summarize(
               fileSummaries,
-              'Summarize this collection of document summaries into a cohesive overview in 2-3 sentences. Describe what this project contains and its main themes.'
+              'Write a 1-sentence summary (max 50 words) of what this document collection covers. Be concise and specific.'
             );
           } catch (error) {
             console.warn(`[RAGProjects] Failed to generate project summary:`, error);
@@ -457,7 +458,7 @@ export class RAGProjectService extends EventEmitter {
     // Execute search
     const results = await store.search(
       request.query,
-      request.topK || 10,
+      request.topK || RAG_DEFAULT_TOP_K,
       request.minScore || 0,
       request.contentType || 'all'
     );

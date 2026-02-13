@@ -5,9 +5,9 @@ import { WebSocketServer } from 'ws';
 import { setupVoiceProxy } from './voice-proxy.js';
 import type { SupervisorAgent } from '../agents/types.js';
 import { getAgentRegistry } from '../agents/index.js';
-import { WebChannel } from '../channels/index.js';
+import { WebSocketChannel } from '../channels/index.js';
 import { getDb } from '../db/index.js';
-import { isWellKnownConversation, getWellKnownConversationMeta } from '../db/well-known-conversations.js';
+import { isWellKnownConversation, getWellKnownConversationMeta, WellKnownConversations } from '../db/well-known-conversations.js';
 import type { MCPClient } from '../mcp/index.js';
 import type { SkillManager } from '../skills/index.js';
 import type { ToolRunner } from '../tools/index.js';
@@ -15,9 +15,14 @@ import type { LLMService } from '../llm/service.js';
 import { getModelCapabilities } from '../llm/model-capabilities.js';
 import { setupEvalRoutes } from './eval-routes.js';
 import type { BrowserSessionManager } from '../browser/index.js';
+import type { DesktopSessionManager } from '../desktop/index.js';
 import type { TaskManager } from '../tasks/index.js';
 import { type RAGProjectService, createRAGProjectRoutes, type IndexingProgress } from '../rag-projects/index.js';
 import { getMessageEventService, setMessageEventServiceChannel } from '../services/message-event-service.js';
+import { getUserSettingsService } from '../settings/index.js';
+import { OllieBotMCPServer } from '../mcp-server/index.js';
+import type { LogBuffer } from '../mcp-server/index.js';
+import type { TraceStore } from '../tracing/trace-store.js';
 
 export interface ServerConfig {
   port: number;
@@ -27,8 +32,10 @@ export interface ServerConfig {
   toolRunner?: ToolRunner;
   llmService?: LLMService;
   browserManager?: BrowserSessionManager;
+  desktopManager?: DesktopSessionManager;
   taskManager?: TaskManager;
   ragProjectService?: RAGProjectService;
+  traceStore?: TraceStore;
   // LLM configuration for model capabilities endpoint
   mainProvider?: string;
   mainModel?: string;
@@ -45,22 +52,31 @@ export interface ServerConfig {
   bindAddress?: string;
   // Security: Allowed CORS origins (default: localhost dev servers)
   allowedOrigins?: string[];
+  // MCP Server (OllieBot as MCP server)
+  mcpServerEnabled?: boolean;
+  mcpServerSecret?: string;
+  mcpServerAuthDisabled?: boolean;
+  logBuffer?: LogBuffer;
+  fastProvider?: string;
+  fastModel?: string;
 }
 
-export class OllieBotServer {
+export class AssistantServer {
   private app: Express;
   private server: Server;
   private wss: WebSocketServer;
   private supervisor: SupervisorAgent;
-  private webChannel: WebChannel;
+  private wsChannel: WebSocketChannel;
   private port: number;
   private mcpClient?: MCPClient;
   private skillManager?: SkillManager;
   private toolRunner?: ToolRunner;
   private llmService?: LLMService;
   private browserManager?: BrowserSessionManager;
+  private desktopManager?: DesktopSessionManager;
   private taskManager?: TaskManager;
   private ragProjectService?: RAGProjectService;
+  private traceStore?: TraceStore;
   private mainProvider?: string;
   private mainModel?: string;
   private voiceProvider?: 'openai' | 'azure_openai';
@@ -72,6 +88,12 @@ export class OllieBotServer {
   private bindAddress: string;
   private allowedOrigins: string[];
   private voiceWss: WebSocketServer;
+  private mcpServerEnabled: boolean;
+  private mcpServerSecret?: string;
+  private mcpServerAuthDisabled?: boolean;
+  private logBuffer?: LogBuffer;
+  private fastProvider?: string;
+  private fastModel?: string;
 
   constructor(config: ServerConfig) {
     this.port = config.port;
@@ -81,8 +103,10 @@ export class OllieBotServer {
     this.toolRunner = config.toolRunner;
     this.llmService = config.llmService;
     this.browserManager = config.browserManager;
+    this.desktopManager = config.desktopManager;
     this.taskManager = config.taskManager;
     this.ragProjectService = config.ragProjectService;
+    this.traceStore = config.traceStore;
     this.mainProvider = config.mainProvider;
     this.mainModel = config.mainModel;
     this.voiceProvider = config.voiceProvider;
@@ -91,6 +115,12 @@ export class OllieBotServer {
     this.azureOpenaiEndpoint = config.azureOpenaiEndpoint;
     this.azureOpenaiApiVersion = config.azureOpenaiApiVersion;
     this.openaiApiKey = config.openaiApiKey;
+    this.mcpServerEnabled = config.mcpServerEnabled ?? false;
+    this.mcpServerSecret = config.mcpServerSecret;
+    this.mcpServerAuthDisabled = config.mcpServerAuthDisabled;
+    this.logBuffer = config.logBuffer;
+    this.fastProvider = config.fastProvider;
+    this.fastModel = config.fastModel;
 
     // Security: Default to localhost-only binding (Layer 1: Network Binding)
     this.bindAddress = config.bindAddress ?? '127.0.0.1';
@@ -161,10 +191,15 @@ export class OllieBotServer {
     });
 
     // Create and configure web channel
-    this.webChannel = new WebChannel('web-main');
+    this.wsChannel = new WebSocketChannel('web-main');
 
     // Set the web channel on the global MessageEventService so all agents can use it
-    setMessageEventServiceChannel(this.webChannel);
+    setMessageEventServiceChannel(this.wsChannel);
+
+    // Set the web channel on trace store for real-time log broadcasting
+    if (this.traceStore) {
+      this.traceStore.setChannel(this.wsChannel);
+    }
 
     // Setup routes
     this.setupRoutes();
@@ -216,8 +251,9 @@ export class OllieBotServer {
           return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
         });
 
-        // 3. Messages for default :feed: conversation (paginated - last 20)
-        const paginatedResult = db.messages.findByConversationIdPaginated(':feed:', { limit: 20, includeTotal: true });
+        // 3. Messages for default `feed` conversation (paginated - last 20)
+        const paginatedResult = db.messages.findByConversationIdPaginated(
+          WellKnownConversations.FEED, { limit: 20, includeTotal: true });
         const feedMessages = {
           items: paginatedResult.items.map(m => ({
             id: m.id,
@@ -245,26 +281,18 @@ export class OllieBotServer {
             delegationRationale: m.metadata?.rationale,
             // Reasoning mode (vendor-neutral)
             reasoningMode: m.metadata?.reasoningMode,
+            // Agent command (for #Deep Research, #Modify, etc.)
+            agentCommand: m.metadata?.agentCommand,
             // Citations
             citations: m.metadata?.citations,
+            // Token usage stats
+            usage: m.metadata?.usage,
           })),
           pagination: paginatedResult.pagination,
         };
 
-        // 4. Tasks
-        const rawTasks = db.tasks.findAll({ limit: 20 });
-        const tasks = rawTasks.map(t => {
-          const config = t.jsonConfig as { description?: string; trigger?: { schedule?: string } };
-          return {
-            id: t.id,
-            name: t.name,
-            description: config.description || '',
-            schedule: config.trigger?.schedule || null,
-            status: t.status,
-            lastRun: t.lastRun,
-            nextRun: t.nextRun,
-          };
-        });
+        // 4. Tasks (from TaskManager, not DB)
+        const tasks = this.taskManager?.getTasksForApi() || [];
 
         // 5. Skills
         const skills = this.skillManager
@@ -378,6 +406,20 @@ export class OllieBotServer {
           collapseResponseByDefault: t.collapseResponseByDefault || false,
         }));
 
+        // 10. Command triggers for #menu (agent commands like #Deep Research, #Modify)
+        const commandTriggers: Array<{ command: string; agentType: string; agentName: string; agentEmoji: string; description: string }> = [];
+        for (const template of registry.getSpecialistTemplates()) {
+          if (template.delegation?.commandTrigger) {
+            commandTriggers.push({
+              command: template.delegation.commandTrigger,
+              agentType: template.type,
+              agentName: template.identity.name,
+              agentEmoji: template.identity.emoji,
+              description: template.identity.description,
+            });
+          }
+        }
+
         res.json({
           modelCapabilities,
           conversations,
@@ -388,6 +430,7 @@ export class OllieBotServer {
           tools: { builtin, user, mcp },
           ragProjects,
           agentTemplates,
+          commandTriggers,
         });
       } catch (error) {
         console.error('[API] Startup data fetch failed:', error);
@@ -426,6 +469,68 @@ export class OllieBotServer {
         transport: server.transport || (server.command ? 'stdio' : 'http'),
         toolCount: tools.filter(t => t.serverId === server.id).length,
       })));
+    });
+
+    // Toggle MCP server enabled status
+    this.app.patch('/api/mcps/:id', async (req: Request, res: Response) => {
+      if (!this.mcpClient) {
+        res.status(404).json({ error: 'MCP client not configured' });
+        return;
+      }
+
+      const serverId = req.params.id as string;
+      const { enabled } = req.body;
+
+      if (typeof enabled !== 'boolean') {
+        res.status(400).json({ error: 'enabled field must be a boolean' });
+        return;
+      }
+
+      try {
+        const success = await this.mcpClient.setServerEnabled(serverId, enabled);
+        if (!success) {
+          res.status(404).json({ error: 'Server not found' });
+          return;
+        }
+
+        // Persist the setting to user settings
+        const settingsService = getUserSettingsService();
+        settingsService.setMcpEnabled(serverId, enabled);
+
+        // Return updated server info
+        const servers = this.mcpClient.getServers();
+        const server = servers.find(s => s.id === serverId);
+        const tools = this.mcpClient.getTools();
+
+        res.json({
+          id: server?.id,
+          name: server?.name,
+          enabled: server?.enabled,
+          transport: server?.transport || (server?.command ? 'stdio' : 'http'),
+          toolCount: tools.filter(t => t.serverId === serverId).length,
+        });
+      } catch (error) {
+        console.error('[API] Failed to toggle MCP server:', error);
+        res.status(500).json({ error: 'Failed to toggle MCP server' });
+      }
+    });
+
+    // Get user settings
+    this.app.get('/api/settings', (_req: Request, res: Response) => {
+      const settingsService = getUserSettingsService();
+      res.json(settingsService.getSettings());
+    });
+
+    // Update user settings
+    this.app.patch('/api/settings', (req: Request, res: Response) => {
+      try {
+        const settingsService = getUserSettingsService();
+        const updated = settingsService.updateSettings(req.body);
+        res.json(updated);
+      } catch (error) {
+        console.error('[API] Failed to update settings:', error);
+        res.status(500).json({ error: 'Failed to update settings' });
+      }
     });
 
     // Get skills metadata
@@ -603,6 +708,10 @@ export class OllieBotServer {
             reasoningMode: m.metadata?.reasoningMode,
             // Citations
             citations: m.metadata?.citations,
+            // Agent command (e.g., Deep Research, Modify)
+            agentCommand: m.metadata?.agentCommand,
+            // Token usage stats
+            usage: m.metadata?.usage,
           };
         };
 
@@ -621,6 +730,30 @@ export class OllieBotServer {
       } catch (error) {
         console.error('[API] Failed to fetch messages:', error);
         res.status(500).json({ error: 'Failed to fetch messages' });
+      }
+    });
+
+    // Delete all messages in a conversation (hard delete)
+    this.app.delete('/api/conversations/:id/messages', (req: Request, res: Response) => {
+      try {
+        const db = getDb();
+        const conversationId = req.params.id as string;
+
+        // Verify conversation exists
+        const conversation = db.conversations.findById(conversationId);
+        if (!conversation) {
+          res.status(404).json({ error: 'Conversation not found' });
+          return;
+        }
+
+        // Delete all messages in the conversation
+        const deletedCount = db.messages.deleteByConversationId(conversationId);
+        console.log(`[API] Cleared ${deletedCount} messages from conversation ${conversationId}`);
+
+        res.json({ success: true, deletedCount });
+      } catch (error) {
+        console.error('[API] Failed to clear messages:', error);
+        res.status(500).json({ error: 'Failed to clear messages' });
       }
     });
 
@@ -794,52 +927,24 @@ export class OllieBotServer {
 
     // Get connected clients count
     this.app.get('/api/clients', (_req: Request, res: Response) => {
-      res.json({ count: this.webChannel.getConnectedClients() });
+      res.json({ count: this.wsChannel.getConnectedClients() });
     });
 
     // Get active tasks
     this.app.get('/api/tasks', (_req: Request, res: Response) => {
-      try {
-        const db = getDb();
-        const tasks = db.tasks.findAll({ limit: 20 });
-        res.json(tasks.map(t => {
-          const config = t.jsonConfig as { description?: string; trigger?: { schedule?: string } };
-          return {
-            id: t.id,
-            name: t.name,
-            description: config.description || '',
-            schedule: config.trigger?.schedule || null,
-            status: t.status,
-            lastRun: t.lastRun,
-            nextRun: t.nextRun,
-          };
-        }));
-      } catch (error) {
-        console.error('[API] Failed to fetch tasks:', error);
-        res.json([]);
-      }
+      res.json(this.taskManager?.getTasksForApi() || []);
     });
 
     // Run a task immediately
     this.app.post('/api/tasks/:id/run', async (req: Request, res: Response) => {
       try {
-        const db = getDb();
         const taskId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
-        const task = db.tasks.findById(taskId);
+        const task = this.taskManager?.getTaskById(taskId);
         const { conversationId } = req.body || {};
 
         if (!task) {
           res.status(404).json({ error: 'Task not found' });
           return;
-        }
-
-        // Update task lastRun timestamp
-        const now = new Date().toISOString();
-        db.tasks.update(task.id, { lastRun: now, updatedAt: now });
-
-        // If a conversation ID was provided, set it on the supervisor
-        if (conversationId) {
-          this.supervisor.setConversationId(conversationId);
         }
 
         // Get description from jsonConfig
@@ -854,15 +959,14 @@ export class OllieBotServer {
             taskName: task.name,
             taskDescription,
           },
-          conversationId || null,
-          'web-main'
+          conversationId || null
         );
 
         // Create a message to trigger the task execution via the supervisor
         // The message content is for the LLM, metadata is for UI display
+        // conversationId is passed in metadata - supervisor reads it from there
         const taskMessage = {
           id: crypto.randomUUID(),
-          channel: 'web-main',
           role: 'user' as const,
           content: `Run the "${task.name}" task now. Here is the task configuration:\n\n${JSON.stringify(task.jsonConfig, null, 2)}`,
           createdAt: new Date(),
@@ -872,6 +976,7 @@ export class OllieBotServer {
             taskName: task.name,
             taskDescription,
             turnId, // Pass the turnId from the task_run event
+            conversationId: conversationId || undefined, // Conversation context for this task
           },
         };
 
@@ -897,9 +1002,142 @@ export class OllieBotServer {
       setupEvalRoutes(this.app, {
         llmService: this.llmService,
         toolRunner: this.toolRunner,
-        webChannel: this.webChannel,
+        channel: this.wsChannel,
       });
       console.log('[Server] Evaluation routes enabled');
+    }
+
+    // REST endpoints for browser session management
+    this.app.delete('/api/browser/sessions/:id', async (req: Request, res: Response) => {
+      try {
+        const sessionId = req.params.id as string;
+        if (!this.browserManager) {
+          res.status(404).json({ error: 'Browser manager not configured' });
+          return;
+        }
+        await this.browserManager.closeSession(sessionId);
+        res.json({ success: true, sessionId });
+      } catch (error) {
+        console.error('[API] Failed to close browser session:', error);
+        res.status(500).json({ error: 'Failed to close browser session' });
+      }
+    });
+
+    // REST endpoints for desktop session management
+    this.app.delete('/api/desktop/sessions/:id', async (req: Request, res: Response) => {
+      try {
+        const sessionId = req.params.id as string;
+        if (!this.desktopManager) {
+          res.status(404).json({ error: 'Desktop manager not configured' });
+          return;
+        }
+        await this.desktopManager.closeSession(sessionId);
+        res.json({ success: true, sessionId });
+      } catch (error) {
+        console.error('[API] Failed to close desktop session:', error);
+        res.status(500).json({ error: 'Failed to close desktop session' });
+      }
+    });
+
+    // ================================================================
+    // Traces API routes
+    // ================================================================
+    if (this.traceStore) {
+      const traceStore = this.traceStore;
+
+      // Get traces (list)
+      this.app.get('/api/traces/traces', (req: Request, res: Response) => {
+        try {
+          const limit = parseInt(req.query.limit as string) || 50;
+          const conversationId = req.query.conversationId as string | undefined;
+          const status = req.query.status as string | undefined;
+          const since = req.query.since as string | undefined;
+          res.json(traceStore.getTraces({ limit, conversationId, status, since }));
+        } catch (error) {
+          console.error('[API] Failed to fetch traces:', error);
+          res.status(500).json({ error: 'Failed to fetch traces' });
+        }
+      });
+
+      // Get single trace with all children
+      this.app.get('/api/traces/traces/:traceId', (req: Request, res: Response) => {
+        try {
+          const traceId = req.params.traceId as string;
+          const result = traceStore.getFullTrace(traceId);
+          if (!result) {
+            res.status(404).json({ error: 'Trace not found' });
+            return;
+          }
+          res.json(result);
+        } catch (error) {
+          console.error('[API] Failed to fetch trace:', error);
+          res.status(500).json({ error: 'Failed to fetch trace' });
+        }
+      });
+
+      // Get LLM calls (list)
+      this.app.get('/api/traces/llm-calls', (req: Request, res: Response) => {
+        try {
+          const limit = parseInt(req.query.limit as string) || 50;
+          const traceId = req.query.traceId as string | undefined;
+          const spanId = req.query.spanId as string | undefined;
+          const workload = req.query.workload as string | undefined;
+          const provider = req.query.provider as string | undefined;
+          const since = req.query.since as string | undefined;
+          const conversationId = req.query.conversationId as string | undefined;
+          res.json(traceStore.getLlmCalls({
+            limit, traceId, spanId,
+            workload: workload as 'main' | 'fast' | 'embedding' | 'image_gen' | 'browser' | 'voice' | undefined,
+            provider, since, conversationId,
+          }));
+        } catch (error) {
+          console.error('[API] Failed to fetch LLM calls:', error);
+          res.status(500).json({ error: 'Failed to fetch LLM calls' });
+        }
+      });
+
+      // Get single LLM call
+      this.app.get('/api/traces/llm-calls/:callId', (req: Request, res: Response) => {
+        try {
+          const callId = req.params.callId as string;
+          const call = traceStore.getLlmCallById(callId);
+          if (!call) {
+            res.status(404).json({ error: 'LLM call not found' });
+            return;
+          }
+          res.json(call);
+        } catch (error) {
+          console.error('[API] Failed to fetch LLM call:', error);
+          res.status(500).json({ error: 'Failed to fetch LLM call' });
+        }
+      });
+
+      // Get tool calls (list)
+      this.app.get('/api/traces/tool-calls', (req: Request, res: Response) => {
+        try {
+          const limit = parseInt(req.query.limit as string) || 50;
+          const traceId = req.query.traceId as string | undefined;
+          const spanId = req.query.spanId as string | undefined;
+          const llmCallId = req.query.llmCallId as string | undefined;
+          res.json(traceStore.getToolCalls({ limit, traceId, spanId, llmCallId }));
+        } catch (error) {
+          console.error('[API] Failed to fetch tool calls:', error);
+          res.status(500).json({ error: 'Failed to fetch tool calls' });
+        }
+      });
+
+      // Get stats
+      this.app.get('/api/traces/stats', (req: Request, res: Response) => {
+        try {
+          const since = req.query.since as string | undefined;
+          res.json(traceStore.getStats(since));
+        } catch (error) {
+          console.error('[API] Failed to fetch trace stats:', error);
+          res.status(500).json({ error: 'Failed to fetch trace stats' });
+        }
+      });
+
+      console.log('[Server] Traces API routes enabled');
     }
 
     // Setup RAG project routes
@@ -926,29 +1164,28 @@ export class OllieBotServer {
     });
 
     // Initialize web channel and attach to WebSocket server
-    await this.webChannel.init();
-    this.webChannel.attachToServer(this.wss);
+    await this.wsChannel.init();
+    this.wsChannel.attachToServer(this.wss);
 
     // Register web channel with supervisor
-    this.supervisor.registerChannel(this.webChannel);
+    this.supervisor.registerChannel(this.wsChannel);
 
-    // Attach web channel to browser manager if present
+    // Attach channel to browser manager if present (for event broadcasting)
     if (this.browserManager) {
-      this.browserManager.attachWebChannel(this.webChannel);
+      this.browserManager.attachChannel(this.wsChannel);
+      // Session close actions are handled via REST endpoint: DELETE /api/browser/sessions/:id
+    }
 
-      // Handle browser actions from web clients
-      this.webChannel.onBrowserAction(async (action, sessionId) => {
-        console.log(`[Server] Browser action: ${action} for session ${sessionId}`);
-        if (action === 'close' && this.browserManager) {
-          await this.browserManager.closeSession(sessionId);
-        }
-      });
+    // Attach channel to desktop manager if present (for event broadcasting)
+    if (this.desktopManager) {
+      this.desktopManager.attachChannel(this.wsChannel);
+      // Session close actions are handled via REST endpoint: DELETE /api/desktop/sessions/:id
     }
 
     // Listen for task updates and broadcast to frontend
     if (this.taskManager) {
       this.taskManager.on('task:updated', ({ task }) => {
-        this.webChannel.broadcast({
+        this.wsChannel.broadcast({
           type: 'task_updated',
           task,
         });
@@ -966,7 +1203,7 @@ export class OllieBotServer {
           error: 'rag_indexing_error',
         };
 
-        this.webChannel.broadcast({
+        this.wsChannel.broadcast({
           type: eventTypeMap[progress.status] || 'rag_indexing_progress',
           projectId: progress.projectId,
           totalDocuments: progress.totalDocuments,
@@ -979,11 +1216,37 @@ export class OllieBotServer {
 
       // Listen for project changes
       this.ragProjectService.on('projects_changed', () => {
-        this.webChannel.broadcast({
+        this.wsChannel.broadcast({
           type: 'rag_projects_changed',
           timestamp: new Date().toISOString(),
         });
       });
+    }
+
+    // Mount MCP server endpoint if enabled
+    if (this.mcpServerEnabled && this.logBuffer && this.toolRunner) {
+      const mcpServer = new OllieBotMCPServer({
+        toolRunner: this.toolRunner,
+        mcpClient: this.mcpClient,
+        logBuffer: this.logBuffer,
+        startTime: new Date(),
+        getClientCount: () => this.wsChannel.getConnectedClients(),
+        runtimeConfig: {
+          mainProvider: this.mainProvider || '',
+          mainModel: this.mainModel || '',
+          fastProvider: this.fastProvider || '',
+          fastModel: this.fastModel || '',
+          port: this.port,
+        },
+        auth: {
+          secret: this.mcpServerSecret,
+          disabled: this.mcpServerAuthDisabled,
+        },
+      });
+
+      mcpServer.mountRoutes(this.app);
+    } else if (this.mcpServerEnabled) {
+      console.warn('[MCP Server] Enabled but toolRunner not available — skipping mount');
     }
 
     // Start listening on configured bind address (default: localhost only)

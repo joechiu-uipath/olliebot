@@ -137,16 +137,26 @@ The output is base64-encoded audio that can be played by the client.`;
 
       const audioBuffer = await response.arrayBuffer();
       const base64Audio = Buffer.from(audioBuffer).toString('base64');
+      const mimeType = 'audio/mpeg';
+      const dataUrl = `data:${mimeType};base64,${base64Audio}`;
 
       return {
         success: true,
         output: {
+          // Keep audio/mimeType for play_audio event (immediate playback)
           audio: base64Audio,
-          mimeType: 'audio/mpeg',
+          mimeType,
           voice: voice,
           model: this.model,
           characterCount: phrase.length,
         },
+        // Also include in files for on-demand playback UI
+        files: [{
+          name: 'speech.mp3',
+          dataUrl,
+          size: audioBuffer.byteLength,
+          mediaType: mimeType,
+        }],
       };
     } catch (error) {
       return {
@@ -258,16 +268,26 @@ The output is base64-encoded audio that can be played by the client.`;
 
                 // Combine audio chunks (already base64)
                 const combinedAudio = audioChunks.join('');
+                const mimeType = 'audio/pcm;rate=24000';  // Realtime API returns PCM16 at 24kHz
+                const dataUrl = `data:${mimeType};base64,${combinedAudio}`;
 
                 resolve({
                   success: true,
                   output: {
+                    // Keep audio/mimeType for play_audio event (immediate playback)
                     audio: combinedAudio,
-                    mimeType: 'audio/pcm;rate=24000',  // Realtime API returns PCM16 at 24kHz
+                    mimeType,
                     voice: voice,
                     model: this.model,
                     characterCount: phrase.length,
                   },
+                  // Also include in files for on-demand playback UI
+                  files: [{
+                    name: 'speech.pcm',
+                    dataUrl,
+                    size: Math.round((combinedAudio.length * 3) / 4),
+                    mediaType: mimeType,
+                  }],
                 });
                 break;
 

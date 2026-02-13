@@ -1,7 +1,7 @@
 /**
  * MCP (Model Context Protocol) Server Integration Types
  *
- * MCP allows OllieBot to connect to external tool providers
+ * MCP allows agent to connect to external tool providers
  * that expose capabilities through a standardized protocol.
  */
 

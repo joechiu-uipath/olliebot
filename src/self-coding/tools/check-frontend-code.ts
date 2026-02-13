@@ -8,7 +8,7 @@
 import { spawn } from 'child_process';
 import { resolve } from 'path';
 import { existsSync } from 'fs';
-import type { NativeTool, NativeToolResult } from './types.js';
+import type { NativeTool, NativeToolResult } from '../../tools/native/types.js';
 
 // Base path for frontend code
 const WEB_BASE_PATH = resolve(process.cwd(), 'web');
@@ -51,6 +51,8 @@ Returns success/failure status with any error output.`;
     },
     required: ['check'],
   };
+
+  readonly private = true;
 
   async execute(params: Record<string, unknown>): Promise<NativeToolResult> {
     const { check, timeout = 60000 } = params as unknown as CheckFrontendCodeParams;
