@@ -42,7 +42,7 @@ export interface StreamStartOptions {
 export interface StreamEndOptions {
   conversationId?: string;
   citations?: { sources: unknown[]; references: unknown[] };
-  usage?: { inputTokens: number; outputTokens: number; llmDurationMs: number; modelId?: string };
+  usage?: { inputTokens: number; outputTokens: number; llmDurationMs: number; modelId?: string; traceId?: string };
 }
 
 export interface SendOptions {

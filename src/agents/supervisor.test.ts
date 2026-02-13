@@ -30,6 +30,9 @@ vi.mock('../db/index.js', () => ({
       findById: mockConversationsFindById,
       findRecent: mockConversationsFindRecent,
     },
+    rawRun: vi.fn(),
+    rawExec: vi.fn(),
+    rawQuery: vi.fn().mockReturnValue([]),
   }),
 }));
 
@@ -105,6 +108,8 @@ const mockLLMService = {
   generateStream: vi.fn(),
   generateWithToolsStream: vi.fn(),
   quickGenerate: vi.fn().mockResolvedValue({ content: 'Generated Title' }),
+  pushContext: vi.fn(),
+  popContext: vi.fn(),
 };
 
 // Mock registry

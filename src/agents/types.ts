@@ -17,6 +17,7 @@ export interface AgentTurnUsage {
   outputTokens: number;
   llmDurationMs: number;
   modelId?: string;
+  traceId?: string;
 }
 
 // ============================================================

@@ -430,6 +430,7 @@ export function createMessageHandler(deps) {
               error: data.error,
               parameters: data.parameters,
               result: data.result,
+              files: data.files,
               progress: undefined,
             }
           : m

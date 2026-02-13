@@ -20,7 +20,6 @@ import { dirname } from 'path';
 import {
   DEFAULT_CONVERSATIONS_LIMIT,
   DEFAULT_MESSAGES_LIMIT,
-  DEFAULT_TASKS_LIMIT,
   MAX_QUERY_LIMIT,
 } from '../constants.js';
 
@@ -45,18 +44,6 @@ export interface Message {
   metadata: Record<string, unknown>;
   createdAt: string;
   turnId?: string; // ID of the originating message (user message or task_run) for this turn
-}
-
-export interface Task {
-  id: string;
-  name: string;
-  mdFile: string;
-  jsonConfig: Record<string, unknown>;
-  status: 'active' | 'paused' | 'error';
-  lastRun: string | null;
-  nextRun: string | null;
-  createdAt: string;
-  updatedAt: string;
 }
 
 export interface Embedding {
@@ -120,13 +107,6 @@ export interface MessageRepository {
   deleteByConversationId(conversationId: string): number;
 }
 
-export interface TaskRepository {
-  findById(id: string): Task | undefined;
-  findAll(options?: { limit?: number; status?: Task['status'] }): Task[];
-  create(task: Task): void;
-  update(id: string, updates: Partial<Omit<Task, 'id'>>): void;
-}
-
 export interface EmbeddingRepository {
   findBySource(source: string): Embedding[];
   findAll(): Embedding[];
@@ -157,18 +137,6 @@ interface MessageRow {
   turnId: string | null;
 }
 
-interface TaskRow {
-  id: string;
-  name: string;
-  mdFile: string;
-  jsonConfig: string; // JSON text
-  status: string;
-  lastRun: string | null;
-  nextRun: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
 interface EmbeddingRow {
   id: string;
   source: string;
@@ -191,7 +159,6 @@ class Database {
 
   conversations: ConversationRepository;
   messages: MessageRepository;
-  tasks: TaskRepository;
   embeddings: EmbeddingRepository;
 
   constructor(dbPath: string) {
@@ -210,7 +177,6 @@ class Database {
     // Initialize repositories
     this.conversations = this.createConversationRepository();
     this.messages = this.createMessageRepository();
-    this.tasks = this.createTaskRepository();
     this.embeddings = this.createEmbeddingRepository();
   }
 
@@ -245,20 +211,6 @@ class Database {
     `);
 
     this.sqlite.exec(`
-      CREATE TABLE IF NOT EXISTS tasks (
-        id TEXT PRIMARY KEY,
-        name TEXT NOT NULL,
-        mdFile TEXT NOT NULL,
-        jsonConfig TEXT NOT NULL DEFAULT '{}',
-        status TEXT NOT NULL DEFAULT 'active',
-        lastRun TEXT,
-        nextRun TEXT,
-        createdAt TEXT NOT NULL,
-        updatedAt TEXT NOT NULL
-      )
-    `);
-
-    this.sqlite.exec(`
       CREATE TABLE IF NOT EXISTS embeddings (
         id TEXT PRIMARY KEY,
         source TEXT NOT NULL,
@@ -281,9 +233,6 @@ class Database {
         ON messages(conversationId, createdAt, id);
       CREATE INDEX IF NOT EXISTS idx_messages_conversation_desc
         ON messages(conversationId, createdAt DESC, id DESC);
-
-      CREATE INDEX IF NOT EXISTS idx_tasks_status
-        ON tasks(status, updatedAt DESC);
 
       CREATE INDEX IF NOT EXISTS idx_embeddings_source
         ON embeddings(source, chunkIndex);
@@ -341,7 +290,6 @@ class Database {
       const data = JSON.parse(content) as {
         conversations?: Array<Record<string, unknown>>;
         messages?: Array<Record<string, unknown>>;
-        tasks?: Array<Record<string, unknown>>;
         embeddings?: Array<Record<string, unknown>>;
       };
 
@@ -350,9 +298,6 @@ class Database {
       );
       const insertMsg = this.sqlite.prepare(
         'INSERT OR IGNORE INTO messages (id, conversationId, role, content, metadata, createdAt, turnId) VALUES (?, ?, ?, ?, ?, ?, ?)'
-      );
-      const insertTask = this.sqlite.prepare(
-        'INSERT OR IGNORE INTO tasks (id, name, mdFile, jsonConfig, status, lastRun, nextRun, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
       );
       const insertEmb = this.sqlite.prepare(
         'INSERT OR IGNORE INTO embeddings (id, source, chunkIndex, content, embedding, metadata, createdAt) VALUES (?, ?, ?, ?, ?, ?, ?)'
@@ -365,10 +310,6 @@ class Database {
         for (const m of data.messages ?? []) {
           const metadata = typeof m.metadata === 'object' ? JSON.stringify(m.metadata) : (m.metadata ?? '{}');
           insertMsg.run(m.id, m.conversationId, m.role, m.content ?? '', metadata, m.createdAt, m.turnId ?? null);
-        }
-        for (const t of data.tasks ?? []) {
-          const jsonConfig = typeof t.jsonConfig === 'object' ? JSON.stringify(t.jsonConfig) : (t.jsonConfig ?? '{}');
-          insertTask.run(t.id, t.name, t.mdFile, jsonConfig, t.status, t.lastRun ?? null, t.nextRun ?? null, t.createdAt, t.updatedAt);
         }
         for (const e of data.embeddings ?? []) {
           const embedding = typeof e.embedding === 'object' ? JSON.stringify(e.embedding) : (e.embedding ?? '[]');
@@ -402,6 +343,14 @@ class Database {
     const stmt = this.sqlite.prepare(sql);
     const result = params ? stmt.run(...params) : stmt.run();
     return result.changes;
+  }
+
+  /**
+   * Execute raw SQL with multiple statements (for DDL like CREATE TABLE, CREATE INDEX).
+   * Does not return results — use for schema setup only.
+   */
+  rawExec(sql: string): void {
+    this.sqlite.exec(sql);
   }
 
   flush(): void {
@@ -439,20 +388,6 @@ class Database {
       metadata: JSON.parse(row.metadata),
       createdAt: row.createdAt,
       ...(row.turnId ? { turnId: row.turnId } : {}),
-    };
-  }
-
-  private deserializeTask(row: TaskRow): Task {
-    return {
-      id: row.id,
-      name: row.name,
-      mdFile: row.mdFile,
-      jsonConfig: JSON.parse(row.jsonConfig),
-      status: row.status as Task['status'],
-      lastRun: row.lastRun,
-      nextRun: row.nextRun,
-      createdAt: row.createdAt,
-      updatedAt: row.updatedAt,
     };
   }
 
@@ -670,65 +605,6 @@ class Database {
         const count = countResult.cnt;
         this.sqlite.prepare('DELETE FROM messages WHERE conversationId = ?').run(conversationId);
         return count;
-      },
-    };
-  }
-
-  private createTaskRepository(): TaskRepository {
-    return {
-      findById: (id: string): Task | undefined => {
-        const row = this.sqlite.prepare('SELECT * FROM tasks WHERE id = ?').get(id) as TaskRow | undefined;
-        return row ? this.deserializeTask(row) : undefined;
-      },
-
-      findAll: (options?: { limit?: number; status?: Task['status'] }): Task[] => {
-        const limit = options?.limit ?? DEFAULT_TASKS_LIMIT;
-        let rows: TaskRow[];
-        if (options?.status) {
-          rows = this.sqlite.prepare(
-            'SELECT * FROM tasks WHERE status = ? ORDER BY updatedAt DESC LIMIT ?'
-          ).all(options.status, limit) as TaskRow[];
-        } else {
-          rows = this.sqlite.prepare(
-            'SELECT * FROM tasks ORDER BY updatedAt DESC LIMIT ?'
-          ).all(limit) as TaskRow[];
-        }
-        return rows.map(r => this.deserializeTask(r));
-      },
-
-      create: (task: Task): void => {
-        this.sqlite.prepare(
-          'INSERT INTO tasks (id, name, mdFile, jsonConfig, status, lastRun, nextRun, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
-        ).run(
-          task.id,
-          task.name,
-          task.mdFile,
-          JSON.stringify(task.jsonConfig || {}),
-          task.status,
-          task.lastRun,
-          task.nextRun,
-          task.createdAt,
-          task.updatedAt,
-        );
-      },
-
-      update: (id: string, updates: Partial<Omit<Task, 'id'>>): void => {
-        const setClauses: string[] = [];
-        const values: unknown[] = [];
-
-        for (const [key, value] of Object.entries(updates)) {
-          setClauses.push(`${key} = ?`);
-          if (key === 'jsonConfig' && typeof value === 'object') {
-            values.push(JSON.stringify(value));
-          } else {
-            values.push(value);
-          }
-        }
-
-        if (setClauses.length > 0) {
-          values.push(id);
-          this.sqlite.prepare(`UPDATE tasks SET ${setClauses.join(', ')} WHERE id = ?`).run(...values);
-        }
       },
     };
   }
