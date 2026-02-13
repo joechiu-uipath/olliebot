@@ -40,6 +40,54 @@ import {
   CONVERSATION_TITLE_PREVIEW_LENGTH,
 } from '../constants.js';
 
+// Conditional system prompt sections (appended only when relevant tools are available)
+const DELEGATION_SECTION = `
+
+## Delegation
+You have access to a \`delegate\` tool to spawn specialist agents for complex tasks. Use this tool when the task requires specialized expertise.
+
+### Available Specialist Types
+
+You can delegate to these agent types:
+- **researcher**: For quick research, information gathering, fact-finding, learning about topics
+- **coder**: For programming, writing code, debugging, technical implementation
+- **writer**: For writing documents, editing text, creative writing, content creation
+- **planner**: For planning, organizing, breaking down complex projects
+
+IMPORTANT: Choose the agent based on the PRIMARY nature of the task:
+- If the task is about LEARNING or FINDING INFORMATION about a topic → researcher
+- If the task is about WRITING CODE → coder
+- If the task is about CREATING WRITTEN CONTENT → writer
+- Creating a presentation about a topic is primarily a RESEARCH + WRITING task, NOT a coding task
+
+For simple questions, just respond directly. Only delegate when specialized expertise or parallel work would be beneficial.
+
+**IMPORTANT: Never re-delegate the same task.** If you have already delegated to an agent for a request, do NOT:
+- Delegate to another agent for the same task
+- Delegate again because the first agent "could do better"
+- Call the delegate tool multiple times for one user message
+Once you delegate, the task is handled - wait for the agent to complete and trust their result.
+
+### Specialist agent responses
+The user can see responses from specialist agents directly in the chat. When a specialist agent (coder, researcher, writer, planner) produces output that fully addresses the user's request, do NOT add a redundant response that simply restates or summarizes what the specialist already said. Only add a follow-up response when:
+- You need to synthesize results from multiple agents
+- The specialist's response requires clarification or context
+- There are additional actions or next steps to communicate
+- The specialist encountered an error and you need to handle it
+
+If the specialist agent has already provided the complete answer (e.g., coder wrote the requested code, researcher provided the requested information), your work is done - no additional response is needed.
+`;
+
+const BROWSER_SECTION = `
+
+## Browser use capability
+You have access to a set of tools related to browser. The browser-action tool in particular would return extractedData which may contain questions. Many of these questions are trivial ask for confirmation, like \`Would you like me to go ahead and click it?\`. Do not relay these questions to user. Call the browser-action tool again, and in the \`instruction\` parameter, answer these question affirmatively, something like, \`Yes, click Start and always proceed without asking\`.
+Partial list of browser related tools:
+ - browser_session: use this to launch a browser instance
+ - browser_navigate: use this to go to a specific URL
+ - browser_action: use this to perform actions like click, type and other into the browser
+`;
+
 export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAgent {
   private subAgents: Map<string, WorkerAgent> = new Map();
   private tasks: Map<string, TaskAssignment> = new Map();
@@ -78,6 +126,32 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
     await super.init();
     const specialistCount = this.agentRegistry.getSpecialistTypes().length;
     console.log(`[${this.identity.name}] Supervisor initialized with ${specialistCount} specialist types`);
+  }
+
+  /**
+   * Override to add conditional sections for delegation and browser tools
+   */
+  protected override buildSystemPrompt(additionalContext?: string, allowedTools?: string[]): string {
+    // Get base prompt from parent (includes memory, skills, RAG sections)
+    let prompt = super.buildSystemPrompt(additionalContext, allowedTools);
+
+    // Helper to check tool access (same logic as parent)
+    const hasToolAccess = (toolName: string): boolean => {
+      if (!allowedTools) return true;
+      return allowedTools.some(t => t === toolName || t.includes(toolName));
+    };
+
+    // Add delegation section if delegate tool is available
+    if (hasToolAccess('delegate')) {
+      prompt += DELEGATION_SECTION;
+    }
+
+    // Add browser section if browser_session tool is available
+    if (hasToolAccess('browser_session')) {
+      prompt += BROWSER_SECTION;
+    }
+
+    return prompt;
   }
 
   // Note: getConversationId() is not overridden - supervisor uses request-scoped conversationId
@@ -134,7 +208,9 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
     }
 
     // Load conversation history from database (request-scoped, doesn't set instance state)
-    this.conversationHistory = this.loadConversationHistory(initialConversationId);
+    // For scheduled tasks, don't load history - each task run should be independent
+    // and not influenced by unrelated messages in the Feed conversation
+    this.conversationHistory = isScheduledTask ? [] : this.loadConversationHistory(initialConversationId);
 
     // Set the turnId for this message processing (request-scoped)
     // For task_run messages, use the turnId from metadata (set by the task_run event)
@@ -332,8 +408,10 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
         conversationId,
       });
 
-      const systemPrompt = this.buildSystemPrompt();
-      const tools = this.getToolsForLLM();
+      // For scheduled tasks, only allow tools specified in the task's actions list
+      const allowedTools = message.metadata?.allowedTools as string[] | undefined;
+      const systemPrompt = this.buildSystemPrompt(undefined, allowedTools);
+      const tools = this.getToolsForLLM(allowedTools);
 
       // Log system prompt to file for debugging
       logSystemPrompt(this.identity.name, systemPrompt);

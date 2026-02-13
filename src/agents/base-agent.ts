@@ -162,49 +162,62 @@ export abstract class AbstractAgent implements BaseAgent {
    * - Agents only get private tools if explicitly included in their canAccessTools patterns
    * - This allows specialist agents to access private tools without supervisors needing '!' exclusions
    */
-  protected getToolsForLLM(): LLMTool[] {
+  /**
+   * Get tools available to the LLM.
+   * @param allowedTools - Optional whitelist of tool names. If provided, only these tools are returned.
+   */
+  protected getToolsForLLM(allowedTools?: string[]): LLMTool[] {
     if (!this.toolRunner) {
       return [];
     }
 
     const tools = this.toolRunner.getToolsForLLM();
-    const patterns = this.capabilities.canAccessTools;
 
-    // No patterns = no tools
+    // If allowedTools whitelist is provided, filter to only those tools
+    if (allowedTools && allowedTools.length > 0) {
+      const normalizedAllowed = allowedTools.map(t => this.normalizeToolName(t));
+      return tools.filter(tool => normalizedAllowed.includes(tool.name));
+    }
+
+    // Use agent's capability patterns
+    const patterns = this.capabilities.canAccessTools;
     if (patterns.length === 0) {
       return [];
     }
 
-    // Separate inclusion and exclusion patterns
     const inclusions = patterns.filter(p => !p.startsWith('!'));
     const exclusions = patterns.filter(p => p.startsWith('!')).map(p => p.slice(1));
 
-    // Helper to check if a tool matches a pattern
-    const matchesPattern = (toolName: string, pattern: string): boolean => {
-      if (pattern === '*') return true;
-      if (pattern.endsWith('*')) {
-        return toolName.startsWith(pattern.slice(0, -1));
-      }
-      return toolName === pattern || toolName.includes(pattern);
-    };
-
-    // Filter tools: must match an inclusion AND not match any exclusion
     return tools.filter((tool) => {
-      const isPrivate = this.toolRunner!.isPrivateTool(tool.name);
-
       // Check exclusions first
-      if (exclusions.some(pattern => matchesPattern(tool.name, pattern))) {
+      if (exclusions.some(p => this.matchesToolPattern(tool.name, p))) {
         return false;
       }
-
-      // Private tools are only included if explicitly named (not via '*' wildcard)
+      // Private tools require explicit naming (not '*' wildcard)
+      const isPrivate = this.toolRunner!.isPrivateTool(tool.name);
       if (isPrivate) {
-        return inclusions.some(pattern => pattern !== '*' && matchesPattern(tool.name, pattern));
+        return inclusions.some(p => p !== '*' && this.matchesToolPattern(tool.name, p));
       }
-
-      // Check inclusions for non-private tools
-      return inclusions.some(pattern => matchesPattern(tool.name, pattern));
+      return inclusions.some(p => this.matchesToolPattern(tool.name, p));
     });
+  }
+
+  /** Normalize tool name: convert mcp.server.tool → mcp.server__tool */
+  private normalizeToolName(name: string): string {
+    if (!name.startsWith('mcp.') || name.includes('__')) {
+      return name;
+    }
+    const parts = name.split('.');
+    return parts.length >= 3
+      ? `${parts[0]}.${parts[1]}__${parts.slice(2).join('.')}`
+      : name;
+  }
+
+  /** Check if tool name matches a pattern (* = all, prefix* = prefix match) */
+  private matchesToolPattern(toolName: string, pattern: string): boolean {
+    if (pattern === '*') return true;
+    if (pattern.endsWith('*')) return toolName.startsWith(pattern.slice(0, -1));
+    return toolName === pattern || toolName.includes(pattern);
   }
 
   registerChannel(channel: Channel): void {
@@ -332,7 +345,7 @@ export abstract class AbstractAgent implements BaseAgent {
     return response.content;
   }
 
-  protected buildSystemPrompt(additionalContext?: string): string {
+  protected buildSystemPrompt(additionalContext?: string, allowedTools?: string[]): string {
     let prompt = this.config.systemPrompt;
 
     if (this.config.mission) {
@@ -343,8 +356,18 @@ export abstract class AbstractAgent implements BaseAgent {
       prompt += `\n\n${additionalContext}`;
     }
 
-    // Inject memory context if available
+    // Helper to check if a tool is in the allowed tools list
+    const hasToolAccess = (toolName: string): boolean => {
+      if (!allowedTools) return true; // No filter = full access
+      return allowedTools.some(t => t === toolName || t.includes(toolName));
+    };
+
     if (this.memoryService) {
+      if (hasToolAccess('remember')) {
+        // Skip if allowedTools is provided and doesn't include remember
+        prompt += this.memoryService.getMemoryToolInstructions();
+      }
+      // Inject memory context if available, even without access to remember tool
       const memoryContext = this.memoryService.formatForSystemPrompt();
       if (memoryContext) {
         prompt += memoryContext;
@@ -355,7 +378,8 @@ export abstract class AbstractAgent implements BaseAgent {
     // No citation guidelines needed in system prompt
 
     // Add skill information per Agent Skills spec (progressive disclosure)
-    if (this.skillManager) {
+    // Skip if allowedTools is provided and doesn't include read_agent_skill
+    if (this.skillManager && hasToolAccess('read_agent_skill')) {
       // Determine filtering: allowedSkills (whitelist) takes precedence over excludedSkillSources
       const excludeSources = this.excludedSkillSources.length > 0 ? this.excludedSkillSources : undefined;
       const allowedIds = this.allowedSkills;
@@ -369,7 +393,8 @@ export abstract class AbstractAgent implements BaseAgent {
     }
 
     // Add RAG knowledge base information (if cached and agent has access)
-    if (this.ragDataCache) {
+    // Skip if allowedTools is provided and doesn't include query_rag_project
+    if (this.ragDataCache && hasToolAccess('query_rag_project')) {
       prompt += `\n\n${this.ragDataCache}`;
     }
 

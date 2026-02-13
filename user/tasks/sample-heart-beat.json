@@ -6,9 +6,9 @@
     "schedule": "*/5 * * * *",
     "event": ""
   },
-  "actions": [
+  "tools": [
     {
-      "type": "tool:lottery.check",
+      "type": "user.lottery",
       "params": {}
     }
   ],

@@ -114,6 +114,19 @@ Edit this file directly to add information you want the agent to know about you.
     };
   }
 
+  getMemoryToolInstructions(): string {
+    return `
+## Memory
+You have access to a 'remember' tool for saving important information to long-term memory.
+BE SELECTIVE - only use it for critical information that will be valuable in future conversations:
+- User preferences (name, communication style, timezone)
+- Important project decisions or context
+- Key facts the user explicitly wants remembered
+DO NOT remember: temporary info, things easily re-asked, conversation details, or trivial facts.
+Every memory adds to context window consumption for ALL future calls.
+    `;
+  }
+
   /**
    * Format memory for injection into system prompt
    */
@@ -138,7 +151,7 @@ Edit this file directly to add information you want the agent to know about you.
       return '';
     }
 
-    return `\n<memory>\n${parts.join('\n\n')}\n</memory>\n`;
+    return `\n\n${parts.join('\n\n')}\n\n`;
   }
 
   /**
