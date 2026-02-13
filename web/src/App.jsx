@@ -1649,13 +1649,15 @@ function App() {
                   <div className="message-usage-footer">
                     {formatTokenCount(msg.usage.inputTokens)} in / {formatTokenCount(msg.usage.outputTokens)} out · {msg.usage.llmDurationMs > 0 ? Math.round(msg.usage.outputTokens / (msg.usage.llmDurationMs / 1000)) : '?'} tok/s · {(msg.usage.llmDurationMs / 1000).toFixed(1)}s{msg.usage.modelId ? ` · ${msg.usage.modelId}` : ''}
                     {msg.usage.traceId && (
-                      <span
+                      <button
+                        type="button"
                         className="trace-link"
                         onClick={() => navigate(`/traces?traceId=${msg.usage.traceId}`)}
                         title="View trace details"
+                        aria-label="View trace details"
                       >
                         📋
-                      </span>
+                      </button>
                     )}
                   </div>
                 )}
@@ -1684,13 +1686,15 @@ function App() {
             <div className="message-usage-footer">
               {formatTokenCount(msg.usage.inputTokens)} in / {formatTokenCount(msg.usage.outputTokens)} out · {msg.usage.llmDurationMs > 0 ? Math.round(msg.usage.outputTokens / (msg.usage.llmDurationMs / 1000)) : '?'} tok/s · {(msg.usage.llmDurationMs / 1000).toFixed(1)}s{msg.usage.modelId ? ` · ${msg.usage.modelId}` : ''}
               {msg.usage.traceId && (
-                <span
+                <button
+                  type="button"
                   className="trace-link"
                   onClick={() => navigate(`/traces?traceId=${msg.usage.traceId}`)}
                   title="View trace details"
+                  aria-label="View trace details"
                 >
                   📋
-                </span>
+                </button>
               )}
             </div>
           )}

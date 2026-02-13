@@ -33,7 +33,7 @@ Add a top-level tab bar to the application chrome. The existing Chat and Eval vi
 **Route mapping:**
 - `/` or `/chat` → Chat tab (existing)
 - `/eval` → Eval tab (existing)
-- `/logs` → Logs tab (new)
+- `/traces` → Logs tab (new)
 
 ### 2.2 Logs Tab Layout
 
