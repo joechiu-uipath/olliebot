@@ -455,6 +455,60 @@ Only output valid JSON, no explanations.`;
     }
   }
 
+  /**
+   * Parse mission .md into structured JSON config for the Mission system
+   */
+  async parseMissionConfig(mdContent: string): Promise<string> {
+    const systemPrompt = `You are a mission configuration parser. Convert a natural language mission description into structured JSON.
+
+The JSON should follow this schema:
+{
+  "name": "string - mission name",
+  "description": "string - mission description",
+  "cadence": "cron expression for check cycle, or null if not specified",
+  "scope": "string - scope description",
+  "agents": {
+    "lead": { "model": "string" },
+    "workers": [{ "type": "string", "config": {} }]
+  },
+  "pillars": [
+    {
+      "name": "string",
+      "slug": "string - kebab-case",
+      "description": "string",
+      "metrics": [
+        { "name": "string", "target": "string", "current": "", "unit": "string" }
+      ],
+      "strategies": [
+        { "description": "string" }
+      ]
+    }
+  ]
+}
+
+Only output valid JSON, no explanations.`;
+
+    const messages: LLMMessage[] = [{ role: 'user', content: `Convert this mission description to JSON config:\n${mdContent}` }];
+    const options = { systemPrompt, maxTokens: LLM_TASK_CONFIG_MAX_TOKENS };
+
+    const callId = this.traceStart('main', this.main, messages, options, 'parse_mission_config');
+    try {
+      const response = await this.main.complete(messages, options);
+      this.traceComplete(callId, response);
+
+      let jsonStr = response.content.trim();
+      if (jsonStr.startsWith('```json')) jsonStr = jsonStr.slice(7);
+      if (jsonStr.startsWith('```')) jsonStr = jsonStr.slice(3);
+      if (jsonStr.endsWith('```')) jsonStr = jsonStr.slice(0, -3);
+
+      JSON.parse(jsonStr.trim());
+      return jsonStr.trim();
+    } catch (error) {
+      this.traceFail(callId, error);
+      throw error;
+    }
+  }
+
   getMainModel(): string {
     return this.main.model;
   }

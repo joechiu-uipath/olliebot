@@ -18,6 +18,8 @@ import { CodeBlock } from './components/CodeBlock';
 import { useEvalMode, EvalSidebarContent, EvalMainContent } from './App.Eval';
 // Extracted logs mode
 import { useLogsMode, LogsSidebarContent, LogsMainContent } from './App.Logs';
+// Extracted mission mode (Level 4 continuous agent)
+import { useMissionMode, MissionSidebarContent, MissionMainContent } from './App.Mission';
 
 // Extracted utilities
 import { transformMessages, shouldCollapseByDefault } from './utils/messageHelpers';
@@ -28,6 +30,7 @@ const MODES = {
   CHAT: 'chat',
   EVAL: 'eval',
   TRACES: 'traces',
+  MISSION: 'mission',
 };
 
 // Branding constants
@@ -58,6 +61,7 @@ function App() {
   // Derive mode from URL path
   const mode = location.pathname.startsWith('/eval') ? MODES.EVAL
     : location.pathname.startsWith('/traces') ? MODES.TRACES
+    : location.pathname.startsWith('/mission') ? MODES.MISSION
     : MODES.CHAT;
 
   const [messages, setMessages] = useState([]);
@@ -142,6 +146,9 @@ function App() {
 
   // Logs mode - managed by useLogsMode hook (state lives in App.Logs.jsx)
   const logsMode = useLogsMode();
+
+  // Mission mode - managed by useMissionMode hook (state lives in App.Mission.jsx)
+  const missionMode = useMissionMode();
 
   // Response pending state (disable input while waiting)
   const [isResponsePending, setIsResponsePending] = useState(false);
@@ -1836,6 +1843,10 @@ function App() {
           <LogsSidebarContent logsMode={logsMode} />
         )}
 
+        {sidebarOpen && mode === MODES.MISSION && (
+          <MissionSidebarContent missionMode={missionMode} />
+        )}
+
         {sidebarOpen && mode === MODES.CHAT && (
           <>
           <div className="conversation-list">
@@ -2227,6 +2238,13 @@ function App() {
                 <span className="mode-icon">📋</span>
                 Traces
               </button>
+              <button
+                className={`mode-btn ${mode === MODES.MISSION ? 'active' : ''}`}
+                onClick={() => navigate('/mission')}
+              >
+                <span className="mode-icon">🎯</span>
+                Mission
+              </button>
             </div>
           </div>
           <div className={`status ${isConnected ? 'connected' : 'disconnected'}`}>
@@ -2239,6 +2257,9 @@ function App() {
 
         {/* Logs Mode Content */}
         {mode === MODES.TRACES && <LogsMainContent logsMode={logsMode} />}
+
+        {/* Mission Mode Content */}
+        {mode === MODES.MISSION && <MissionMainContent missionMode={missionMode} />}
 
         {/* Chat Mode Content */}
         {mode === MODES.CHAT && (

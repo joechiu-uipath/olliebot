@@ -18,6 +18,8 @@ import type { BrowserSessionManager } from '../browser/index.js';
 import type { DesktopSessionManager } from '../desktop/index.js';
 import type { TaskManager } from '../tasks/index.js';
 import { type RAGProjectService, createRAGProjectRoutes, type IndexingProgress } from '../rag-projects/index.js';
+import type { MissionManager } from '../missions/index.js';
+import { setupMissionRoutes } from './mission-routes.js';
 import { getMessageEventService, setMessageEventServiceChannel } from '../services/message-event-service.js';
 import { getUserSettingsService } from '../settings/index.js';
 import { OllieBotMCPServer } from '../mcp-server/index.js';
@@ -34,6 +36,7 @@ export interface ServerConfig {
   browserManager?: BrowserSessionManager;
   desktopManager?: DesktopSessionManager;
   taskManager?: TaskManager;
+  missionManager?: MissionManager;
   ragProjectService?: RAGProjectService;
   traceStore?: TraceStore;
   // LLM configuration for model capabilities endpoint
@@ -75,6 +78,7 @@ export class AssistantServer {
   private browserManager?: BrowserSessionManager;
   private desktopManager?: DesktopSessionManager;
   private taskManager?: TaskManager;
+  private missionManager?: MissionManager;
   private ragProjectService?: RAGProjectService;
   private traceStore?: TraceStore;
   private mainProvider?: string;
@@ -105,6 +109,7 @@ export class AssistantServer {
     this.browserManager = config.browserManager;
     this.desktopManager = config.desktopManager;
     this.taskManager = config.taskManager;
+    this.missionManager = config.missionManager;
     this.ragProjectService = config.ragProjectService;
     this.traceStore = config.traceStore;
     this.mainProvider = config.mainProvider;
@@ -1014,6 +1019,13 @@ export class AssistantServer {
         channel: this.wsChannel,
       });
       console.log('[Server] Evaluation routes enabled');
+    }
+
+    // Setup mission routes (if missionManager is available)
+    if (this.missionManager) {
+      setupMissionRoutes(this.app, {
+        missionManager: this.missionManager,
+      });
     }
 
     // REST endpoints for browser session management

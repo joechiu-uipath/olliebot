@@ -270,6 +270,21 @@ export const DEFAULT_TASKS_LIMIT = 20;
 export const MAX_QUERY_LIMIT = 100;
 
 // ============================================================
+// MISSION CONFIGURATION
+// ============================================================
+
+/**
+ * Maximum concurrent TODOs in-progress across an entire mission.
+ * Controls worker agent dispatch throttle.
+ */
+export const MISSION_MAX_CONCURRENT_TODOS = 3;
+
+/**
+ * Default limit for mission list queries.
+ */
+export const DEFAULT_MISSIONS_LIMIT = 50;
+
+// ============================================================
 // SKILL EXECUTION
 // ============================================================
 
