@@ -1,0 +1,141 @@
+{
+  "name": "Improve Developer Experience",
+  "description": "Continuously improve development tools and workflows so developers spend less time fighting tooling and more time shipping features.",
+  "cadence": "0 */4 * * *",
+  "scope": "Monorepo tooling, CI/CD, local dev setup, documentation",
+  "agents": {
+    "lead": {
+      "model": "claude-sonnet"
+    },
+    "workers": [
+      {
+        "type": "deep-research-team",
+        "config": {
+          "purpose": "Investigating tools, benchmarking, analyzing trends"
+        }
+      },
+      {
+        "type": "coder",
+        "config": {
+          "purpose": "Implementing improvements, writing scripts, modifying configs"
+        }
+      },
+      {
+        "type": "writer",
+        "config": {
+          "purpose": "Documentation updates, report generation"
+        }
+      }
+    ]
+  },
+  "pillars": [
+    {
+      "name": "Build Performance",
+      "slug": "build-performance",
+      "description": "Reduce build times and improve caching. Developers should never wait more than 60 seconds for a local dev build.",
+      "metrics": [
+        {
+          "name": "Average local build time",
+          "target": "< 60",
+          "current": "",
+          "unit": "s"
+        },
+        {
+          "name": "CI build time",
+          "target": "< 5",
+          "current": "",
+          "unit": "min"
+        },
+        {
+          "name": "Cache hit rate",
+          "target": "> 80",
+          "current": "",
+          "unit": "%"
+        }
+      ],
+      "strategies": [
+        {
+          "description": "Profile build pipeline quarterly"
+        },
+        {
+          "description": "Evaluate new bundler releases"
+        },
+        {
+          "description": "Monitor cache invalidation patterns"
+        }
+      ]
+    },
+    {
+      "name": "Documentation Currency",
+      "slug": "documentation-currency",
+      "description": "Documentation should accurately reflect the current state of the system. Stale docs are worse than no docs.",
+      "metrics": [
+        {
+          "name": "Documented APIs that no longer exist",
+          "target": "0",
+          "current": "",
+          "unit": "count"
+        },
+        {
+          "name": "New features documented within",
+          "target": "<= 1",
+          "current": "",
+          "unit": "week"
+        },
+        {
+          "name": "Packages with updated README",
+          "target": "100",
+          "current": "",
+          "unit": "% coverage"
+        }
+      ],
+      "strategies": [
+        {
+          "description": "Weekly doc-drift scan comparing code exports to documented APIs"
+        },
+        {
+          "description": "PR bot that flags undocumented new exports"
+        },
+        {
+          "description": "Quarterly full documentation audit"
+        }
+      ]
+    },
+    {
+      "name": "Onboarding Friction",
+      "slug": "onboarding-friction",
+      "description": "New team members should be productive within their first week. The onboarding path should be self-service and continuously validated.",
+      "metrics": [
+        {
+          "name": "Time to first meaningful PR",
+          "target": "< 3",
+          "current": "",
+          "unit": "days"
+        },
+        {
+          "name": "Setup script success rate",
+          "target": "> 95",
+          "current": "",
+          "unit": "%"
+        },
+        {
+          "name": "Manual setup steps not covered by automation",
+          "target": "0",
+          "current": "",
+          "unit": "count"
+        }
+      ],
+      "strategies": [
+        {
+          "description": "Monthly onboarding dry-run by existing team member"
+        },
+        {
+          "description": "Track and eliminate every manual step"
+        },
+        {
+          "description": "Maintain \"golden path\" automation scripts"
+        }
+      ]
+    }
+  ]
+}
