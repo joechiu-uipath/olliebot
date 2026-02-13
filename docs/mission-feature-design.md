@@ -554,7 +554,7 @@ Each metric row is expandable to show full history data points and a larger char
 
 ```
 ┌────────────────────────────────────────────────────────────────┐
-│  TODO List                                         [+ Add]    │
+│  TODO List                                                    │
 │                                                                │
 │  Filter: [All ▾]  Sort: [Priority ▾]                          │
 │                                                                │
@@ -914,16 +914,16 @@ This initial proof of concept **defers:**
 
 ---
 
-## 12. Open Questions
+## 12. Design Decisions (Resolved)
 
-1. **Dashboard refresh UX:** Should dashboards auto-refresh on WebSocket `dashboard:regenerated` events, or require manual refresh? Auto-refresh could be disorienting if the user is reading.
+1. **Dashboard refresh UX:** Dashboards are **manually refreshed**. They load once on view entry (startup/navigation) and can be re-fetched via an explicit refresh button in the dashboard view. No auto-refresh on WebSocket events — avoids disorienting the user mid-read. The `dashboard:regenerated` WebSocket event updates a "stale" indicator badge on the dashboard tab instead, prompting the user to refresh when ready.
 
-2. **Pillar-level chat scope:** Should pillar chat messages be visible to the Mission Lead, or are they isolated to pillar context only? Leaning toward visible — the Mission Lead should have full picture.
+2. **Pillar-level chat scope:** Pillar chat messages are **visible to the Mission Lead**. The Mission Lead has full read access to all pillar-level conversations. This ensures the Lead maintains a complete picture of human directives and context provided at any level. Implementation: the Lead's context assembly includes recent messages from all pillar conversations.
 
-3. **TODO concurrency:** How many TODOs can be in-progress simultaneously across a mission? Should this be configurable per-mission? Per-pillar?
+3. **TODO concurrency:** **3 concurrent TODOs** in-progress across an entire mission. Controlled by a constant (`MAX_CONCURRENT_TODOS = 3`) — not configurable per-mission or per-pillar in the initial PoC. This is a global throttle on worker agent dispatch. The Mission Lead selects which 3 TODOs (across all pillars) to have in-flight at any given time.
 
-4. **Conversation reuse:** Should the mission-level chat be a single long-running conversation, or start fresh each cadence cycle? Long-running preserves context but grows large.
+4. **Conversation lifecycle:** **Single long-running conversation** per mission and per pillar. The mission-level chat and each pillar-level chat are persistent, append-only conversations that accumulate over the mission's lifetime. Future work will add search, advanced memory management, and chat history compaction — but the initial implementation uses one conversation per scope.
 
-5. **Manual TODO creation:** Should users be able to manually add TODOs, or should all TODOs be agent-generated? Design above includes manual creation — validate this is desired.
+5. **Manual TODO creation:** Users **cannot create TODOs directly via UI**. All TODO creation flows through conversation with the Mission Lead — the user describes what they want in the mission-level or pillar-level chat, and the Mission Lead creates the TODO as a result of that conversation. This keeps the Lead as the single point of task management and ensures all TODOs have proper context, priority, and pillar assignment. The `[+ Add]` button in the TODO list UI is removed from the design.
 
-6. **Cross-pillar TODOs:** Can a TODO span multiple pillars? Current design assumes 1:1 pillar-to-TODO mapping. Cross-pillar work could be modeled as separate but linked TODOs.
+6. **Cross-pillar TODOs:** TODOs **cannot span multiple pillars**. Each TODO belongs to exactly one pillar (1:1 relationship via `pillarId`). If work naturally spans pillars, the Mission Lead should create separate, independent TODOs in each relevant pillar. No linking mechanism between TODOs in the initial PoC.
