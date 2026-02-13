@@ -4,7 +4,7 @@ import { createServer, type Server } from 'http';
 import { WebSocketServer } from 'ws';
 import { setupVoiceProxy } from './voice-proxy.js';
 import type { SupervisorAgent } from '../agents/types.js';
-import { getAgentRegistry } from '../agents/index.js';
+import { getAgentRegistry, MissionLeadAgent } from '../agents/index.js';
 import { WebSocketChannel } from '../channels/index.js';
 import { getDb } from '../db/index.js';
 import { isWellKnownConversation, getWellKnownConversationMeta, WellKnownConversations } from '../db/well-known-conversations.js';
@@ -79,6 +79,7 @@ export class AssistantServer {
   private desktopManager?: DesktopSessionManager;
   private taskManager?: TaskManager;
   private missionManager?: MissionManager;
+  private missionLeadAgent?: MissionLeadAgent;
   private ragProjectService?: RAGProjectService;
   private traceStore?: TraceStore;
   private mainProvider?: string;
@@ -1190,6 +1191,59 @@ export class AssistantServer {
 
     // Register web channel with supervisor
     this.supervisor.registerChannel(this.wsChannel);
+
+    // Create Mission Lead agent if mission manager and LLM service are available
+    if (this.missionManager && this.llmService) {
+      const registry = getAgentRegistry();
+      this.missionLeadAgent = new MissionLeadAgent(this.llmService, registry);
+
+      // Share the same tool infrastructure as supervisor
+      if (this.toolRunner) this.missionLeadAgent.setToolRunner(this.toolRunner);
+      if (this.skillManager) this.missionLeadAgent.setSkillManager(this.skillManager);
+
+      // Set mission-specific dependency
+      this.missionLeadAgent.setMissionManager(this.missionManager);
+
+      // Register channel for sending (does NOT bind onMessage — our router handles that)
+      this.missionLeadAgent.registerChannel(this.wsChannel);
+
+      // Register with global registry and initialize
+      registry.registerAgent(this.missionLeadAgent);
+      await this.missionLeadAgent.init();
+
+      console.log('[Server] Mission Lead agent initialized');
+    }
+
+    // Install message routing: mission conversations → MissionLeadAgent, else → Supervisor
+    if (this.missionLeadAgent) {
+      const missionLead = this.missionLeadAgent;
+      const supervisor = this.supervisor;
+      const conversationChannelCache = new Map<string, string | null>();
+
+      this.wsChannel.onMessage(async (message) => {
+        const conversationId = message.metadata?.conversationId as string | undefined;
+
+        if (conversationId) {
+          // Check cache first
+          let channel = conversationChannelCache.get(conversationId);
+          if (channel === undefined) {
+            // Cache miss — look up conversation metadata
+            const db = getDb();
+            const conv = db.conversations.findById(conversationId);
+            channel = (conv?.metadata?.channel as string) ?? null;
+            conversationChannelCache.set(conversationId, channel);
+          }
+
+          if (channel === 'mission' || channel === 'pillar') {
+            await missionLead.handleMessage(message);
+            return;
+          }
+        }
+
+        // Default: route to supervisor
+        await supervisor.handleMessage(message);
+      });
+    }
 
     // Attach channel to browser manager if present (for event broadcasting)
     if (this.browserManager) {

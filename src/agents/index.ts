@@ -5,3 +5,4 @@ export { AbstractAgent } from './base-agent.js';
 export { AgentRegistry, getAgentRegistry } from './registry.js';
 export { SupervisorAgentImpl } from './supervisor.js';
 export { WorkerAgent } from './worker.js';
+export { MissionLeadAgent } from './mission-lead.js';

@@ -378,8 +378,8 @@ export class MissionManager extends EventEmitter {
 
       // Create conversation for mission-level chat
       db.rawRun(
-        'INSERT INTO conversations (id, title, createdAt, updatedAt, metadata) VALUES (?, ?, ?, ?, ?)',
-        [conversationId, `Mission: ${missionName}`, now, now, JSON.stringify({ channel: 'mission', missionId, missionSlug: slug })]
+        'INSERT INTO conversations (id, title, createdAt, updatedAt, manuallyNamed, metadata) VALUES (?, ?, ?, ?, ?, ?)',
+        [conversationId, `Mission: ${missionName}`, now, now, 1, JSON.stringify({ channel: 'mission', missionId, missionSlug: slug })]
       );
 
       db.rawRun(
@@ -406,8 +406,8 @@ export class MissionManager extends EventEmitter {
 
       // Create conversation for pillar chat
       db.rawRun(
-        'INSERT INTO conversations (id, title, createdAt, updatedAt, metadata) VALUES (?, ?, ?, ?, ?)',
-        [conversationId, `Pillar: ${pillarConfig.name}`, now, now, JSON.stringify({ channel: 'pillar', missionId, pillarId, pillarSlug })]
+        'INSERT INTO conversations (id, title, createdAt, updatedAt, manuallyNamed, metadata) VALUES (?, ?, ?, ?, ?, ?)',
+        [conversationId, `Pillar: ${pillarConfig.name}`, now, now, 1, JSON.stringify({ channel: 'pillar', missionId, pillarId, pillarSlug })]
       );
 
       db.rawRun(
