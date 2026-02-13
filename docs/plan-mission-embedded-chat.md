@@ -332,82 +332,70 @@ MissionChat renders streaming response in embedded panel
 
 ---
 
-## Design Holes (Require Resolution Before Implementation)
+## Design Decisions (Resolved)
 
-### Hole 1: Pillar Lead Agent — Delegation Target
+### Decision 1: Pillar Owner Agent — RESOLVED
 
-**Context:** The user specified "Mission Pillar chat — with Mission Lead Agent but with
-possible delegation to pillar Agents." Currently, MissionLeadAgent can delegate to
-generic specialist types (researcher, coder, writer, planner) but there is no
-pillar-specific agent type.
+**Decision:** Option A — `pillar-owner` specialist template in the registry.
 
-**The question:** Should a "pillar lead" be:
+**Implementation:**
+- Added `pillar-owner` type to `src/agents/registry.ts` — has same tool access as
+  researcher, plus `mission_todo_create` tool for conversational TODO creation.
+- Default system prompt: `src/agents/pillar-owner.md` — generic pillar owner with
+  guidance on metrics, strategies, TODO creation, and communication style.
+- **Custom templates supported:** Per-pillar custom prompts can be placed in
+  `/user/missions/prompts/` and referenced in the mission config. When the Mission Lead
+  delegates to a `pillar-owner`, it passes the pillar context and can reference the
+  custom prompt. Two custom templates created for the sample mission:
+  - `build-performance-owner.md` — bundler/CI/CD/profiling expertise
+  - `doc-currency-owner.md` — doc-drift/tooling/automated-docs expertise
+- If no custom template is specified for a pillar, the default `pillar-owner` template
+  provides researcher-level capabilities with pillar-specific instructions.
+- `supervisorCanInvoke: false` — only Mission Lead can delegate to pillar-owner.
 
-**(A) A new specialist template in the registry** — e.g., `pillar-worker` that receives
-the pillar's context (metrics, strategies, todos) in its system prompt and can perform
-pillar-scoped work (metric collection, strategy review, TODO execution)?
+**Files changed:**
+- `src/agents/registry.ts` — new specialist template
+- `src/agents/pillar-owner.md` — default system prompt
+- `src/tools/native/delegate.ts` — added `pillar-owner` to valid types
+- `user/missions/prompts/build-performance-owner.md` — custom template
+- `user/missions/prompts/doc-currency-owner.md` — custom template
+- `user/missions/developer-experience.md` — updated Agents section
 
-**(B) Just the existing specialist types, but called with pillar context** — the Mission
-Lead already knows pillar context and passes relevant information when delegating.
-The delegate's task description includes pillar context naturally.
+### Decision 2: TODO Execution Conversation Routing — RESOLVED
 
-**(C) A separate agent instance per pillar** — each pillar gets its own persistent agent
-that maintains state across conversations. This is heavier but allows pillar-specific
-memory and specialization.
+**Decision:** Option C — Read-only during execution, intervene via pillar chat.
 
-**Recommendation:** Option B for PoC. The MissionLeadAgent already has full pillar
-context and passes it to specialists via delegation. Creating per-pillar agent instances
-(option C) adds significant complexity for unclear benefit at this stage. The system
-prompt's `## Current Pillar` context block (already implemented in mission-lead.ts
-lines 138-157) gives the Mission Lead everything it needs to delegate intelligently.
+TODO execution conversations are view-only logs. User intervention flows through
+the pillar or mission chat, which is the single point of human-in-the-loop control.
+This avoids routing messages to ephemeral worker agents.
 
-**If Option A is desired:** Add a `pillar-worker` template to `src/agents/registry.ts`
-with a system prompt that focuses on executing within a pillar's scope. The Mission
-Lead would delegate to `pillar-worker` with the pillar context. This is a ~30-line
-addition to the registry.
+### Decision 3: Conversation Lifecycle for TODO Execution — RESOLVED
 
-### Hole 2: TODO Execution Conversation Routing
+**Decision:** Mission Manager orchestration handles this, not embedded chat.
 
-**Context:** TODOs have a `conversationId` field that links to the worker agent's
-execution log. When a worker agent executes a TODO, it creates a conversation.
+`MissionTodo.conversationId` is `null` until execution starts. The embedded chat
+component shows "Awaiting execution" if null. Full TODO lifecycle design is deferred
+to a separate design exercise.
 
-**The question:** What metadata does this conversation get? If it gets
-`channel: 'pillar'` or `channel: 'todo'`, the routing function would send user
-messages to MissionLeadAgent. But TODO execution conversations are worker agent
-execution logs — should the user be able to intervene in a running TODO via chat?
+### Decision 4: Conversational TODO Creation — NEW
 
-**Options:**
-**(A) Route to MissionLeadAgent with `channel: 'todo'`** — User messages in a TODO
-execution chat go to Mission Lead, which can then relay instructions to the running
-worker or decide to cancel/redirect the task.
+**Decision:** `mission_todo_create` native tool available to Mission Lead and
+pillar-owner agents.
 
-**(B) Route to the assigned worker agent directly** — Harder to implement since worker
-agents are ephemeral (created per task). Would need to keep the worker alive and
-listening for user input.
+**Implementation:**
+- New tool: `src/tools/native/mission-todo-create.ts` — accepts `missionSlug`,
+  `pillarSlug`, `title`, `description`, `priority`, and optional `assignedAgent`.
+  Resolves slugs to IDs via MissionManager, validates inputs, creates the TODO.
+- Registered in `src/index.ts` after MissionManager initialization.
+- Available to MissionLeadAgent (via `*` tool pattern on supervisor).
+- Available to pillar-owner agents (via explicit `mission_todo_create` in canAccessTools).
+- Enables conversational TODO creation: user says "Create a TODO to profile webpack"
+  and the agent calls `mission_todo_create` with structured parameters.
 
-**(C) Read-only during execution, intervene via pillar chat** — TODO execution
-conversations are view-only logs. If the user wants to intervene, they message in
-the pillar chat: "Stop the webpack profiling task and focus on..."
-
-**Recommendation:** Option C for PoC. Keep TODO execution conversations as read-only
-logs. User intervention flows through the pillar or mission chat, which is the
-single point of human-in-the-loop control (consistent with design decision #5 in
-`mission-feature-design.md`). This avoids the complexity of routing messages to
-ephemeral worker agents.
-
-### Hole 3: Conversation Lifecycle for TODO Execution
-
-**Context:** Who creates the TODO execution conversation? When?
-
-**Current state:** `MissionTodo.conversationId` is `null` until execution starts.
-The Mission Manager's TODO dispatch logic needs to:
-1. Create a conversation with appropriate metadata
-2. Set `conversationId` on the TODO
-3. Route the worker's execution output to that conversation
-
-**This is Mission Manager orchestration logic**, not embedded chat logic. The embedded
-chat plan assumes the `conversationId` already exists when the TodoExecution component
-renders. If it's null, the component shows "Awaiting execution" instead of a chat panel.
+**Files changed:**
+- `src/tools/native/mission-todo-create.ts` — new tool
+- `src/tools/native/index.ts` — export added
+- `src/index.ts` — registration after MissionManager init
 
 ---
 
@@ -430,3 +418,6 @@ Steps 1-2 can be developed in parallel. Steps 3-4 are integration. Step 5 is pol
 - Mission/pillar conversation creation with metadata
 - DB filtering to hide mission conversations from sidebar
 - Mission REST API endpoints
+- Pillar-owner specialist template + delegation support
+- `mission_todo_create` tool for conversational TODO creation
+- Custom per-pillar owner templates (sample: build-performance, doc-currency)

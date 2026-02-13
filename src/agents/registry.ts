@@ -108,6 +108,35 @@ const SPECIALIST_TEMPLATES: SpecialistTemplate[] = [
     ],
   },
   // ============================================================================
+  // MISSION AGENTS
+  // ============================================================================
+  {
+    type: 'pillar-owner',
+    identity: {
+      name: 'Pillar Owner',
+      emoji: '🏛️',
+      role: 'specialist',
+      description: 'Owns a mission pillar — monitors metrics, refines strategies, and creates TODOs',
+    },
+    // Pillar owner: same tools as researcher + mission TODO creation
+    canAccessTools: [
+      'web_search',
+      'web_scrape',
+      'wikipedia_search',
+      'analyze_image',
+      'query_rag_project',
+      'mission_todo_create',
+      'mcp.*', // MCP tools
+    ],
+    delegation: {
+      canDelegate: false,
+      allowedDelegates: [],
+      restrictedToWorkflow: null,
+      supervisorCanInvoke: false, // Only invocable by Mission Lead
+    },
+    collapseResponseByDefault: true,
+  },
+  // ============================================================================
   // DEEP RESEARCH AGENTS
   // ============================================================================
   {

@@ -60,6 +60,18 @@ path should be self-service and continuously validated.
 - System prompt: See `/user/missions/prompts/developer-experience-lead.md`
 - Responsibilities: Prioritize across pillars, generate TODO items, review completed work, update dashboards
 
+### Pillar Owners
+Each pillar can have a dedicated owner agent with domain-specific expertise. If no custom
+template is specified, the default `pillar-owner` template (based on the researcher template)
+is used.
+
+- **Build Performance**: Custom template — `/user/missions/prompts/build-performance-owner.md`
+  - Specializes in bundler performance, build caching, CI/CD optimization, profiling
+- **Documentation Currency**: Custom template — `/user/missions/prompts/doc-currency-owner.md`
+  - Specializes in doc-drift detection, documentation tooling, automated doc generation
+- **Onboarding Friction**: Default template (researcher-based pillar-owner)
+  - General-purpose research and analysis for onboarding improvement
+
 ### Workers
 - deep-research-team: For investigating tools, benchmarking, analyzing trends
 - coder: For implementing improvements, writing scripts, modifying configs

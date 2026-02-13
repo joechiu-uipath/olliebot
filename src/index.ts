@@ -43,6 +43,7 @@ import {
   GeneratePythonTool,
   RunPythonTool,
   WebsiteCrawlerTool,
+  MissionTodoCreateTool,
 } from './tools/index.js';
 import {
   ReadFrontendCodeTool,
@@ -532,6 +533,10 @@ async function main(): Promise<void> {
     llmService,
   });
   await missionManager.init();
+
+  // Register mission tools (requires mission manager)
+  toolRunner.registerNativeTool(new MissionTodoCreateTool(missionManager));
+  console.log('[Init] Mission TODO create tool registered');
 
   // Create supervisor agent (multi-agent architecture)
   console.log('[Init] Creating supervisor agent...');
