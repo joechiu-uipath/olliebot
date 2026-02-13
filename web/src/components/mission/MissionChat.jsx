@@ -16,8 +16,13 @@
 
 import { useState, useEffect, useRef, useCallback, memo } from 'react';
 import { MessageContent } from '../MessageContent';
+import './MissionChat.css';
 
 const MESSAGE_LOAD_LIMIT = 30;
+
+const DEFAULT_PANEL_HEIGHT = 280;
+const MIN_PANEL_HEIGHT = 120;
+const MAX_PANEL_HEIGHT = 600;
 
 export const MissionChat = memo(function MissionChat({
   conversationId,
@@ -34,13 +39,48 @@ export const MissionChat = memo(function MissionChat({
   const [isStreaming, setIsStreaming] = useState(false);
   const [newMessageCount, setNewMessageCount] = useState(0);
   const [historyLoaded, setHistoryLoaded] = useState(false);
+  const [panelHeight, setPanelHeight] = useState(DEFAULT_PANEL_HEIGHT);
 
   const messagesEndRef = useRef(null);
   const messagesContainerRef = useRef(null);
   const inputRef = useRef(null);
+  const panelRef = useRef(null);
+  const isResizingRef = useRef(false);
 
   // Track if we're at the bottom for auto-scroll
   const isAtBottomRef = useRef(true);
+
+  // ========================================================================
+  // Resize handling
+  // ========================================================================
+
+  const handleResizeStart = useCallback((e) => {
+    e.preventDefault();
+    isResizingRef.current = true;
+    document.body.style.cursor = 'ns-resize';
+    document.body.style.userSelect = 'none';
+
+    const startY = e.clientY;
+    const startHeight = panelHeight;
+
+    const handleMouseMove = (moveEvent) => {
+      if (!isResizingRef.current) return;
+      const delta = startY - moveEvent.clientY;
+      const newHeight = Math.min(MAX_PANEL_HEIGHT, Math.max(MIN_PANEL_HEIGHT, startHeight + delta));
+      setPanelHeight(newHeight);
+    };
+
+    const handleMouseUp = () => {
+      isResizingRef.current = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+  }, [panelHeight]);
 
   // ========================================================================
   // Load message history on expand (lazy)
@@ -83,6 +123,122 @@ export const MissionChat = memo(function MissionChat({
   }, [conversationId]);
 
   // ========================================================================
+  // WebSocket event handlers (defined before useEffect for React Compiler)
+  // ========================================================================
+
+  const handleIncomingMessage = useCallback((data) => {
+    const msgId = data.id || `msg-${Date.now()}`;
+    setMessages(prev => {
+      if (prev.some(m => m.id === msgId)) return prev;
+      return [...prev, {
+        id: msgId,
+        role: 'assistant',
+        content: data.content,
+        timestamp: data.timestamp,
+        agentName: data.agentName,
+        agentEmoji: data.agentEmoji,
+      }];
+    });
+    if (!expanded) setNewMessageCount(c => c + 1);
+  }, [expanded]);
+
+  const handleStreamStart = useCallback((data) => {
+    setIsStreaming(true);
+    setMessages(prev => [
+      ...prev,
+      {
+        id: data.id,
+        role: 'assistant',
+        content: '',
+        timestamp: data.timestamp,
+        isStreaming: true,
+        agentName: data.agentName,
+        agentEmoji: data.agentEmoji,
+      },
+    ]);
+  }, []);
+
+  const handleStreamChunk = useCallback((data) => {
+    setMessages(prev =>
+      prev.map(m =>
+        m.id === data.streamId
+          ? { ...m, content: m.content + data.chunk }
+          : m
+      )
+    );
+  }, []);
+
+  const handleStreamEnd = useCallback((data) => {
+    setIsStreaming(false);
+    setMessages(prev =>
+      prev.map(m =>
+        m.id === data.streamId
+          ? { ...m, isStreaming: false }
+          : m
+      )
+    );
+    if (!expanded) setNewMessageCount(c => c + 1);
+  }, [expanded]);
+
+  const handleError = useCallback((data) => {
+    setIsStreaming(false);
+    const errId = data.id || `err-${Date.now()}`;
+    setMessages(prev => {
+      if (prev.some(m => m.id === errId)) return prev;
+      return [...prev, {
+        id: errId,
+        role: 'assistant',
+        content: `**Error:** ${data.error}`,
+        isError: true,
+        timestamp: data.timestamp,
+      }];
+    });
+  }, []);
+
+  const handleToolRequested = useCallback((data) => {
+    const toolId = `tool-${data.requestId}`;
+    setMessages(prev => {
+      if (prev.some(m => m.id === toolId)) return prev;
+      return [...prev, {
+        id: toolId,
+        role: 'tool',
+        toolName: data.toolName,
+        status: 'running',
+        timestamp: data.timestamp,
+        agentName: data.agentName,
+        agentEmoji: data.agentEmoji,
+      }];
+    });
+  }, []);
+
+  const handleToolFinished = useCallback((data) => {
+    const toolId = `tool-${data.requestId}`;
+    setMessages(prev =>
+      prev.map(m =>
+        m.id === toolId
+          ? { ...m, status: data.success ? 'completed' : 'failed', durationMs: data.durationMs }
+          : m
+      )
+    );
+  }, []);
+
+  const handleDelegation = useCallback((data) => {
+    const delegationId = `delegation-${data.agentId}`;
+    setMessages(prev => {
+      if (prev.some(m => m.id === delegationId)) return prev;
+      return [...prev, {
+        id: delegationId,
+        role: 'delegation',
+        agentName: data.agentName,
+        agentEmoji: data.agentEmoji,
+        agentType: data.agentType,
+        mission: data.mission,
+        timestamp: data.timestamp,
+      }];
+    });
+  }, []);
+
+  // ========================================================================
   // Subscribe to WebSocket events for this conversation
   // ========================================================================
 
@@ -121,121 +277,7 @@ export const MissionChat = memo(function MissionChat({
     };
 
     return subscribe(conversationId, handleEvent);
-  }, [conversationId, subscribe]);
-
-  // ---- WebSocket event handlers ----
-
-  function handleIncomingMessage(data) {
-    const msgId = data.id || `msg-${Date.now()}`;
-    setMessages(prev => {
-      if (prev.some(m => m.id === msgId)) return prev;
-      return [...prev, {
-        id: msgId,
-        role: 'assistant',
-        content: data.content,
-        timestamp: data.timestamp,
-        agentName: data.agentName,
-        agentEmoji: data.agentEmoji,
-      }];
-    });
-    if (!expanded) setNewMessageCount(c => c + 1);
-  }
-
-  function handleStreamStart(data) {
-    setIsStreaming(true);
-    setMessages(prev => [
-      ...prev,
-      {
-        id: data.id,
-        role: 'assistant',
-        content: '',
-        timestamp: data.timestamp,
-        isStreaming: true,
-        agentName: data.agentName,
-        agentEmoji: data.agentEmoji,
-      },
-    ]);
-  }
-
-  function handleStreamChunk(data) {
-    setMessages(prev =>
-      prev.map(m =>
-        m.id === data.streamId
-          ? { ...m, content: m.content + data.chunk }
-          : m
-      )
-    );
-  }
-
-  function handleStreamEnd(data) {
-    setIsStreaming(false);
-    setMessages(prev =>
-      prev.map(m =>
-        m.id === data.streamId
-          ? { ...m, isStreaming: false }
-          : m
-      )
-    );
-    if (!expanded) setNewMessageCount(c => c + 1);
-  }
-
-  function handleError(data) {
-    setIsStreaming(false);
-    const errId = data.id || `err-${Date.now()}`;
-    setMessages(prev => {
-      if (prev.some(m => m.id === errId)) return prev;
-      return [...prev, {
-        id: errId,
-        role: 'assistant',
-        content: `**Error:** ${data.error}`,
-        isError: true,
-        timestamp: data.timestamp,
-      }];
-    });
-  }
-
-  function handleToolRequested(data) {
-    const toolId = `tool-${data.requestId}`;
-    setMessages(prev => {
-      if (prev.some(m => m.id === toolId)) return prev;
-      return [...prev, {
-        id: toolId,
-        role: 'tool',
-        toolName: data.toolName,
-        status: 'running',
-        timestamp: data.timestamp,
-        agentName: data.agentName,
-        agentEmoji: data.agentEmoji,
-      }];
-    });
-  }
-
-  function handleToolFinished(data) {
-    const toolId = `tool-${data.requestId}`;
-    setMessages(prev =>
-      prev.map(m =>
-        m.id === toolId
-          ? { ...m, status: data.success ? 'completed' : 'failed', durationMs: data.durationMs }
-          : m
-      )
-    );
-  }
-
-  function handleDelegation(data) {
-    const delegationId = `delegation-${data.agentId}`;
-    setMessages(prev => {
-      if (prev.some(m => m.id === delegationId)) return prev;
-      return [...prev, {
-        id: delegationId,
-        role: 'delegation',
-        agentName: data.agentName,
-        agentEmoji: data.agentEmoji,
-        agentType: data.agentType,
-        mission: data.mission,
-        timestamp: data.timestamp,
-      }];
-    });
-  }
+  }, [conversationId, subscribe, handleIncomingMessage, handleStreamStart, handleStreamChunk, handleStreamEnd, handleError, handleToolRequested, handleToolFinished, handleDelegation]);
 
   // ========================================================================
   // Auto-scroll
@@ -321,7 +363,18 @@ export const MissionChat = memo(function MissionChat({
   }
 
   return (
-    <div className={`mission-chat-panel ${expanded ? 'expanded' : 'collapsed'}`}>
+    <div
+      ref={panelRef}
+      className={`mission-chat-panel ${expanded ? 'expanded' : 'collapsed'}`}
+      style={expanded ? { height: panelHeight } : undefined}
+    >
+      {expanded && (
+        <div
+          className="mission-chat-resize-handle"
+          onMouseDown={handleResizeStart}
+          title="Drag to resize"
+        />
+      )}
       <div className="mission-chat-header" onClick={handleToggle}>
         <span className="mission-chat-header-label">
           {contextLabel}
@@ -384,15 +437,15 @@ export const MissionChat = memo(function MissionChat({
 });
 
 // ============================================================================
-// Individual message renderer
+// Individual message renderer — uses same classes as main Chat tab
 // ============================================================================
 
 const MissionChatMessage = memo(function MissionChatMessage({ msg }) {
   if (msg.role === 'user') {
     return (
-      <div className="mission-chat-msg user">
-        <div className="mission-chat-msg-label">You</div>
-        <div className="mission-chat-msg-content">
+      <div className="message user">
+        <div className="message-avatar">👤</div>
+        <div className="message-content">
           <MessageContent content={msg.content} isStreaming={false} />
         </div>
       </div>
@@ -400,13 +453,15 @@ const MissionChatMessage = memo(function MissionChatMessage({ msg }) {
   }
 
   if (msg.role === 'tool') {
-    const icon = msg.status === 'running' ? '⏳' : msg.status === 'completed' ? '✓' : '✗';
     return (
-      <div className="mission-chat-msg tool">
-        <span className="mission-chat-tool-icon">{icon}</span>
-        <span className="mission-chat-tool-name">{msg.toolName}</span>
+      <div className={`tool-event ${msg.status}`}>
+        <span className="tool-icon">🔧</span>
+        <span className="tool-status-indicator">
+          {msg.status === 'running' ? '◐' : msg.status === 'completed' ? '✓' : '✗'}
+        </span>
+        <span className="tool-name">{msg.toolName}</span>
         {msg.durationMs != null && (
-          <span className="mission-chat-tool-duration">{(msg.durationMs / 1000).toFixed(1)}s</span>
+          <span className="tool-duration">{msg.durationMs}ms</span>
         )}
       </div>
     );
@@ -414,9 +469,9 @@ const MissionChatMessage = memo(function MissionChatMessage({ msg }) {
 
   if (msg.role === 'delegation') {
     return (
-      <div className="mission-chat-msg delegation">
-        <span>{msg.agentEmoji || '🤖'}</span>
-        <span>Delegated to <strong>{msg.agentName || msg.agentType}</strong></span>
+      <div className="delegation-event">
+        <span className="delegation-icon">{msg.agentEmoji || '🤖'}</span>
+        <span className="delegation-label">Delegated to <strong>{msg.agentName || msg.agentType}</strong></span>
       </div>
     );
   }
@@ -426,9 +481,10 @@ const MissionChatMessage = memo(function MissionChatMessage({ msg }) {
   const emoji = msg.agentEmoji || '🎯';
 
   return (
-    <div className={`mission-chat-msg assistant ${msg.isError ? 'error' : ''}`}>
-      <div className="mission-chat-msg-label">{emoji} {label}</div>
-      <div className="mission-chat-msg-content">
+    <div className={`message assistant${msg.isError ? ' error' : ''}${msg.isStreaming ? ' streaming' : ''}`}>
+      <div className="message-avatar">{emoji}</div>
+      <div className="message-content">
+        {label && <div className="agent-name">{label}</div>}
         <MessageContent
           content={msg.content}
           isStreaming={msg.isStreaming || false}

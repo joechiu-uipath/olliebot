@@ -31,7 +31,6 @@ import {
   WebScrapeTool,
   WikipediaSearchTool,
   TakeScreenshotTool,
-  AnalyzeImageTool,
   CreateImageTool,
   RememberTool,
   ReadAgentSkillTool,
@@ -395,7 +394,6 @@ async function main(): Promise<void> {
   }));
 
   toolRunner.registerNativeTool(new TakeScreenshotTool());
-  toolRunner.registerNativeTool(new AnalyzeImageTool(llmService));
 
   // Image generation (requires API key based on provider)
   const imageApiKey = CONFIG.imageGenProvider === 'azure_openai'

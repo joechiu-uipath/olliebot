@@ -708,6 +708,7 @@ export class AssistantServer {
             toolError: m.metadata?.error,
             toolParameters: m.metadata?.parameters,
             toolResult: m.metadata?.result,
+            toolFiles: m.metadata?.files,
             // Delegation metadata (legacy - agentType above is preferred)
             delegationAgentId: m.metadata?.agentId,
             delegationAgentType: m.metadata?.agentType,
@@ -777,10 +778,10 @@ export class AssistantServer {
         const conversation = {
           id,
           title: title || 'New Conversation',
-          channel: channel || 'web',
           createdAt: now,
           updatedAt: now,
           deletedAt: null,
+          metadata: channel ? { channel } : undefined,
         };
 
         db.conversations.create(conversation);
@@ -896,6 +897,7 @@ export class AssistantServer {
           toolError: m.metadata?.error,
           toolParameters: m.metadata?.parameters,
           toolResult: m.metadata?.result,
+          toolFiles: m.metadata?.files,
           // Delegation metadata
           delegationAgentId: m.metadata?.agentId,
           delegationAgentType: m.metadata?.agentType,
@@ -1249,6 +1251,7 @@ export class AssistantServer {
           }
 
           if (channel === 'mission' || channel === 'pillar') {
+            console.log(`[Router] Routing to Mission Lead (channel=${channel})`);
             await missionLead.handleMessage(message);
             return;
           }

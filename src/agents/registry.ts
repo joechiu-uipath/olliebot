@@ -52,7 +52,6 @@ const SPECIALIST_TEMPLATES: SpecialistTemplate[] = [
       'web_search',
       'web_scrape',
       'wikipedia_search',
-      'analyze_image',
       'query_rag_project',
       'mcp.*', // MCP tools
     ],
@@ -69,7 +68,6 @@ const SPECIALIST_TEMPLATES: SpecialistTemplate[] = [
     canAccessTools: [
       'web_search',
       'web_scrape',
-      'analyze_image',
       'mcp.*', // MCP tools (filesystem, etc.)
     ],
   },
@@ -123,7 +121,6 @@ const SPECIALIST_TEMPLATES: SpecialistTemplate[] = [
       'web_search',
       'web_scrape',
       'wikipedia_search',
-      'analyze_image',
       'query_rag_project',
       'mission_todo_create',
       'mcp.*', // MCP tools

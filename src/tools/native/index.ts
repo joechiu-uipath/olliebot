@@ -7,7 +7,6 @@ export * from './web-search.js';
 export * from './web-scrape.js';
 export * from './wikipedia-search.js';
 export * from './take-screenshot.js';
-export * from './analyze-image.js';
 export * from './create-image.js';
 export * from './remember.js';
 export * from './read-agent-skill.js';

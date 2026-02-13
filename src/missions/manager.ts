@@ -388,13 +388,13 @@ export class MissionManager extends EventEmitter {
       );
 
       // Sync pillars from config
-      this.syncPillars(missionId, jsonConfig);
+      this.syncPillars(missionId, jsonConfig, slug);
     }
 
     console.log(`[MissionManager] ${existing.length > 0 ? 'Updated' : 'Created'} mission: ${slug}`);
   }
 
-  private syncPillars(missionId: string, jsonConfig: Record<string, unknown>): void {
+  private syncPillars(missionId: string, jsonConfig: Record<string, unknown>, missionSlug: string): void {
     const db = getDb();
     const now = new Date().toISOString();
     const pillarsConfig = (jsonConfig.pillars as Array<Record<string, unknown>>) || [];
@@ -407,7 +407,7 @@ export class MissionManager extends EventEmitter {
       // Create conversation for pillar chat
       db.rawRun(
         'INSERT INTO conversations (id, title, createdAt, updatedAt, manuallyNamed, metadata) VALUES (?, ?, ?, ?, ?, ?)',
-        [conversationId, `Pillar: ${pillarConfig.name}`, now, now, 1, JSON.stringify({ channel: 'pillar', missionId, pillarId, pillarSlug })]
+        [conversationId, `Pillar: ${pillarConfig.name}`, now, now, 1, JSON.stringify({ channel: 'pillar', missionId, missionSlug, pillarId, pillarSlug })]
       );
 
       db.rawRun(

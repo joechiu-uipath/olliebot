@@ -28,6 +28,50 @@ export function useMissionMode() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
 
+  // Load functions (defined before useEffects for React Compiler)
+  const loadMissions = useCallback(async () => {
+    try {
+      const res = await fetch(API_BASE);
+      if (res.ok) {
+        const data = await res.json();
+        setMissions(data);
+      }
+    } catch (err) {
+      console.error('[Mission] Failed to load missions:', err);
+    }
+  }, []);
+
+  const loadMission = useCallback(async (slug) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch(`${API_BASE}/${slug}`);
+      if (res.ok) {
+        const data = await res.json();
+        setSelectedMission(data);
+      } else {
+        setError('Failed to load mission');
+      }
+      setLoading(false);
+    } catch (err) {
+      console.error('[Mission] Failed to load mission:', err);
+      setError('Failed to load mission');
+      setLoading(false);
+    }
+  }, []);
+
+  const loadPillar = useCallback(async (missionSlug, pillarSlug) => {
+    try {
+      const res = await fetch(`${API_BASE}/${missionSlug}/pillars/${pillarSlug}`);
+      if (res.ok) {
+        const data = await res.json();
+        setSelectedPillar(data);
+      }
+    } catch (err) {
+      console.error('[Mission] Failed to load pillar:', err);
+    }
+  }, []);
+
   // Derive state from URL
   useEffect(() => {
     if (!location.pathname.startsWith('/mission')) return;
@@ -66,57 +110,14 @@ export function useMissionMode() {
       setSelectedPillar(null);
       setSelectedTodo(null);
     }
-  }, [location.pathname]);
+  }, [location.pathname, loadMission, loadPillar]);
 
   // Load missions list — only when entering mission mode, not on every sub-nav
-  const loadMissions = useCallback(async () => {
-    try {
-      const res = await fetch(API_BASE);
-      if (res.ok) {
-        const data = await res.json();
-        setMissions(data);
-      }
-    } catch (err) {
-      console.error('[Mission] Failed to load missions:', err);
-    }
-  }, []);
-
   useEffect(() => {
     if (location.pathname.startsWith('/mission')) {
       loadMissions();
     }
   }, [location.pathname.startsWith('/mission'), loadMissions]);
-
-  const loadMission = useCallback(async (slug) => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await fetch(`${API_BASE}/${slug}`);
-      if (res.ok) {
-        const data = await res.json();
-        setSelectedMission(data);
-      } else {
-        setError('Failed to load mission');
-      }
-    } catch (err) {
-      console.error('[Mission] Failed to load mission:', err);
-      setError('Failed to load mission');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  const loadPillar = useCallback(async (missionSlug, pillarSlug) => {
-    try {
-      const res = await fetch(`${API_BASE}/${missionSlug}/pillars/${pillarSlug}`);
-      if (res.ok) {
-        const data = await res.json();
-        setSelectedPillar(data);
-      }
-    } catch (err) {
-      console.error('[Mission] Failed to load pillar:', err);
-    }
-  }, []);
 
   const handleSelectMission = useCallback((slug) => {
     navigate(`/mission/${slug}`);
@@ -180,6 +181,17 @@ export function useMissionMode() {
     if (selectedPillar && selectedMission) loadPillar(selectedMission.slug, selectedPillar.slug);
   }, [selectedMission, selectedPillar, loadMission, loadPillar]);
 
+  const triggerCycle = useCallback(async (slug) => {
+    try {
+      await fetch(`${API_BASE}/${slug}/cycle`, { method: 'POST' });
+      // Reload mission data after cycle trigger
+      loadMission(slug);
+      loadMissions();
+    } catch (err) {
+      console.error('[Mission] Failed to trigger cycle:', err);
+    }
+  }, [loadMission, loadMissions]);
+
   return {
     missions,
     selectedMission,
@@ -199,6 +211,7 @@ export function useMissionMode() {
     handleResumeMission,
     refreshDashboard,
     loadMissions,
+    triggerCycle,
   };
 }
 
@@ -213,6 +226,7 @@ export const MissionSidebarContent = memo(function MissionSidebarContent({ missi
     selectedPillar,
     handleSelectMission,
     handleSelectPillar,
+    triggerCycle,
   } = missionMode;
 
   return (
@@ -233,7 +247,19 @@ export const MissionSidebarContent = memo(function MissionSidebarContent({ missi
         >
           <div className="mission-sidebar-item-name">
             <span className={`mission-status-dot ${m.status}`} />
-            {m.name}
+            <span className="mission-sidebar-item-text">{m.name}</span>
+            {m.status === 'active' && (
+              <button
+                className="mission-cycle-btn"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  triggerCycle(m.slug);
+                }}
+                title="Trigger mission cycle"
+              >
+                ⟳
+              </button>
+            )}
           </div>
           <div className="mission-sidebar-item-meta">
             {m.status === 'active' ? 'Active' : m.status === 'paused' ? 'Paused' : 'Archived'}
@@ -585,9 +611,13 @@ function MissionPillarsView({ pillars, missionSlug, onSelectPillar }) {
 
 function MissionConfig({ mission }) {
   let configObj = {};
-  try {
-    configObj = typeof mission.jsonConfig === 'string' ? JSON.parse(mission.jsonConfig) : (mission.jsonConfig || {});
-  } catch { /* ignore parse error */ }
+  if (typeof mission.jsonConfig === 'string') {
+    try {
+      configObj = JSON.parse(mission.jsonConfig);
+    } catch { /* ignore parse error */ }
+  } else {
+    configObj = mission.jsonConfig || {};
+  }
 
   return (
     <div className="mission-config">

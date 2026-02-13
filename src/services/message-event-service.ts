@@ -260,6 +260,7 @@ export class MessageEventService {
           error: event.error as string | undefined,
           parameters: event.parameters as Record<string, unknown> | undefined,
           result: resultForStorage,
+          files: event.files, // Persist file attachments (images, screenshots, etc.)
           agentId: agentInfo.id,
           agentName: agentInfo.name,
           agentEmoji: agentInfo.emoji,
