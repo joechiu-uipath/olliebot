@@ -20,6 +20,7 @@ import type { TaskManager } from '../tasks/index.js';
 import { type RAGProjectService, createRAGProjectRoutes, type IndexingProgress } from '../rag-projects/index.js';
 import type { MissionManager } from '../missions/index.js';
 import { setupMissionRoutes } from './mission-routes.js';
+import { getDashboardStore, SnapshotEngine, RenderEngine, setupDashboardRoutes } from '../dashboard/index.js';
 import { getMessageEventService, setMessageEventServiceChannel } from '../services/message-event-service.js';
 import { getUserSettingsService } from '../settings/index.js';
 import { OllieBotMCPServer } from '../mcp-server/index.js';
@@ -1026,6 +1027,19 @@ export class AssistantServer {
     if (this.missionManager) {
       setupMissionRoutes(this.app, {
         missionManager: this.missionManager,
+      });
+    }
+
+    // Setup dashboard routes (if llmService and traceStore are available)
+    if (this.llmService && this.traceStore) {
+      const dashboardStore = getDashboardStore();
+      dashboardStore.init();
+      const snapshotEngine = new SnapshotEngine(this.traceStore);
+      const renderEngine = new RenderEngine(this.llmService, dashboardStore);
+      setupDashboardRoutes(this.app, {
+        dashboardStore,
+        snapshotEngine,
+        renderEngine,
       });
     }
 
