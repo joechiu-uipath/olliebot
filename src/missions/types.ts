@@ -1,6 +1,13 @@
 /**
  * Mission system types
+ *
+ * Domain interfaces define the typed shape; Row types are the string-relaxed
+ * versions as stored in SQLite (status/trend/priority come back as plain strings).
  */
+
+// ============================================================================
+// Domain interfaces
+// ============================================================================
 
 export interface Mission {
   id: string;
@@ -73,74 +80,18 @@ export interface MissionTodo {
   completedAt: string | null;
 }
 
-/** Row types as stored in SQLite */
-export interface MissionRow {
-  id: string;
-  slug: string;
-  name: string;
-  description: string;
-  status: string;
-  mdFile: string;
-  jsonConfig: string;
-  conversationId: string;
-  cadence: string | null;
-  lastCycleAt: string | null;
-  nextCycleAt: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
+// ============================================================================
+// SQLite row types — same shape but union types relaxed to string
+// ============================================================================
 
-export interface PillarRow {
-  id: string;
-  missionId: string;
-  slug: string;
-  name: string;
-  description: string;
-  status: string;
-  conversationId: string;
-  createdAt: string;
-  updatedAt: string;
-}
+/** Utility: replaces specific string literal unions with plain string */
+type Stringify<T> = {
+  [K in keyof T]: T[K] extends string ? string : T[K];
+};
 
-export interface PillarMetricRow {
-  id: string;
-  pillarId: string;
-  name: string;
-  target: string;
-  current: string;
-  unit: string;
-  trend: string;
-  updatedAt: string;
-}
-
-export interface PillarMetricHistoryRow {
-  id: string;
-  metricId: string;
-  value: number;
-  timestamp: string;
-}
-
-export interface PillarStrategyRow {
-  id: string;
-  pillarId: string;
-  description: string;
-  status: string;
-  lastReviewedAt: string;
-  createdAt: string;
-}
-
-export interface MissionTodoRow {
-  id: string;
-  pillarId: string;
-  missionId: string;
-  title: string;
-  description: string;
-  status: string;
-  priority: string;
-  assignedAgent: string | null;
-  conversationId: string | null;
-  outcome: string | null;
-  createdAt: string;
-  startedAt: string | null;
-  completedAt: string | null;
-}
+export type MissionRow = Stringify<Mission>;
+export type PillarRow = Stringify<Pillar>;
+export type PillarMetricRow = Stringify<PillarMetric>;
+export type PillarMetricHistoryRow = PillarMetricHistory; // no unions to relax
+export type PillarStrategyRow = Stringify<PillarStrategy>;
+export type MissionTodoRow = Stringify<MissionTodo>;

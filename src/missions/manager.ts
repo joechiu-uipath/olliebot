@@ -142,14 +142,17 @@ export class MissionManager extends EventEmitter {
     return rows[0] ? this.deserializeMission(rows[0]) : undefined;
   }
 
+  private static MISSION_UPDATABLE_FIELDS = new Set(['name', 'description', 'status', 'cadence', 'jsonConfig']);
+
   updateMission(slug: string, updates: Partial<Pick<Mission, 'name' | 'description' | 'status' | 'cadence' | 'jsonConfig'>>): Mission | undefined {
     const db = getDb();
     const setClauses: string[] = [];
     const values: unknown[] = [];
 
     for (const [key, value] of Object.entries(updates)) {
+      if (!MissionManager.MISSION_UPDATABLE_FIELDS.has(key)) continue;
       setClauses.push(`${key} = ?`);
-      values.push(value);
+      values.push(key === 'jsonConfig' && typeof value === 'object' ? JSON.stringify(value) : value);
     }
 
     if (setClauses.length > 0) {
@@ -280,12 +283,15 @@ export class MissionManager extends EventEmitter {
     return created;
   }
 
+  private static TODO_UPDATABLE_FIELDS = new Set(['title', 'description', 'status', 'priority', 'assignedAgent', 'conversationId', 'outcome', 'startedAt', 'completedAt']);
+
   updateTodo(todoId: string, updates: Partial<Pick<MissionTodo, 'title' | 'description' | 'status' | 'priority' | 'assignedAgent' | 'conversationId' | 'outcome' | 'startedAt' | 'completedAt'>>): MissionTodo | undefined {
     const db = getDb();
     const setClauses: string[] = [];
     const values: unknown[] = [];
 
     for (const [key, value] of Object.entries(updates)) {
+      if (!MissionManager.TODO_UPDATABLE_FIELDS.has(key)) continue;
       setClauses.push(`${key} = ?`);
       values.push(value);
     }

@@ -25,6 +25,7 @@ export function useMissionMode() {
   const [missionTab, setMissionTab] = useState('dashboard'); // dashboard | pillars | config
   const [pillarTab, setPillarTab] = useState('dashboard');    // dashboard | metrics | strategy | todos
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
 
   // Derive state from URL
   useEffect(() => {
@@ -66,7 +67,7 @@ export function useMissionMode() {
     }
   }, [location.pathname]);
 
-  // Load missions list
+  // Load missions list — only when entering mission mode, not on every sub-nav
   const loadMissions = useCallback(async () => {
     try {
       const res = await fetch(API_BASE);
@@ -83,18 +84,22 @@ export function useMissionMode() {
     if (location.pathname.startsWith('/mission')) {
       loadMissions();
     }
-  }, [location.pathname, loadMissions]);
+  }, [location.pathname.startsWith('/mission'), loadMissions]);
 
   const loadMission = useCallback(async (slug) => {
     setLoading(true);
+    setError(null);
     try {
       const res = await fetch(`${API_BASE}/${slug}`);
       if (res.ok) {
         const data = await res.json();
         setSelectedMission(data);
+      } else {
+        setError('Failed to load mission');
       }
     } catch (err) {
       console.error('[Mission] Failed to load mission:', err);
+      setError('Failed to load mission');
     } finally {
       setLoading(false);
     }
@@ -150,15 +155,23 @@ export function useMissionMode() {
   }, [navigate, selectedMission, selectedPillar]);
 
   const handlePauseMission = useCallback(async (slug) => {
-    await fetch(`${API_BASE}/${slug}/pause`, { method: 'POST' });
-    loadMission(slug);
-    loadMissions();
+    try {
+      await fetch(`${API_BASE}/${slug}/pause`, { method: 'POST' });
+      loadMission(slug);
+      loadMissions();
+    } catch (err) {
+      console.error('[Mission] Failed to pause:', err);
+    }
   }, [loadMission, loadMissions]);
 
   const handleResumeMission = useCallback(async (slug) => {
-    await fetch(`${API_BASE}/${slug}/resume`, { method: 'POST' });
-    loadMission(slug);
-    loadMissions();
+    try {
+      await fetch(`${API_BASE}/${slug}/resume`, { method: 'POST' });
+      loadMission(slug);
+      loadMissions();
+    } catch (err) {
+      console.error('[Mission] Failed to resume:', err);
+    }
   }, [loadMission, loadMissions]);
 
   const refreshDashboard = useCallback(() => {
@@ -174,6 +187,7 @@ export function useMissionMode() {
     missionTab,
     pillarTab,
     loading,
+    error,
     handleSelectMission,
     handleSelectPillar,
     handleSelectTodo,
@@ -202,11 +216,11 @@ export const MissionSidebarContent = memo(function MissionSidebarContent({ missi
 
   return (
     <div className="mission-sidebar">
-      <div className="sidebar-section-header">MISSIONS</div>
+      <div className="mission-sidebar-section-header">MISSIONS</div>
 
       {missions.length === 0 && (
         <div className="mission-sidebar-empty">
-          No missions yet. Create a .md file in <code>/user/missions/</code>
+          No missions yet. Create a <code>.md</code> file in <code>/user/missions/</code> to get started.
         </div>
       )}
 
@@ -222,13 +236,15 @@ export const MissionSidebarContent = memo(function MissionSidebarContent({ missi
           </div>
           <div className="mission-sidebar-item-meta">
             {m.status === 'active' ? 'Active' : m.status === 'paused' ? 'Paused' : 'Archived'}
+            {m.pillarCount != null && ` · ${m.pillarCount} pillar${m.pillarCount !== 1 ? 's' : ''}`}
+            {m.lastCycleAt && ` · Last cycle: ${formatTimeAgo(m.lastCycleAt)}`}
           </div>
         </div>
       ))}
 
       {selectedMission?.pillars && selectedMission.pillars.length > 0 && (
         <>
-          <div className="sidebar-section-header" style={{ marginTop: '16px' }}>PILLARS</div>
+          <div className="mission-sidebar-section-header" style={{ marginTop: '16px' }}>PILLARS</div>
           {selectedMission.pillars.map(p => (
             <div
               key={p.slug}
@@ -236,7 +252,7 @@ export const MissionSidebarContent = memo(function MissionSidebarContent({ missi
               onClick={() => handleSelectPillar(selectedMission.slug, p.slug)}
             >
               <div className="mission-sidebar-item-name">
-                <span className={`pillar-health ${getPillarHealth(p)}`} />
+                <span className={`pillar-health-dot ${getPillarHealth(p)}`} />
                 {p.name}
               </div>
               <div className="mission-sidebar-item-meta">
@@ -248,16 +264,14 @@ export const MissionSidebarContent = memo(function MissionSidebarContent({ missi
       )}
     </div>
   );
+}, (prev, next) => {
+  // Custom comparison: only re-render when relevant state changes
+  const pm = prev.missionMode;
+  const nm = next.missionMode;
+  return pm.missions === nm.missions
+    && pm.selectedMission === nm.selectedMission
+    && pm.selectedPillar === nm.selectedPillar;
 });
-
-function getPillarHealth(pillar) {
-  if (!pillar.metrics || pillar.metrics.length === 0) return 'unknown';
-  const degrading = pillar.metrics.filter(m => m.trend === 'degrading').length;
-  const improving = pillar.metrics.filter(m => m.trend === 'improving').length;
-  if (degrading > pillar.metrics.length / 2) return 'red';
-  if (improving >= pillar.metrics.length / 2) return 'green';
-  return 'yellow';
-}
 
 // ============================================================================
 // Main Content Component
@@ -271,6 +285,7 @@ export const MissionMainContent = memo(function MissionMainContent({ missionMode
     missionTab,
     pillarTab,
     loading,
+    error,
     handleBack,
     handleMissionTab,
     handlePillarTab,
@@ -282,7 +297,17 @@ export const MissionMainContent = memo(function MissionMainContent({ missionMode
   } = missionMode;
 
   if (loading) {
-    return <div className="mission-loading">Loading...</div>;
+    return <div className="mission-loading">Loading mission...</div>;
+  }
+
+  if (error) {
+    return (
+      <div className="mission-empty-state">
+        <div className="mission-empty-icon">!</div>
+        <h2>Something went wrong</h2>
+        <p>{error}</p>
+      </div>
+    );
   }
 
   if (!selectedMission) {
@@ -290,7 +315,7 @@ export const MissionMainContent = memo(function MissionMainContent({ missionMode
       <div className="mission-empty-state">
         <div className="mission-empty-icon">🎯</div>
         <h2>Missions</h2>
-        <p>Select a mission from the sidebar, or create one by adding a .md file to <code>/user/missions/</code></p>
+        <p>Select a mission from the sidebar, or create one by adding a <code>.md</code> file to <code>/user/missions/</code></p>
       </div>
     );
   }
@@ -300,11 +325,16 @@ export const MissionMainContent = memo(function MissionMainContent({ missionMode
     return (
       <div className="mission-content">
         <div className="mission-breadcrumb">
-          <button className="mission-back-btn" onClick={handleBack}>←</button>
-          <span>{selectedMission.name}</span>
+          <button className="mission-back-btn" onClick={handleBack} title="Back to mission">←</button>
+          <span className="mission-breadcrumb-link" onClick={() => handleBack()}>{selectedMission.name}</span>
           <span className="mission-breadcrumb-sep">/</span>
           <span className="mission-breadcrumb-current">{selectedPillar.name}</span>
+          <span className={`pillar-health-dot ${getPillarHealth(selectedPillar)}`} />
         </div>
+
+        {selectedPillar.description && (
+          <div className="mission-description">{selectedPillar.description}</div>
+        )}
 
         <div className="mission-tabs">
           {['dashboard', 'metrics', 'strategy', 'todos'].map(tab => (
@@ -313,14 +343,18 @@ export const MissionMainContent = memo(function MissionMainContent({ missionMode
               className={`mission-tab ${pillarTab === tab ? 'active' : ''}`}
               onClick={() => handlePillarTab(tab)}
             >
-              {tab.charAt(0).toUpperCase() + tab.slice(1)}
+              {TAB_LABELS[tab] || tab.charAt(0).toUpperCase() + tab.slice(1)}
             </button>
           ))}
         </div>
 
         <div className="mission-tab-content">
           {pillarTab === 'dashboard' && (
-            <PillarDashboard missionSlug={selectedMission.slug} pillarSlug={selectedPillar.slug} onRefresh={refreshDashboard} />
+            <DashboardViewer
+              title="Pillar Dashboard"
+              fetchUrl={`${API_BASE}/${selectedMission.slug}/pillars/${selectedPillar.slug}/dashboard`}
+              onRefresh={refreshDashboard}
+            />
           )}
           {pillarTab === 'metrics' && (
             <PillarMetrics metrics={selectedPillar.metrics || []} />
@@ -335,7 +369,12 @@ export const MissionMainContent = memo(function MissionMainContent({ missionMode
             />
           )}
           {pillarTab === 'todos' && selectedTodo && (
-            <TodoExecution todoId={selectedTodo} onBack={handleBack} />
+            <TodoExecution
+              todoId={selectedTodo}
+              missionSlug={selectedMission.slug}
+              pillarSlug={selectedPillar.slug}
+              onBack={handleBack}
+            />
           )}
         </div>
       </div>
@@ -346,7 +385,7 @@ export const MissionMainContent = memo(function MissionMainContent({ missionMode
   return (
     <div className="mission-content">
       <div className="mission-breadcrumb">
-        <button className="mission-back-btn" onClick={handleBack}>←</button>
+        <button className="mission-back-btn" onClick={handleBack} title="Back to missions">←</button>
         <span className="mission-breadcrumb-current">{selectedMission.name}</span>
         <span className={`mission-status-badge ${selectedMission.status}`}>
           {selectedMission.status}
@@ -358,6 +397,10 @@ export const MissionMainContent = memo(function MissionMainContent({ missionMode
         ) : null}
       </div>
 
+      {selectedMission.description && (
+        <div className="mission-description">{selectedMission.description}</div>
+      )}
+
       <div className="mission-tabs">
         {['dashboard', 'pillars', 'config'].map(tab => (
           <button
@@ -365,14 +408,18 @@ export const MissionMainContent = memo(function MissionMainContent({ missionMode
             className={`mission-tab ${missionTab === tab ? 'active' : ''}`}
             onClick={() => handleMissionTab(tab)}
           >
-            {tab.charAt(0).toUpperCase() + tab.slice(1)}
+            {TAB_LABELS[tab] || tab.charAt(0).toUpperCase() + tab.slice(1)}
           </button>
         ))}
       </div>
 
       <div className="mission-tab-content">
         {missionTab === 'dashboard' && (
-          <MissionDashboard missionSlug={selectedMission.slug} onRefresh={refreshDashboard} />
+          <DashboardViewer
+            title="Mission Dashboard"
+            fetchUrl={`${API_BASE}/${selectedMission.slug}/dashboard`}
+            onRefresh={refreshDashboard}
+          />
         )}
         {missionTab === 'pillars' && (
           <MissionPillarsView
@@ -387,72 +434,91 @@ export const MissionMainContent = memo(function MissionMainContent({ missionMode
       </div>
     </div>
   );
+}, (prev, next) => {
+  const pm = prev.missionMode;
+  const nm = next.missionMode;
+  return pm.selectedMission === nm.selectedMission
+    && pm.selectedPillar === nm.selectedPillar
+    && pm.selectedTodo === nm.selectedTodo
+    && pm.missionTab === nm.missionTab
+    && pm.pillarTab === nm.pillarTab
+    && pm.loading === nm.loading
+    && pm.error === nm.error;
 });
+
+// ============================================================================
+// Shared constants
+// ============================================================================
+
+const TAB_LABELS = {
+  dashboard: 'Dashboard',
+  pillars: 'Pillars',
+  config: 'Configuration',
+  metrics: 'Metrics',
+  strategy: 'Strategy',
+  todos: 'TODOs',
+};
+
+const TODO_STATUS_ORDER = ['in_progress', 'pending', 'blocked', 'completed'];
+const TODO_STATUS_ICONS = {
+  in_progress: '🔵',
+  completed: '✅',
+  blocked: '🔴',
+  pending: '⚪',
+};
 
 // ============================================================================
 // Sub-components
 // ============================================================================
 
-function MissionDashboard({ missionSlug, onRefresh }) {
+/** Reusable dashboard viewer — serves both mission and pillar dashboards */
+function DashboardViewer({ title, fetchUrl, onRefresh }) {
   const [html, setHtml] = useState(null);
-  const [error, setError] = useState(null);
+  const [fetchError, setFetchError] = useState(null);
+  const [refreshing, setRefreshing] = useState(false);
 
   useEffect(() => {
-    fetch(`${API_BASE}/${missionSlug}/dashboard`)
+    let cancelled = false;
+    setHtml(null);
+    setFetchError(null);
+
+    fetch(fetchUrl)
       .then(res => {
         if (res.ok) return res.text();
         throw new Error('Not generated yet');
       })
-      .then(setHtml)
-      .catch(() => setError('Dashboard not generated yet. The Mission Lead will create it during the next cycle.'));
-  }, [missionSlug]);
+      .then(data => { if (!cancelled) setHtml(data); })
+      .catch(() => { if (!cancelled) setFetchError('Dashboard not generated yet. The Mission Lead will create it during the next cycle.'); });
+
+    return () => { cancelled = true; };
+  }, [fetchUrl]);
+
+  const handleRefresh = useCallback(() => {
+    setRefreshing(true);
+    onRefresh();
+    // Brief visual feedback then clear
+    setTimeout(() => setRefreshing(false), 600);
+  }, [onRefresh]);
 
   return (
     <div className="mission-dashboard-container">
       <div className="mission-dashboard-header">
-        <span>Mission Dashboard</span>
-        <button className="mission-refresh-btn" onClick={onRefresh}>↻ Refresh</button>
+        <span>{title}</span>
+        <button
+          className="mission-refresh-btn"
+          onClick={handleRefresh}
+          disabled={refreshing}
+        >
+          {refreshing ? 'Refreshing...' : '↻ Refresh'}
+        </button>
       </div>
-      {error && <div className="mission-dashboard-placeholder">{error}</div>}
+      {fetchError && <div className="mission-dashboard-placeholder">{fetchError}</div>}
       {html && (
         <iframe
           className="mission-dashboard-iframe"
           srcDoc={html}
           sandbox="allow-scripts"
-          title="Mission Dashboard"
-        />
-      )}
-    </div>
-  );
-}
-
-function PillarDashboard({ missionSlug, pillarSlug, onRefresh }) {
-  const [html, setHtml] = useState(null);
-  const [error, setError] = useState(null);
-
-  useEffect(() => {
-    fetch(`${API_BASE}/${missionSlug}/pillars/${pillarSlug}/dashboard`)
-      .then(res => {
-        if (res.ok) return res.text();
-        throw new Error('Not generated yet');
-      })
-      .then(setHtml)
-      .catch(() => setError('Dashboard not generated yet.'));
-  }, [missionSlug, pillarSlug]);
-
-  return (
-    <div className="mission-dashboard-container">
-      <div className="mission-dashboard-header">
-        <span>Pillar Dashboard</span>
-        <button className="mission-refresh-btn" onClick={onRefresh}>↻ Refresh</button>
-      </div>
-      {error && <div className="mission-dashboard-placeholder">{error}</div>}
-      {html && (
-        <iframe
-          className="mission-dashboard-iframe"
-          srcDoc={html}
-          sandbox="allow-scripts"
-          title="Pillar Dashboard"
+          title={title}
         />
       )}
     </div>
@@ -467,9 +533,12 @@ function MissionPillarsView({ pillars, missionSlug, onSelectPillar }) {
         return (
           <div key={p.slug} className="mission-pillar-card" onClick={() => onSelectPillar(p.slug)}>
             <div className="pillar-card-header">
-              <span className={`pillar-health-indicator ${health}`} />
+              <span className={`pillar-health-dot large ${health}`} />
               <span className="pillar-card-name">{p.name}</span>
             </div>
+            {p.description && (
+              <div className="pillar-card-description">{p.description}</div>
+            )}
             <div className="pillar-card-metrics">
               {(p.metrics || []).slice(0, 3).map(m => (
                 <div key={m.id} className="pillar-card-metric">
@@ -480,7 +549,8 @@ function MissionPillarsView({ pillars, missionSlug, onSelectPillar }) {
               ))}
             </div>
             <div className="pillar-card-footer">
-              TODOs: {p.todosByStatus?.pending || 0} pending, {p.todosByStatus?.in_progress || 0} active
+              <span>TODOs: {p.todosByStatus?.pending || 0} pending, {p.todosByStatus?.in_progress || 0} active</span>
+              <span className="pillar-card-link">View →</span>
             </div>
           </div>
         );
@@ -495,8 +565,8 @@ function MissionPillarsView({ pillars, missionSlug, onSelectPillar }) {
 function MissionConfig({ mission }) {
   let configObj = {};
   try {
-    configObj = typeof mission.jsonConfig === 'string' ? JSON.parse(mission.jsonConfig) : mission.jsonConfig;
-  } catch { /* ignore */ }
+    configObj = typeof mission.jsonConfig === 'string' ? JSON.parse(mission.jsonConfig) : (mission.jsonConfig || {});
+  } catch { /* ignore parse error */ }
 
   return (
     <div className="mission-config">
@@ -524,15 +594,21 @@ function PillarMetrics({ metrics }) {
           <span className="metrics-current">{m.current || '—'}</span>
           <span className="metrics-target">{m.target}</span>
           <span className={`metrics-trend ${m.trend}`}>
-            {m.trend === 'improving' ? '↗' : m.trend === 'degrading' ? '↘' : m.trend === 'stable' ? '→' : '?'}
-            {' '}{m.trend}
+            {TREND_ICONS[m.trend] || '?'} {m.trend}
           </span>
         </div>
       ))}
-      {metrics.length === 0 && <div className="mission-dashboard-placeholder">No metrics defined.</div>}
+      {metrics.length === 0 && <div className="mission-dashboard-placeholder">No metrics defined yet.</div>}
     </div>
   );
 }
+
+const TREND_ICONS = {
+  improving: '↗',
+  degrading: '↘',
+  stable: '→',
+  unknown: '?',
+};
 
 function PillarStrategies({ strategies }) {
   return (
@@ -543,40 +619,57 @@ function PillarStrategies({ strategies }) {
           <div className="strategy-content">
             <div className="strategy-description">{s.description}</div>
             <div className="strategy-meta">
-              Status: {s.status} · Last reviewed: {new Date(s.lastReviewedAt).toLocaleDateString()}
+              <span className={`strategy-status ${s.status}`}>{s.status}</span>
+              <span className="strategy-meta-sep">·</span>
+              Last reviewed: {new Date(s.lastReviewedAt).toLocaleDateString()}
             </div>
           </div>
         </div>
       ))}
-      {strategies.length === 0 && <div className="mission-dashboard-placeholder">No strategies defined.</div>}
+      {strategies.length === 0 && <div className="mission-dashboard-placeholder">No strategies defined yet.</div>}
     </div>
   );
 }
 
 function PillarTodos({ todos, onSelectTodo }) {
-  const grouped = {
-    in_progress: todos.filter(t => t.status === 'in_progress'),
-    pending: todos.filter(t => t.status === 'pending'),
-    blocked: todos.filter(t => t.status === 'blocked'),
-    completed: todos.filter(t => t.status === 'completed'),
+  const [collapsedGroups, setCollapsedGroups] = useState({ completed: true });
+
+  const grouped = {};
+  for (const status of TODO_STATUS_ORDER) {
+    const items = todos.filter(t => t.status === status);
+    if (items.length > 0) grouped[status] = items;
+  }
+
+  const toggleGroup = (status) => {
+    setCollapsedGroups(prev => ({ ...prev, [status]: !prev[status] }));
   };
 
   return (
     <div className="pillar-todos">
-      {Object.entries(grouped).map(([status, items]) => (
-        items.length > 0 && (
+      {TODO_STATUS_ORDER.map(status => {
+        const items = grouped[status];
+        if (!items) return null;
+        const isCollapsed = collapsedGroups[status];
+
+        return (
           <div key={status} className="todo-group">
-            <div className="todo-group-header">
+            <div
+              className="todo-group-header"
+              onClick={() => toggleGroup(status)}
+              role="button"
+              tabIndex={0}
+            >
+              <span className="todo-group-chevron">{isCollapsed ? '▸' : '▾'}</span>
               {status.replace('_', ' ').toUpperCase()} ({items.length})
             </div>
-            {items.map(todo => (
+            {!isCollapsed && items.map(todo => (
               <div
                 key={todo.id}
                 className={`todo-item ${todo.status}`}
                 onClick={() => todo.conversationId && onSelectTodo(todo.id)}
               >
-                <span className={`todo-status-icon ${todo.status}`}>
-                  {todo.status === 'in_progress' ? '🔵' : todo.status === 'completed' ? '✅' : todo.status === 'blocked' ? '🔴' : '⚪'}
+                <span className="todo-status-icon">
+                  {TODO_STATUS_ICONS[todo.status] || '⚪'}
                 </span>
                 <div className="todo-item-content">
                   <div className="todo-title">{todo.title}</div>
@@ -584,7 +677,11 @@ function PillarTodos({ todos, onSelectTodo }) {
                     Priority: {todo.priority}
                     {todo.assignedAgent && ` · Agent: ${todo.assignedAgent}`}
                     {todo.startedAt && ` · Started: ${formatTimeAgo(todo.startedAt)}`}
+                    {todo.completedAt && ` · Completed: ${formatTimeAgo(todo.completedAt)}`}
                   </div>
+                  {todo.outcome && (
+                    <div className="todo-outcome">{todo.outcome}</div>
+                  )}
                 </div>
                 {todo.conversationId && (
                   <span className="todo-view-btn">View →</span>
@@ -592,8 +689,8 @@ function PillarTodos({ todos, onSelectTodo }) {
               </div>
             ))}
           </div>
-        )
-      ))}
+        );
+      })}
       {todos.length === 0 && (
         <div className="mission-dashboard-placeholder">
           No TODOs yet. Chat with the Mission Lead to create tasks.
@@ -603,33 +700,89 @@ function PillarTodos({ todos, onSelectTodo }) {
   );
 }
 
-function TodoExecution({ todoId, onBack }) {
+function TodoExecution({ todoId, missionSlug, pillarSlug, onBack }) {
   const [todo, setTodo] = useState(null);
+  const [loadError, setLoadError] = useState(null);
 
   useEffect(() => {
-    // We'd need the full path context but for now just show the todoId
-    setTodo({ id: todoId });
-  }, [todoId]);
+    let cancelled = false;
+    fetch(`${API_BASE}/${missionSlug}/pillars/${pillarSlug}/todos`)
+      .then(res => res.ok ? res.json() : [])
+      .then(todos => {
+        if (!cancelled) {
+          const found = todos.find(t => t.id === todoId);
+          setTodo(found || null);
+          if (!found) setLoadError('TODO not found');
+        }
+      })
+      .catch(() => { if (!cancelled) setLoadError('Failed to load TODO'); });
+
+    return () => { cancelled = true; };
+  }, [todoId, missionSlug, pillarSlug]);
 
   return (
     <div className="todo-execution">
       <div className="todo-execution-header">
         <button className="mission-back-btn" onClick={onBack}>← Back to TODOs</button>
-        <span>Task Execution: {todoId}</span>
       </div>
-      <div className="mission-dashboard-placeholder">
-        Task execution view will display the conversation log for this TODO.
-        <br />This connects to the TODO's conversation via its conversationId.
-      </div>
+      {loadError && <div className="mission-dashboard-placeholder">{loadError}</div>}
+      {todo && (
+        <div className="todo-execution-detail">
+          <h3 className="todo-execution-title">{todo.title}</h3>
+          <div className="todo-execution-meta">
+            <span className={`mission-status-badge ${todo.status}`}>{todo.status.replace('_', ' ')}</span>
+            <span>Priority: {todo.priority}</span>
+            {todo.assignedAgent && <span>Agent: {todo.assignedAgent}</span>}
+            {todo.startedAt && <span>Started: {new Date(todo.startedAt).toLocaleString()}</span>}
+            {todo.completedAt && <span>Completed: {new Date(todo.completedAt).toLocaleString()}</span>}
+          </div>
+          {todo.description && (
+            <div className="todo-execution-description">{todo.description}</div>
+          )}
+          {todo.outcome && (
+            <div className="todo-execution-section">
+              <h4>Outcome</h4>
+              <div className="todo-execution-outcome">{todo.outcome}</div>
+            </div>
+          )}
+          {todo.conversationId && (
+            <div className="todo-execution-section">
+              <h4>Execution Log</h4>
+              <div className="mission-dashboard-placeholder">
+                Conversation log for this TODO will be displayed here.
+                <br />Conversation ID: <code>{todo.conversationId}</code>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+      {!todo && !loadError && (
+        <div className="mission-loading">Loading TODO details...</div>
+      )}
     </div>
   );
+}
+
+// ============================================================================
+// Helpers
+// ============================================================================
+
+function getPillarHealth(pillar) {
+  if (!pillar.metrics || pillar.metrics.length === 0) return 'unknown';
+  const degrading = pillar.metrics.filter(m => m.trend === 'degrading').length;
+  const improving = pillar.metrics.filter(m => m.trend === 'improving').length;
+  if (degrading > pillar.metrics.length / 2) return 'red';
+  if (improving >= pillar.metrics.length / 2) return 'green';
+  return 'yellow';
 }
 
 function formatTimeAgo(dateStr) {
   const diff = Date.now() - new Date(dateStr).getTime();
   const mins = Math.floor(diff / 60000);
+  if (mins < 1) return 'just now';
   if (mins < 60) return `${mins}m ago`;
   const hours = Math.floor(mins / 60);
   if (hours < 24) return `${hours}h ago`;
-  return `${Math.floor(hours / 24)}d ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
 }
