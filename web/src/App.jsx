@@ -1616,6 +1616,15 @@ function App() {
                 {msg.role === 'assistant' && msg.usage && !msg.isStreaming && (
                   <div className="message-usage-footer">
                     {formatTokenCount(msg.usage.inputTokens)} in / {formatTokenCount(msg.usage.outputTokens)} out · {msg.usage.llmDurationMs > 0 ? Math.round(msg.usage.outputTokens / (msg.usage.llmDurationMs / 1000)) : '?'} tok/s · {(msg.usage.llmDurationMs / 1000).toFixed(1)}s{msg.usage.modelId ? ` · ${msg.usage.modelId}` : ''}
+                    {msg.usage.traceId && (
+                      <span
+                        className="trace-link"
+                        onClick={() => navigate(`/traces?traceId=${msg.usage.traceId}`)}
+                        title="View trace details"
+                      >
+                        📋
+                      </span>
+                    )}
                   </div>
                 )}
               </div>
@@ -1642,6 +1651,15 @@ function App() {
           {msg.role === 'assistant' && msg.usage && !msg.isStreaming && (
             <div className="message-usage-footer">
               {formatTokenCount(msg.usage.inputTokens)} in / {formatTokenCount(msg.usage.outputTokens)} out · {msg.usage.llmDurationMs > 0 ? Math.round(msg.usage.outputTokens / (msg.usage.llmDurationMs / 1000)) : '?'} tok/s · {(msg.usage.llmDurationMs / 1000).toFixed(1)}s{msg.usage.modelId ? ` · ${msg.usage.modelId}` : ''}
+              {msg.usage.traceId && (
+                <span
+                  className="trace-link"
+                  onClick={() => navigate(`/traces?traceId=${msg.usage.traceId}`)}
+                  title="View trace details"
+                >
+                  📋
+                </span>
+              )}
             </div>
           )}
           {msg.attachments && msg.attachments.length > 0 && (

@@ -290,6 +290,7 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
       outputTokens: 0,
       llmDurationMs: 0,
       modelId: undefined,
+      traceId,
     };
 
     // Refresh RAG data cache before generating response

@@ -291,20 +291,8 @@ export class AssistantServer {
           pagination: paginatedResult.pagination,
         };
 
-        // 4. Tasks
-        const rawTasks = db.tasks.findAll({ limit: 20 });
-        const tasks = rawTasks.map(t => {
-          const config = t.jsonConfig as { description?: string; trigger?: { schedule?: string } };
-          return {
-            id: t.id,
-            name: t.name,
-            description: config.description || '',
-            schedule: config.trigger?.schedule || null,
-            status: t.status,
-            lastRun: t.lastRun,
-            nextRun: t.nextRun,
-          };
-        });
+        // 4. Tasks (from TaskManager, not DB)
+        const tasks = this.taskManager?.getTasksForApi() || [];
 
         // 5. Skills
         const skills = this.skillManager
@@ -944,43 +932,20 @@ export class AssistantServer {
 
     // Get active tasks
     this.app.get('/api/tasks', (_req: Request, res: Response) => {
-      try {
-        const db = getDb();
-        const tasks = db.tasks.findAll({ limit: 20 });
-        res.json(tasks.map(t => {
-          const config = t.jsonConfig as { description?: string; trigger?: { schedule?: string } };
-          return {
-            id: t.id,
-            name: t.name,
-            description: config.description || '',
-            schedule: config.trigger?.schedule || null,
-            status: t.status,
-            lastRun: t.lastRun,
-            nextRun: t.nextRun,
-          };
-        }));
-      } catch (error) {
-        console.error('[API] Failed to fetch tasks:', error);
-        res.json([]);
-      }
+      res.json(this.taskManager?.getTasksForApi() || []);
     });
 
     // Run a task immediately
     this.app.post('/api/tasks/:id/run', async (req: Request, res: Response) => {
       try {
-        const db = getDb();
         const taskId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
-        const task = db.tasks.findById(taskId);
+        const task = this.taskManager?.getTaskById(taskId);
         const { conversationId } = req.body || {};
 
         if (!task) {
           res.status(404).json({ error: 'Task not found' });
           return;
         }
-
-        // Update task lastRun timestamp
-        const now = new Date().toISOString();
-        db.tasks.update(task.id, { lastRun: now, updatedAt: now });
 
         // Get description from jsonConfig
         const taskDescription = (task.jsonConfig as { description?: string }).description || '';

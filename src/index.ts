@@ -584,22 +584,7 @@ async function main(): Promise<void> {
 
     // Wire up system provider for tasks, tools, MCP
     consoleChannel.setSystemProvider({
-      getTasks: () => {
-        const db = getDb();
-        const tasks = db.tasks.findAll({ limit: 20 });
-        return tasks.map(t => {
-          const config = t.jsonConfig as { description?: string; trigger?: { schedule?: string } };
-          return {
-            id: t.id,
-            name: t.name,
-            description: config.description || '',
-            schedule: config.trigger?.schedule || null,
-            status: t.status,
-            lastRun: t.lastRun,
-            nextRun: t.nextRun,
-          };
-        });
-      },
+      getTasks: () => taskManager.getTasksForApi(),
       getTools: () => {
         const tools = toolRunner.getToolsForLLM();
         const mcpServers = mcpClient?.getServers() || [];

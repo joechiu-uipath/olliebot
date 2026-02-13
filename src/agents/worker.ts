@@ -226,6 +226,7 @@ export class WorkerAgent extends AbstractAgent {
       outputTokens: 0,
       llmDurationMs: 0,
       modelId: undefined,
+      traceId: this.traceId ?? undefined,
     };
 
     // Log tools and skills info

@@ -144,7 +144,7 @@ export class TraceStore {
     `);
 
     // Indexes for frequent query patterns
-    db.rawRun(`
+    db.rawExec(`
       CREATE INDEX IF NOT EXISTS idx_traces_started ON traces(startedAt DESC);
       CREATE INDEX IF NOT EXISTS idx_traces_status ON traces(status);
       CREATE INDEX IF NOT EXISTS idx_traces_conversation ON traces(conversationId);

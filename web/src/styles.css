@@ -985,6 +985,18 @@ html, body {
   text-align: right;
 }
 
+/* Trace link icon in usage footer */
+.trace-link {
+  margin-left: 0.5rem;
+  cursor: pointer;
+  opacity: 0.6;
+  transition: opacity 0.15s ease;
+}
+
+.trace-link:hover {
+  opacity: 1;
+}
+
 /* Message attachment chips */
 .message-attachments {
   display: flex;

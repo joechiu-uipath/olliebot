@@ -103,22 +103,30 @@ export class RagDataManager {
 
   /**
    * Format file summaries concisely.
+   * Truncates to MAX_FILES_SHOWN files with a count indicator if there are more.
    */
   private formatFileSummaries(documents: RAGDocument[]): string | null {
+    const MAX_FILES_SHOWN = 5;
     const indexedDocs = documents.filter((d) => d.status === 'indexed');
 
     if (indexedDocs.length === 0) {
       return null;
     }
 
+    const totalCount = indexedDocs.length;
+    const docsToShow = indexedDocs.slice(0, MAX_FILES_SHOWN);
     const lines: string[] = ['Files:'];
 
-    for (const doc of indexedDocs) {
+    for (const doc of docsToShow) {
       if (doc.summary) {
         lines.push(`- ${doc.name}: ${doc.summary}`);
       } else {
         lines.push(`- ${doc.name}`);
       }
+    }
+
+    if (totalCount > MAX_FILES_SHOWN) {
+      lines.push(`- ... and ${totalCount - MAX_FILES_SHOWN} more files (${totalCount} total)`);
     }
 
     return lines.join('\n');

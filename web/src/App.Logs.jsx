@@ -5,6 +5,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef, memo } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 
 // ============================================================
 // Constants
@@ -18,6 +19,10 @@ const POLL_INTERVAL_MS = 5000;
 // ============================================================
 
 export function useLogsMode() {
+  // Read traceId from URL search params (for deep-linking)
+  const [searchParams] = useSearchParams();
+  const urlTraceId = searchParams.get('traceId');
+
   // Data
   const [traces, setTraces] = useState([]);
   const [stats, setStats] = useState(null);
@@ -29,6 +34,9 @@ export function useLogsMode() {
   const [activeView, setActiveView] = useState('traces'); // 'traces' | 'llm-calls'
   const [workloadFilter, setWorkloadFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+
+  // Track which trace ID we've already auto-loaded (to avoid re-fetching on re-renders)
+  const lastHandledTraceIdRef = useRef(null);
 
   // Loading
   const [loading, setLoading] = useState(false);
@@ -121,6 +129,14 @@ export function useLogsMode() {
     intervalRef.current = setInterval(refresh, POLL_INTERVAL_MS);
     return () => clearInterval(intervalRef.current);
   }, [refresh]);
+
+  // Handle trace ID from URL (deep-link from chat)
+  useEffect(() => {
+    if (urlTraceId && urlTraceId !== lastHandledTraceIdRef.current) {
+      lastHandledTraceIdRef.current = urlTraceId;
+      fetchFullTrace(urlTraceId);
+    }
+  }, [urlTraceId, fetchFullTrace]);
 
   // ---- WebSocket handler for real-time updates ----
 
@@ -360,15 +376,23 @@ export const LogsSidebarContent = memo(function LogsSidebarContent({ logsMode })
 // ============================================================
 
 export const LogsMainContent = memo(function LogsMainContent({ logsMode }) {
+  const navigate = useNavigate();
   const { activeView, traces, llmCalls, selectedTrace, selectedLlmCall,
     fetchFullTrace, fetchLlmCallDetail, setSelectedTrace, setSelectedLlmCall,
     loading, error } = logsMode;
 
-  // Back navigation
+  // Select a trace (updates URL and fetches details)
+  const handleSelectTrace = useCallback((traceId) => {
+    navigate(`/traces?traceId=${traceId}`, { replace: true });
+    fetchFullTrace(traceId);
+  }, [navigate, fetchFullTrace]);
+
+  // Back navigation (clears URL param and selection)
   const handleBack = useCallback(() => {
+    navigate('/traces', { replace: true });
     setSelectedTrace(null);
     setSelectedLlmCall(null);
-  }, [setSelectedTrace, setSelectedLlmCall]);
+  }, [navigate, setSelectedTrace, setSelectedLlmCall]);
 
   // ---- Detail views ----
   if (selectedLlmCall) {
@@ -406,7 +430,7 @@ export const LogsMainContent = memo(function LogsMainContent({ logsMode }) {
             <div className="logs-empty">No traces yet. Send a message to generate traces.</div>
           )}
           {traces.map((t) => (
-            <div key={t.id} className="logs-list-row" onClick={() => fetchFullTrace(t.id)}>
+            <div key={t.id} className="logs-list-row" onClick={() => handleSelectTrace(t.id)}>
               <span className="logs-col-trigger" title={t.triggerContent || ''}>
                 <span className="logs-trigger-type">{t.triggerType === 'user_message' ? '💬' : t.triggerType === 'task_run' ? '⏰' : '⚙️'}</span>
                 {t.triggerContent ? t.triggerContent.substring(0, 40) : t.triggerType}
@@ -554,6 +578,7 @@ const TraceDetailView = memo(function TraceDetailView({ trace, onBack, onSelectL
 const LlmCallDetailView = memo(function LlmCallDetailView({ call, onBack }) {
   const [showMessages, setShowMessages] = useState(false);
   const [showResponse, setShowResponse] = useState(true);
+  const [showRawRequest, setShowRawRequest] = useState(false);
 
   if (!call) return null;
 
@@ -647,6 +672,25 @@ const LlmCallDetailView = memo(function LlmCallDetailView({ call, onBack }) {
           )}
         </div>
       )}
+
+      {/* Raw Request Body (reconstructed from stored fields) */}
+      <div className="logs-detail-section">
+        <h4 className="logs-collapsible" onClick={() => setShowRawRequest(!showRawRequest)}>
+          {showRawRequest ? '▾' : '▸'} Raw Request Body
+        </h4>
+        {showRawRequest && (
+          <pre className="logs-json-block">{JSON.stringify({
+            model: call.model,
+            ...(call.systemPrompt && { system: call.systemPrompt }),
+            messages: parsedMessages || [],
+            ...(parsedTools && parsedTools.length > 0 && { tools: parsedTools }),
+            ...(call.toolChoice && { tool_choice: call.toolChoice }),
+            ...(call.maxTokens && { max_tokens: call.maxTokens }),
+            ...(call.temperature != null && { temperature: call.temperature }),
+            ...(call.reasoningEffort && { reasoning_effort: call.reasoningEffort }),
+          }, null, 2)}</pre>
+        )}
+      </div>
 
       {/* Response */}
       <div className="logs-detail-section">
