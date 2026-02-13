@@ -12,19 +12,19 @@ The Dashboard System renders **point-in-time metric snapshots** into **self-cont
 
 ### Core Flow
 
-```
-┌─────────────┐     ┌──────────────────┐     ┌────────────────────┐     ┌──────────────┐
-│  Data Source │────▶│  Snapshot Engine  │────▶│   LLM Renderer     │────▶│  HTMLPreview  │
-│  (live DB)   │     │  (freeze + store) │     │  (data + spec →    │     │  (sandboxed   │
-│              │     │                   │     │   HTML/JS app)     │     │   iframe)     │
-└─────────────┘     └──────────────────┘     └────────────────────┘     └──────────────┘
-                           │                         ▲
-                           │  versioned in DB         │ user can re-render
-                           ▼                         │ with modified spec
-                    ┌──────────────────┐              │
-                    │  dashboard_       │──────────────┘
-                    │  snapshots table  │
-                    └──────────────────┘
+```mermaid
+flowchart LR
+    DS["Data Source\n(live DB)"] --> SE["Snapshot Engine\n(freeze + store)"]
+    SE --> LLM["LLM Renderer\n(data + spec → HTML/JS app)"]
+    LLM --> HP["HTMLPreview\n(sandboxed iframe)"]
+    SE -- "versioned in DB" --> DB[("dashboard_snapshots\ntable")]
+    DB -- "user re-renders\nwith modified spec" --> LLM
+
+    style DS fill:#1a1d27,stroke:#6366f1,color:#e0e0e0
+    style SE fill:#1a1d27,stroke:#22d3ee,color:#e0e0e0
+    style LLM fill:#1a1d27,stroke:#10b981,color:#e0e0e0
+    style HP fill:#1a1d27,stroke:#f59e0b,color:#e0e0e0
+    style DB fill:#1e2233,stroke:#8b8fa3,color:#e0e0e0
 ```
 
 ### Design Principles
@@ -133,13 +133,24 @@ interface DashboardMetrics {
 
 ### 2.3 Snapshot Lifecycle
 
-```
-1. CAPTURE  →  Freeze current metrics into metricsJson
-2. STORE    →  Insert into dashboard_snapshots with status='pending'
-3. RENDER   →  Send metricsJson + specText to LLM → receive HTML
-4. SAVE     →  Store renderedHtml, update status='rendered'
-5. DISPLAY  →  Serve HTML into HTMLPreview iframe
-6. RE-RENDER (optional) → User modifies specText, creates new version
+```mermaid
+stateDiagram-v2
+    direction LR
+
+    [*] --> Capture: Trigger snapshot
+    Capture --> Pending: Freeze metrics into metricsJson\nInsert row, status=pending
+    Pending --> Rendering: Send metricsJson + specText to LLM
+    Rendering --> Rendered: Store renderedHtml\nstatus=rendered
+    Rendering --> Error: LLM failure
+    Rendered --> Displayed: Serve HTML into\nHTMLPreview iframe
+    Displayed --> Rendering: User modifies specText\nNew version created
+    Error --> Rendering: Retry
+
+    state Capture {
+        direction LR
+        [*] --> freeze: Read TraceStore / DB
+        freeze --> store: Write dashboard_snapshots
+    }
 ```
 
 ### 2.4 Versioning & Lineage
@@ -149,6 +160,21 @@ When a user re-renders a dashboard with modified instructions:
 - The **same `metricsJson`** is copied (data doesn't change)
 - The **new `specText`** reflects the user's modifications
 - Previous versions remain accessible for comparison
+
+```mermaid
+graph LR
+    subgraph "lineageId: abc-123"
+        V1["v1<br/><b>Original spec</b><br/>specText: 'Show KPIs + area chart'<br/>metricsJson: {frozen data}"]
+        V2["v2<br/><b>User tweaked</b><br/>specText: 'Add heatmap, remove area'<br/>metricsJson: {same frozen data}"]
+        V3["v3<br/><b>Refined</b><br/>specText: 'Add Sankey, keep heatmap'<br/>metricsJson: {same frozen data}"]
+        V1 -- "re-render" --> V2
+        V2 -- "re-render" --> V3
+    end
+
+    style V1 fill:#1a1d27,stroke:#8b8fa3,color:#e0e0e0
+    style V2 fill:#1a1d27,stroke:#22d3ee,color:#e0e0e0
+    style V3 fill:#1a1d27,stroke:#10b981,color:#e0e0e0
+```
 
 This allows:
 - Comparing how different specs render the same data
@@ -231,30 +257,61 @@ This separation means:
 
 **Recommendation: Hybrid with backend primary.** Serve library bundles from `/static/dashboard-libs/` on the Express server. Fall back to CDN URLs if local files are missing. This ensures dashboards work offline (common in enterprise deployments) while CDN provides a safety net.
 
-```
-/static/dashboard-libs/
-  echarts.min.js          (~1.0 MB uncompressed, ~310 KB gzipped)
-  marked.umd.js           (~40 KB uncompressed, ~13 KB gzipped)
-  tabulator.min.js        (~280 KB uncompressed, ~99 KB gzipped)
-  tabulator.min.css       (~30 KB uncompressed, ~6 KB gzipped)
+```mermaid
+flowchart LR
+    subgraph iframe["Sandboxed iframe"]
+        Dashboard["Generated Dashboard JS"]
+    end
+
+    subgraph backend["Express Backend /static/dashboard-libs/"]
+        E1["echarts.min.js\n~1.0 MB / ~310 KB gz"]
+        M1["marked.umd.js\n~40 KB / ~13 KB gz"]
+        T1["tabulator.min.js\n~280 KB / ~99 KB gz"]
+        T2["tabulator.min.css\n~30 KB / ~6 KB gz"]
+    end
+
+    subgraph cdn["CDN Fallback (jsdelivr)"]
+        E2["echarts@5.6.0"]
+        M2["marked@15.0.7"]
+        T3["tabulator-tables@6.3.1"]
+    end
+
+    Dashboard -- "primary" --> backend
+    Dashboard -. "fallback" .-> cdn
+
+    style backend fill:#1a1d27,stroke:#10b981,color:#e0e0e0
+    style cdn fill:#1a1d27,stroke:#8b8fa3,color:#8b8fa3
+    style iframe fill:#0f1117,stroke:#6366f1,color:#e0e0e0
 ```
 
 Total backend storage: ~1.35 MB uncompressed. Served with gzip: ~428 KB.
 
 ### 3.4 Re-Render Flow
 
-```
-User clicks "Edit Dashboard" on a rendered dashboard
-  → Opens spec editor (textarea with current specText)
-  → User modifies the instructions
-  → Clicks "Re-Render"
-  → System creates new snapshot version:
-      - Same lineageId, same metricsJson
-      - New specText, new version number
-      - status='rendering'
-  → LLM generates new HTML from same data + new spec
-  → New renderedHtml stored, status='rendered'
-  → HTMLPreview updates with new dashboard
+```mermaid
+sequenceDiagram
+    actor User
+    participant UI as DashboardPanel
+    participant API as REST API
+    participant Store as DashboardStore
+    participant LLM as LLM Renderer
+    participant Frame as HTMLPreview iframe
+
+    User->>UI: Click "Edit Dashboard"
+    UI->>UI: Open spec editor (textarea)
+    User->>UI: Modify specText
+    User->>UI: Click "Re-Render"
+    UI->>API: POST /rerender {newSpec}
+    API->>Store: createNewVersion(lineageId, newSpec)
+    Note over Store: Same lineageId + metricsJson<br/>New specText, version++<br/>status = 'rendering'
+    Store-->>API: new snapshot ID
+    API->>LLM: metricsJson + newSpec
+    LLM-->>API: generated HTML
+    API->>Store: updateRenderedHtml(id, html)
+    Note over Store: status = 'rendered'
+    API-->>UI: { snapshotId, html }
+    UI->>Frame: Load new dashboard HTML
+    Frame-->>User: Interactive dashboard displayed
 ```
 
 ---
@@ -330,15 +387,39 @@ All libraries are loaded once and cached by the browser. The per-dashboard gener
 
 ### 5.1 Backend Components
 
-```
-src/
-  dashboard/
-    dashboard-store.ts        # SQLite CRUD for dashboard_snapshots
-    snapshot-engine.ts         # Captures metrics from TraceStore, DB
-    render-engine.ts           # Orchestrates LLM rendering
-    dashboard-routes.ts        # REST API endpoints
-    library-wrapper.ts         # Wraps generated HTML with library tags
-    metrics-schemas.ts         # TypeScript types for metricsJson
+```mermaid
+graph TD
+    subgraph "src/dashboard/"
+        DS[dashboard-store.ts<br/><i>SQLite CRUD for snapshots</i>]
+        SE[snapshot-engine.ts<br/><i>Captures metrics from TraceStore, DB</i>]
+        RE[render-engine.ts<br/><i>Orchestrates LLM rendering</i>]
+        DR[dashboard-routes.ts<br/><i>REST API endpoints</i>]
+        LW[library-wrapper.ts<br/><i>Wraps HTML with library tags</i>]
+        MS[metrics-schemas.ts<br/><i>TypeScript types for metricsJson</i>]
+    end
+
+    subgraph "External Dependencies"
+        TS[(TraceStore)]
+        DB[(SQLite DB)]
+        LLM[LLM Service]
+    end
+
+    DR --> SE
+    DR --> RE
+    DR --> DS
+    SE --> TS
+    SE --> DB
+    SE --> MS
+    RE --> LLM
+    RE --> DS
+    RE --> LW
+
+    style DS fill:#1a1d27,stroke:#6366f1,color:#e0e0e0
+    style SE fill:#1a1d27,stroke:#22d3ee,color:#e0e0e0
+    style RE fill:#1a1d27,stroke:#10b981,color:#e0e0e0
+    style DR fill:#1a1d27,stroke:#f59e0b,color:#e0e0e0
+    style LW fill:#1a1d27,stroke:#a78bfa,color:#e0e0e0
+    style MS fill:#1a1d27,stroke:#8b8fa3,color:#e0e0e0
 ```
 
 #### DashboardStore
@@ -414,30 +495,56 @@ class RenderEngine {
 
 ### 5.2 REST API
 
-```
-POST   /api/dashboards/snapshots          # Create + capture a new snapshot
-GET    /api/dashboards/snapshots           # List snapshots (filter by mission, type)
-GET    /api/dashboards/snapshots/:id       # Get snapshot detail (includes HTML if rendered)
-POST   /api/dashboards/snapshots/:id/render    # Trigger LLM rendering
-POST   /api/dashboards/snapshots/:id/rerender  # Re-render with new spec
-GET    /api/dashboards/snapshots/:id/html      # Get just the rendered HTML (for iframe src)
-DELETE /api/dashboards/snapshots/:id       # Delete a snapshot
+```mermaid
+graph LR
+    subgraph "Snapshot CRUD"
+        POST1["POST /api/dashboards/snapshots<br/><i>Create + capture new snapshot</i>"]
+        GET1["GET /api/dashboards/snapshots<br/><i>List (filter by mission, type)</i>"]
+        GET2["GET /api/dashboards/snapshots/:id<br/><i>Detail (includes HTML if rendered)</i>"]
+        DEL["DELETE /api/dashboards/snapshots/:id<br/><i>Delete a snapshot</i>"]
+    end
 
-GET    /api/dashboards/lineage/:lineageId  # Get all versions of a dashboard
+    subgraph "Rendering"
+        POST2["POST .../snapshots/:id/render<br/><i>Trigger LLM rendering</i>"]
+        POST3["POST .../snapshots/:id/rerender<br/><i>Re-render with new spec</i>"]
+        GET3["GET .../snapshots/:id/html<br/><i>Raw HTML for iframe src</i>"]
+    end
+
+    subgraph "Versioning"
+        GET4["GET /api/dashboards/lineage/:lineageId<br/><i>All versions of a dashboard</i>"]
+    end
+
+    style POST1 fill:#1a1d27,stroke:#10b981,color:#e0e0e0
+    style POST2 fill:#1a1d27,stroke:#10b981,color:#e0e0e0
+    style POST3 fill:#1a1d27,stroke:#10b981,color:#e0e0e0
+    style GET1 fill:#1a1d27,stroke:#6366f1,color:#e0e0e0
+    style GET2 fill:#1a1d27,stroke:#6366f1,color:#e0e0e0
+    style GET3 fill:#1a1d27,stroke:#6366f1,color:#e0e0e0
+    style GET4 fill:#1a1d27,stroke:#22d3ee,color:#e0e0e0
+    style DEL fill:#1a1d27,stroke:#f43f5e,color:#e0e0e0
 ```
 
 ### 5.3 Frontend Integration
 
 The dashboard renders inside the existing `HtmlPreview` component. The integration flow:
 
-```
-DashboardPanel.jsx
-  ├── DashboardHeader        # Title, version selector, re-render button
-  ├── DashboardSpecEditor    # Textarea for natural-language spec (collapsible)
-  ├── HtmlPreview            # Existing component — renders the HTML in iframe
-  │   └── iframe (sandbox="allow-same-origin allow-scripts")
-  │       └── Full dashboard HTML (libraries + generated code)
-  └── DashboardVersionList   # Sidebar showing version history
+```mermaid
+graph TD
+    DP["DashboardPanel.jsx"]
+    DP --> DH["DashboardHeader<br/><i>Title, version selector, re-render button</i>"]
+    DP --> DSE["DashboardSpecEditor<br/><i>Textarea for natural-language spec (collapsible)</i>"]
+    DP --> HP["HtmlPreview<br/><i>Existing component — renders HTML in iframe</i>"]
+    DP --> DVL["DashboardVersionList<br/><i>Sidebar showing version history</i>"]
+    HP --> IF["iframe sandbox=allow-same-origin allow-scripts"]
+    IF --> HTML["Full dashboard HTML<br/><i>libraries + generated code</i>"]
+
+    style DP fill:#1e2233,stroke:#6366f1,color:#e0e0e0
+    style DH fill:#1a1d27,stroke:#22d3ee,color:#e0e0e0
+    style DSE fill:#1a1d27,stroke:#10b981,color:#e0e0e0
+    style HP fill:#1a1d27,stroke:#f59e0b,color:#e0e0e0
+    style DVL fill:#1a1d27,stroke:#a78bfa,color:#e0e0e0
+    style IF fill:#0f1117,stroke:#8b8fa3,color:#e0e0e0
+    style HTML fill:#0f1117,stroke:#8b8fa3,color:#8b8fa3
 ```
 
 The `HtmlPreview` component already supports:
@@ -602,6 +709,37 @@ Pin particularly useful dashboard versions to a "Gallery" view, creating a libra
 ---
 
 ## 10. Implementation Phases
+
+```mermaid
+gantt
+    title Dashboard System Implementation Roadmap
+    dateFormat YYYY-MM-DD
+    axisFormat %b %d
+
+    section Phase 1: Foundation
+    DashboardStore (SQLite schema)          :p1a, 2026-02-17, 2d
+    SnapshotEngine (metric capture)         :p1b, after p1a, 2d
+    RenderEngine (LLM integration)          :p1c, after p1b, 3d
+    Library wrapper + static serving        :p1d, after p1a, 2d
+    REST API endpoints                      :p1e, after p1c, 2d
+
+    section Phase 2: Frontend
+    DashboardPanel + spec editor            :p2a, after p1e, 3d
+    HtmlPreview integration (trusted mode)  :p2b, after p2a, 2d
+    Version history sidebar                 :p2c, after p2b, 1d
+    Dashboard tab in mission view           :p2d, after p2b, 2d
+
+    section Phase 3: MCP & Agent
+    MCP tools for dashboard CRUD            :p3a, after p2d, 2d
+    Default specs per snapshot type         :p3b, after p3a, 1d
+    Auto-generate on mission completion     :p3c, after p3b, 2d
+
+    section Phase 4: Polish
+    Template library                        :p4a, after p3c, 2d
+    Dashboard gallery / pinning             :p4b, after p4a, 2d
+    Export as standalone HTML               :p4c, after p4a, 1d
+    Comparative view                        :p4d, after p4b, 3d
+```
 
 ### Phase 1: Foundation
 - [ ] Create `DashboardStore` with SQLite schema
