@@ -984,6 +984,16 @@ function App() {
   // Toggle MCP enabled/disabled status
   const handleToggleMcp = async (mcpId, currentEnabled) => {
     const newEnabled = !currentEnabled;
+
+    // Optimistic UI: immediately show connecting/disconnected state
+    setMcps((prev) =>
+      prev.map((mcp) =>
+        mcp.id === mcpId
+          ? { ...mcp, enabled: newEnabled, status: newEnabled ? 'connecting' : 'disconnected' }
+          : mcp
+      )
+    );
+
     try {
       const res = await fetch(`/api/mcps/${mcpId}`, {
         method: 'PATCH',
@@ -993,10 +1003,12 @@ function App() {
 
       if (res.ok) {
         const updatedMcp = await res.json();
-        // Update local state
+        // Update local state with actual status from server
         setMcps((prev) =>
           prev.map((mcp) =>
-            mcp.id === mcpId ? { ...mcp, enabled: updatedMcp.enabled, toolCount: updatedMcp.toolCount } : mcp
+            mcp.id === mcpId
+              ? { ...mcp, enabled: updatedMcp.enabled, status: updatedMcp.status, toolCount: updatedMcp.toolCount }
+              : mcp
           )
         );
         // Also update tools if the MCP was enabled/disabled
@@ -1012,9 +1024,25 @@ function App() {
         }
       } else {
         console.error('Failed to toggle MCP:', await res.text());
+        // Revert optimistic update on error
+        setMcps((prev) =>
+          prev.map((mcp) =>
+            mcp.id === mcpId
+              ? { ...mcp, enabled: currentEnabled, status: currentEnabled ? 'connected' : 'disconnected' }
+              : mcp
+          )
+        );
       }
     } catch (error) {
       console.error('Error toggling MCP:', error);
+      // Revert optimistic update on error
+      setMcps((prev) =>
+        prev.map((mcp) =>
+          mcp.id === mcpId
+            ? { ...mcp, enabled: currentEnabled, status: currentEnabled ? 'connected' : 'disconnected' }
+            : mcp
+        )
+      );
     }
   };
 
@@ -2085,26 +2113,42 @@ function App() {
                         </div>
                       )}
 
-                      {/* MCP Tools by Server */}
-                      {Object.entries(tools.mcp).map(([serverName, serverTools]) => {
-                        const groupKey = 'mcp_' + serverName;
+                      {/* MCP Servers with Tools */}
+                      {mcps.map((mcp) => {
+                        const serverTools = tools.mcp[mcp.name] || [];
+                        const groupKey = 'mcp_' + mcp.name;
                         const isExpanded = expandedToolGroups[groupKey];
+                        const isConnecting = mcp.status === 'connecting';
                         return (
-                          <div key={serverName} className="tool-group">
-                            <button
-                              className={`tool-group-header ${isExpanded ? 'expanded' : ''}`}
-                              onClick={() => setExpandedToolGroups(prev => {
-                                const updated = { ...prev };
-                                updated[groupKey] = !prev[groupKey];
-                                return updated;
-                              })}
-                            >
-                              <span className="tool-group-arrow">{isExpanded ? '▼' : '▶'}</span>
-                              <span className="tool-group-icon">🔌</span>
-                              <span className="tool-group-name">MCP: {serverName}</span>
-                              <span className="tool-group-count">{serverTools.length}</span>
-                            </button>
-                            {isExpanded && (
+                          <div key={mcp.id} className="tool-group mcp-tool-group">
+                            <div className={`tool-group-header ${isExpanded ? 'expanded' : ''}`}>
+                              <label className="mcp-toggle" title={mcp.enabled ? 'Disable MCP' : 'Enable MCP'} onClick={(e) => e.stopPropagation()}>
+                                <input
+                                  type="checkbox"
+                                  checked={mcp.enabled}
+                                  onChange={() => handleToggleMcp(mcp.id, mcp.enabled)}
+                                />
+                                <span className="mcp-toggle-slider"></span>
+                              </label>
+                              <button
+                                className="tool-group-expand"
+                                onClick={() => mcp.status === 'connected' && setExpandedToolGroups(prev => ({
+                                  ...prev,
+                                  [groupKey]: !prev[groupKey]
+                                }))}
+                                disabled={mcp.status !== 'connected'}
+                              >
+                                {mcp.status === 'connected' && <span className="tool-group-arrow">{isExpanded ? '▼' : '▶'}</span>}
+                                <span className={`mcp-status ${mcp.status || 'disconnected'}`}>●</span>
+                                <span className="tool-group-name">{mcp.name}</span>
+                                {isConnecting ? (
+                                  <span className="tool-group-spinner" title="Connecting..."></span>
+                                ) : mcp.status === 'connected' && (
+                                  <span className="tool-group-count">{serverTools.length}</span>
+                                )}
+                              </button>
+                            </div>
+                            {isExpanded && serverTools.length > 0 && (
                               <div className="tool-group-items">
                                 {serverTools.map((tool) => (
                                   <div key={tool.name} className="tool-item" title={formatToolTooltip(tool)}>
@@ -2122,58 +2166,22 @@ function App() {
               )}
             </div>
 
-            {/* MCPs Accordion */}
-            <div className="accordion">
-              <button
-                className={`accordion-header ${expandedAccordions.mcps ? 'expanded' : ''}`}
-                onClick={() => toggleAccordion('mcps')}
-              >
-                <span className="accordion-icon">🔌</span>
-                <span className="accordion-title">MCPs</span>
-                <span className="accordion-arrow">{expandedAccordions.mcps ? '▼' : '▶'}</span>
-              </button>
-              {expandedAccordions.mcps && (
-                <div className="accordion-content">
-                  {mcps.length === 0 ? (
-                    <div className="accordion-empty">No MCPs connected</div>
-                  ) : (
-                    mcps.map((mcp) => (
-                      <div key={mcp.id} className="accordion-item mcp-item">
-                        <label className="mcp-toggle" title={mcp.enabled ? 'Disable MCP' : 'Enable MCP'}>
-                          <input
-                            type="checkbox"
-                            checked={mcp.enabled}
-                            onChange={() => handleToggleMcp(mcp.id, mcp.enabled)}
-                          />
-                          <span className="mcp-toggle-slider"></span>
-                        </label>
-                        <span className={`mcp-status ${mcp.enabled ? 'connected' : 'disconnected'}`}>●</span>
-                        <span className="mcp-name">{mcp.name}</span>
-                        {mcp.toolCount > 0 && (
-                          <span className="mcp-tool-count" title={`${mcp.toolCount} tools`}>
-                            {mcp.toolCount}
-                          </span>
-                        )}
-                      </div>
-                    ))
-                  )}
-                </div>
-              )}
-            </div>
 
             {/* Computer Use Sessions Accordion - browser + desktop */}
-            <ComputerUseSessions
-              browserSessions={browserSessions}
-              desktopSessions={desktopSessions}
-              browserScreenshots={browserScreenshots}
-              desktopScreenshots={desktopScreenshots}
-              selectedSessionId={selectedBrowserSessionId || selectedDesktopSessionId}
-              onSelectSession={handleSelectSession}
-              onCloseBrowserSession={handleCloseBrowserSession}
-              onCloseDesktopSession={handleCloseDesktopSession}
-              expanded={expandedAccordions.computerUse}
-              onToggle={handleToggleComputerUse}
-            />
+            {(browserSessions.length > 0 || desktopSessions.length > 0) && (
+              <ComputerUseSessions
+                browserSessions={browserSessions}
+                desktopSessions={desktopSessions}
+                browserScreenshots={browserScreenshots}
+                desktopScreenshots={desktopScreenshots}
+                selectedSessionId={selectedBrowserSessionId || selectedDesktopSessionId}
+                onSelectSession={handleSelectSession}
+                onCloseBrowserSession={handleCloseBrowserSession}
+                onCloseDesktopSession={handleCloseDesktopSession}
+                expanded={expandedAccordions.computerUse}
+                onToggle={handleToggleComputerUse}
+              />
+            )}
           </div>
           </>
         )}

@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from 'child_process';
 import { createInterface, type Interface as ReadlineInterface } from 'readline';
 import type {
   MCPServerConfig,
+  MCPServerStatus,
   MCPTool,
   MCPToolCall,
   MCPToolResult,
@@ -19,6 +20,7 @@ import { SUPERVISOR_NAME } from '../constants.js';
  */
 export class MCPClient {
   private servers: Map<string, MCPServerConfig> = new Map();
+  private serverStatus: Map<string, MCPServerStatus> = new Map();
   private tools: Map<string, MCPTool> = new Map();
   private resources: Map<string, MCPResource> = new Map();
   private prompts: Map<string, MCPPrompt> = new Map();
@@ -35,20 +37,34 @@ export class MCPClient {
   constructor() {}
 
   /**
+   * Get the connection status of a server
+   */
+  getServerStatus(serverId: string): MCPServerStatus {
+    return this.serverStatus.get(serverId) || 'disconnected';
+  }
+
+  /**
    * Register an MCP server
    */
   async registerServer(config: MCPServerConfig): Promise<void> {
     this.servers.set(config.id, config);
+    this.serverStatus.set(config.id, config.enabled ? 'connecting' : 'disconnected');
 
     if (config.enabled) {
-      // Determine transport type
-      const transport = config.transport || (config.command ? 'stdio' : 'http');
+      try {
+        // Determine transport type
+        const transport = config.transport || (config.command ? 'stdio' : 'http');
 
-      if (transport === 'stdio' && config.command) {
-        await this.startStdioServer(config);
+        if (transport === 'stdio' && config.command) {
+          await this.startStdioServer(config);
+        }
+
+        await this.discoverCapabilities(config);
+        this.serverStatus.set(config.id, 'connected');
+      } catch (error) {
+        console.error(`[MCP] Failed to connect to ${config.name}:`, error);
+        this.serverStatus.set(config.id, 'error');
       }
-
-      await this.discoverCapabilities(config);
     }
   }
 
@@ -467,12 +483,19 @@ export class MCPClient {
 
     if (enabled) {
       // Enable: start server and discover capabilities
-      const transport = server.transport || (server.command ? 'stdio' : 'http');
-      if (transport === 'stdio' && server.command && !this.processes.has(serverId)) {
-        await this.startStdioServer(server);
+      this.serverStatus.set(serverId, 'connecting');
+      try {
+        const transport = server.transport || (server.command ? 'stdio' : 'http');
+        if (transport === 'stdio' && server.command && !this.processes.has(serverId)) {
+          await this.startStdioServer(server);
+        }
+        await this.discoverCapabilities(server);
+        this.serverStatus.set(serverId, 'connected');
+        console.log(`[MCP] Server enabled: ${server.name}`);
+      } catch (error) {
+        console.error(`[MCP] Failed to enable ${server.name}:`, error);
+        this.serverStatus.set(serverId, 'error');
       }
-      await this.discoverCapabilities(server);
-      console.log(`[MCP] Server enabled: ${server.name}`);
     } else {
       // Disable: stop stdio server if running
       const proc = this.processes.get(serverId);
@@ -481,6 +504,7 @@ export class MCPClient {
         this.processes.delete(serverId);
         this.readlines.delete(serverId);
       }
+      this.serverStatus.set(serverId, 'disconnected');
       console.log(`[MCP] Server disabled: ${server.name}`);
     }
 
