@@ -18,13 +18,44 @@ import type { Express, Request, Response } from 'express';
 import type { DashboardStore } from './dashboard-store.js';
 import type { SnapshotEngine } from './snapshot-engine.js';
 import type { RenderEngine } from './render-engine.js';
-import type { SnapshotType } from './types.js';
+import type { DashboardSnapshot, SnapshotType } from './types.js';
+import {
+  DASHBOARD_DEFAULT_QUERY_LIMIT,
+  MAX_QUERY_LIMIT,
+} from '../constants.js';
 
 export interface DashboardRoutesConfig {
   dashboardStore: DashboardStore;
   snapshotEngine: SnapshotEngine;
   renderEngine: RenderEngine;
 }
+
+/**
+ * Strip renderedHtml and metricsJson from a snapshot for list responses.
+ * Keeps payloads small — callers use the detail or html endpoint for full content.
+ */
+function toSnapshotSummary(s: DashboardSnapshot) {
+  return {
+    id: s.id,
+    conversationId: s.conversationId,
+    missionId: s.missionId,
+    title: s.title,
+    snapshotType: s.snapshotType,
+    version: s.version,
+    lineageId: s.lineageId,
+    specText: s.specText,
+    renderModel: s.renderModel,
+    renderDurationMs: s.renderDurationMs,
+    renderTokensIn: s.renderTokensIn,
+    renderTokensOut: s.renderTokensOut,
+    createdAt: s.createdAt,
+    renderedAt: s.renderedAt,
+    status: s.status,
+    error: s.error,
+  };
+}
+
+const VALID_SNAPSHOT_TYPES: SnapshotType[] = ['mission_report', 'agent_analytics', 'system_health', 'custom'];
 
 export function setupDashboardRoutes(app: Express, config: DashboardRoutesConfig): void {
   const { dashboardStore, snapshotEngine, renderEngine } = config;
@@ -48,9 +79,8 @@ export function setupDashboardRoutes(app: Express, config: DashboardRoutesConfig
         return;
       }
 
-      const validTypes: SnapshotType[] = ['mission_report', 'agent_analytics', 'system_health', 'custom'];
-      if (!validTypes.includes(snapshotType)) {
-        res.status(400).json({ error: `snapshotType must be one of: ${validTypes.join(', ')}` });
+      if (!VALID_SNAPSHOT_TYPES.includes(snapshotType)) {
+        res.status(400).json({ error: `snapshotType must be one of: ${VALID_SNAPSHOT_TYPES.join(', ')}` });
         return;
       }
 
@@ -65,12 +95,7 @@ export function setupDashboardRoutes(app: Express, config: DashboardRoutesConfig
             }
             metricsJson = JSON.stringify(snapshotEngine.captureMissionReport(conversationId));
             break;
-          case 'agent_analytics': {
-            const since = req.body.since as string | undefined;
-            const until = req.body.until as string | undefined;
-            metricsJson = JSON.stringify(snapshotEngine.captureAgentAnalytics(since, until));
-            break;
-          }
+          case 'agent_analytics':
           case 'system_health': {
             const since = req.body.since as string | undefined;
             const until = req.body.until as string | undefined;
@@ -122,7 +147,7 @@ export function setupDashboardRoutes(app: Express, config: DashboardRoutesConfig
   app.get('/api/dashboards/snapshots', (req: Request, res: Response) => {
     try {
       const snapshots = dashboardStore.getSnapshots({
-        limit: parseInt(req.query.limit as string) || 20,
+        limit: parseInt(req.query.limit as string) || DASHBOARD_DEFAULT_QUERY_LIMIT,
         missionId: req.query.missionId as string | undefined,
         conversationId: req.query.conversationId as string | undefined,
         snapshotType: req.query.snapshotType as SnapshotType | undefined,
@@ -130,25 +155,7 @@ export function setupDashboardRoutes(app: Express, config: DashboardRoutesConfig
         since: req.query.since as string | undefined,
       });
 
-      // Return without renderedHtml to keep payloads small
-      res.json(snapshots.map(s => ({
-        id: s.id,
-        conversationId: s.conversationId,
-        missionId: s.missionId,
-        title: s.title,
-        snapshotType: s.snapshotType,
-        version: s.version,
-        lineageId: s.lineageId,
-        specText: s.specText,
-        renderModel: s.renderModel,
-        renderDurationMs: s.renderDurationMs,
-        renderTokensIn: s.renderTokensIn,
-        renderTokensOut: s.renderTokensOut,
-        createdAt: s.createdAt,
-        renderedAt: s.renderedAt,
-        status: s.status,
-        error: s.error,
-      })));
+      res.json(snapshots.map(toSnapshotSummary));
     } catch (error) {
       console.error('[Dashboard API] Failed to list snapshots:', error);
       res.status(500).json({ error: 'Failed to list snapshots' });
@@ -300,26 +307,7 @@ export function setupDashboardRoutes(app: Express, config: DashboardRoutesConfig
   app.get('/api/dashboards/lineage/:lineageId', (req: Request, res: Response) => {
     try {
       const snapshots = dashboardStore.getSnapshotsByLineage(req.params.lineageId);
-
-      // Return without renderedHtml to keep payloads small
-      res.json(snapshots.map(s => ({
-        id: s.id,
-        conversationId: s.conversationId,
-        missionId: s.missionId,
-        title: s.title,
-        snapshotType: s.snapshotType,
-        version: s.version,
-        lineageId: s.lineageId,
-        specText: s.specText,
-        renderModel: s.renderModel,
-        renderDurationMs: s.renderDurationMs,
-        renderTokensIn: s.renderTokensIn,
-        renderTokensOut: s.renderTokensOut,
-        createdAt: s.createdAt,
-        renderedAt: s.renderedAt,
-        status: s.status,
-        error: s.error,
-      })));
+      res.json(snapshots.map(toSnapshotSummary));
     } catch (error) {
       console.error('[Dashboard API] Failed to get lineage:', error);
       res.status(500).json({ error: 'Failed to get dashboard lineage' });

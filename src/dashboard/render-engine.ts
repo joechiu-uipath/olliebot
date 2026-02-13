@@ -10,6 +10,10 @@
 import type { LLMService } from '../llm/service.js';
 import type { LLMMessage } from '../llm/types.js';
 import type { DashboardStore } from './dashboard-store.js';
+import {
+  DASHBOARD_RENDER_MAX_TOKENS,
+  DASHBOARD_RENDER_TEMPERATURE,
+} from '../constants.js';
 
 // ================================================================
 // CDN library URLs (version-pinned)
@@ -125,8 +129,8 @@ export class RenderEngine {
     try {
       const response = await this.llmService.generate(messages, {
         systemPrompt: RENDER_SYSTEM_PROMPT,
-        maxTokens: 16384,
-        temperature: 0.3,
+        maxTokens: DASHBOARD_RENDER_MAX_TOKENS,
+        temperature: DASHBOARD_RENDER_TEMPERATURE,
       });
 
       const durationMs = Date.now() - startTime;

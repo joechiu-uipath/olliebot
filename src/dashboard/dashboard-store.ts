@@ -8,6 +8,11 @@
 
 import { v4 as uuid } from 'uuid';
 import { getDb } from '../db/index.js';
+import {
+  DASHBOARD_DEFAULT_QUERY_LIMIT,
+  DASHBOARD_DEFAULT_RETENTION_DAYS,
+  MAX_QUERY_LIMIT,
+} from '../constants.js';
 import type {
   DashboardSnapshot,
   SnapshotQueryOptions,
@@ -143,7 +148,7 @@ export class DashboardStore {
     }
 
     const where = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
-    const limit = Math.min(Math.max(opts?.limit || 20, 1), 100);
+    const limit = Math.min(Math.max(opts?.limit || DASHBOARD_DEFAULT_QUERY_LIMIT, 1), MAX_QUERY_LIMIT);
 
     return db.rawQuery(
       `SELECT * FROM dashboard_snapshots ${where} ORDER BY createdAt DESC LIMIT ?`,
@@ -220,7 +225,7 @@ export class DashboardStore {
   // Cleanup
   // ================================================================
 
-  cleanup(retentionDays: number = 30): number {
+  cleanup(retentionDays: number = DASHBOARD_DEFAULT_RETENTION_DAYS): number {
     const db = getDb();
     const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000).toISOString();
     return db.rawRun(

@@ -1,6 +1,6 @@
-# Mission Dashboard System — Design & Technical Evaluation
+# Mission Dashboard System — Design Ready
 
-> **Status:** Design Evaluation
+> **Status:** Implementation Ready (Phase 1 backend complete)
 > **Date:** February 13, 2026
 > **Scope:** LLM-powered, versioned, self-contained dashboard rendering system
 
@@ -390,12 +390,12 @@ All libraries are loaded once and cached by the browser. The per-dashboard gener
 ```mermaid
 graph TD
     subgraph "src/dashboard/"
+        TP[types.ts<br/><i>TypeScript types + metrics schemas</i>]
         DS[dashboard-store.ts<br/><i>SQLite CRUD for snapshots</i>]
-        SE[snapshot-engine.ts<br/><i>Captures metrics from TraceStore, DB</i>]
-        RE[render-engine.ts<br/><i>Orchestrates LLM rendering</i>]
+        SE[snapshot-engine.ts<br/><i>Captures metrics from TraceStore</i>]
+        RE[render-engine.ts<br/><i>LLM rendering + CDN library wrapper</i>]
         DR[dashboard-routes.ts<br/><i>REST API endpoints</i>]
-        LW[library-wrapper.ts<br/><i>Wraps HTML with library tags</i>]
-        MS[metrics-schemas.ts<br/><i>TypeScript types for metricsJson</i>]
+        IX[index.ts<br/><i>Barrel exports</i>]
     end
 
     subgraph "External Dependencies"
@@ -408,18 +408,17 @@ graph TD
     DR --> RE
     DR --> DS
     SE --> TS
-    SE --> DB
-    SE --> MS
+    SE --> TP
+    DS --> DB
     RE --> LLM
     RE --> DS
-    RE --> LW
 
+    style TP fill:#1a1d27,stroke:#8b8fa3,color:#e0e0e0
     style DS fill:#1a1d27,stroke:#6366f1,color:#e0e0e0
     style SE fill:#1a1d27,stroke:#22d3ee,color:#e0e0e0
     style RE fill:#1a1d27,stroke:#10b981,color:#e0e0e0
     style DR fill:#1a1d27,stroke:#f59e0b,color:#e0e0e0
-    style LW fill:#1a1d27,stroke:#a78bfa,color:#e0e0e0
-    style MS fill:#1a1d27,stroke:#8b8fa3,color:#e0e0e0
+    style IX fill:#1a1d27,stroke:#8b8fa3,color:#8b8fa3
 ```
 
 #### DashboardStore
@@ -452,22 +451,16 @@ Captures metrics from various sources into the standardized `DashboardMetrics` f
 
 ```typescript
 class SnapshotEngine {
-  constructor(
-    private traceStore: TraceStore,
-    private db: Database,
-  ) {}
+  constructor(private traceStore: TraceStore) {}
 
-  /** Capture a mission execution report */
-  captureMissionReport(missionId: string): DashboardMetrics;
+  /** Capture system-wide agent analytics for a time range */
+  captureAgentAnalytics(since?: string, until?: string): DashboardMetrics;
 
-  /** Capture system-wide agent analytics */
-  captureAgentAnalytics(timeRange: TimeRange): DashboardMetrics;
-
-  /** Capture system health metrics */
-  captureSystemHealth(): DashboardMetrics;
+  /** Capture a mission execution report by conversationId */
+  captureMissionReport(conversationId: string): DashboardMetrics;
 
   /** Capture custom metrics from raw data */
-  captureCustom(data: Record<string, unknown>): DashboardMetrics;
+  captureCustom(title: string, data: Record<string, unknown>): DashboardMetrics;
 }
 ```
 
@@ -555,12 +548,14 @@ The `HtmlPreview` component already supports:
 
 For dashboards, we bypass the "Execute" approval gate since dashboard HTML is system-generated (not user-pasted). The `HtmlPreview` receives a prop like `trustedSource={true}` to auto-enable scripts.
 
-### 5.4 MCP Server Integration
+### 5.4 MCP Server Integration (Phase 3 — Deferred)
+
+> **Status:** Deferred to Phase 3. The REST API is sufficient for initial use; MCP tools will be added once we validate which agent workflows actually need programmatic dashboard access.
 
 Extend the MCP server with dashboard tools so the coding agent can trigger dashboard generation:
 
 ```typescript
-// New tools in src/mcp-server/tools/dashboards.ts
+// Future: src/mcp-server/tools/dashboards.ts
 create_dashboard_snapshot   // Capture metrics and create a snapshot
 render_dashboard            // Trigger LLM rendering of a snapshot
 get_dashboard               // Retrieve a rendered dashboard
@@ -635,7 +630,7 @@ System-wide agent analytics dashboard:
 
 Two sample dashboards are provided for technical evaluation. Both are self-contained HTML files with hardcoded sample data, demonstrating what the LLM rendering pipeline would produce.
 
-### 7.1 ECharts Sample: `docs/design/samples/dashboard-sample-echarts.html`
+### 7.1 ECharts Sample: `docs/design/dashboard-board-samples/dashboard-sample-echarts.html`
 
 **Demonstrates:** Agent Analytics dashboard using Apache ECharts.
 
@@ -647,7 +642,7 @@ Showcases: KPI cards, stacked area (token usage over time with data zoom), donut
 - Animation quality and interactivity (zoom, tooltips, toolbox)
 - Dark theme aesthetics
 
-### 7.2 ApexCharts Sample: `docs/design/samples/dashboard-sample-apexcharts.html`
+### 7.2 ApexCharts Sample: `docs/design/dashboard-board-samples/dashboard-sample-apexcharts.html`
 
 **Demonstrates:** Mission Execution Report using ApexCharts.
 
@@ -741,22 +736,25 @@ gantt
     Comparative view                        :p4d, after p4b, 3d
 ```
 
-### Phase 1: Foundation
-- [ ] Create `DashboardStore` with SQLite schema
-- [ ] Implement `SnapshotEngine` for mission reports
-- [ ] Implement `RenderEngine` with LLM integration
-- [ ] Add library-wrapper with local bundle serving
-- [ ] REST API endpoints (create, render, get, list)
+### Phase 1: Foundation (Complete)
+- [x] Create `DashboardStore` with SQLite schema (`dashboard-store.ts`)
+- [x] Type definitions + metrics schema (`types.ts`)
+- [x] Implement `SnapshotEngine` for agent analytics + mission reports (`snapshot-engine.ts`)
+- [x] Implement `RenderEngine` with LLM integration + CDN library wrapper (`render-engine.ts`)
+- [x] Default specs for each snapshot type (in `render-engine.ts`)
+- [x] REST API endpoints — full CRUD + render/rerender/html/lineage (`dashboard-routes.ts`)
+- [x] Server wiring — auto-initializes when `llmService` + `traceStore` available
+- Note: Library serving via CDN only (no backend static serve yet)
 
 ### Phase 2: Frontend
 - [ ] `DashboardPanel` component with spec editor
 - [ ] Integration with `HtmlPreview` (trusted source mode)
 - [ ] Version history sidebar
 - [ ] Dashboard tab in mission view
+- [ ] Loading/error/empty state UX (see Section 11)
 
 ### Phase 3: MCP & Agent Integration
-- [ ] MCP tools for dashboard CRUD
-- [ ] Default specs for each snapshot type
+- [ ] MCP tools for dashboard CRUD (deferred — evaluating necessity first)
 - [ ] Auto-generate dashboard on mission completion
 
 ### Phase 4: Polish
@@ -764,3 +762,50 @@ gantt
 - [ ] Dashboard gallery/pinning
 - [ ] Export as standalone HTML
 - [ ] Comparative view
+
+---
+
+## 11. Enterprise UX Requirements
+
+### 11.1 State Management — Loading, Error, Empty
+
+Every dashboard interaction has three non-happy states that must be designed:
+
+| State | Trigger | UX Response |
+|-------|---------|-------------|
+| **Empty** | User opens dashboard tab, no snapshots exist | Show onboarding card: "Create your first dashboard" with snapshot type selector and one-click creation. No blank screens. |
+| **Loading (render)** | User clicks "Render" or "Re-render" | Show skeleton dashboard layout (gray placeholder cards matching KPI/chart/table positions). Display estimated time ("LLM rendering — typically 10-20s"). Show a cancel button after 15s. |
+| **Error (render failure)** | LLM returns broken HTML or times out | Show error banner with the error message, a "Retry" button, and a "View Previous Version" link (if lineage has prior rendered versions). Never leave the user stuck. |
+| **Error (capture failure)** | TraceStore query fails or returns no data | Show "No trace data available for the selected range" with suggestions: adjust time range, check that agents have run, etc. |
+
+### 11.2 Metrics Payload Size Guard
+
+The `metricsJson` payload is sent to the LLM as part of the render prompt. Large payloads can:
+- Exhaust the LLM context window
+- Produce truncated/incomplete dashboards
+- Slow down rendering significantly
+
+**Constraint:** Cap `metricsJson` at 50 KB. If captured data exceeds this:
+1. Reduce detail tables (LLM calls, traces) to top-N by token count
+2. Aggregate time series to larger bucket sizes
+3. Log a warning so the user knows data was trimmed
+
+This is enforced in `SnapshotEngine` before returning `DashboardMetrics`.
+
+### 11.3 Accessibility
+
+Dashboard HTML generated by the LLM runs inside a sandboxed iframe, which limits our control. However:
+
+- **System prompt includes accessibility rule:** Charts must have `aria-label` attributes on containers. Tables must use `<th>` with `scope`. Color-only indicators must include text labels.
+- **Outer chrome (DashboardPanel):** Fully keyboard-navigable. Version selector, spec editor, and action buttons must be reachable via Tab. Re-render shortcut: `Ctrl+Enter` / `Cmd+Enter` in the spec editor.
+- **Screen reader support:** Dashboard title, version, and render status announced via `aria-live` regions.
+
+### 11.4 Dashboard List UX (Enterprise Scale)
+
+For teams generating hundreds of dashboards:
+
+- **Default sort:** Most recently rendered first (not created)
+- **Filter chips:** By snapshot type, by status (rendered/pending/error), by mission
+- **Search:** Title substring search
+- **Bulk actions:** Select multiple + delete, or select multiple + re-render with same new spec
+- **Pagination:** Cursor-based pagination for consistent results under concurrent writes
