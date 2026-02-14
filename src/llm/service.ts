@@ -267,7 +267,6 @@ export class LLMService {
           provider: firstResult.provider,
           originalTokens: totalOriginal,
           compressedTokens: totalCompressed,
-          savingsPercent,
           compressionTimeMs: totalTimeMs,
           originalText: messages.length > 0 ? this.extractFirstUserText(messages) : undefined,
           compressedText: result.messages.length > 0 ? this.extractFirstUserText(result.messages) : undefined,

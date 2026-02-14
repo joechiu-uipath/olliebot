@@ -124,7 +124,6 @@ export class TraceStore {
         tokenReductionProvider TEXT,
         tokenReductionOriginalTokens INTEGER,
         tokenReductionCompressedTokens INTEGER,
-        tokenReductionSavingsPercent REAL,
         tokenReductionTimeMs INTEGER,
         tokenReductionOriginalText TEXT,
         tokenReductionCompressedText TEXT
@@ -137,7 +136,6 @@ export class TraceStore {
       'tokenReductionProvider TEXT',
       'tokenReductionOriginalTokens INTEGER',
       'tokenReductionCompressedTokens INTEGER',
-      'tokenReductionSavingsPercent REAL',
       'tokenReductionTimeMs INTEGER',
       'tokenReductionOriginalText TEXT',
       'tokenReductionCompressedText TEXT',
@@ -562,7 +560,6 @@ export class TraceStore {
     provider: string;
     originalTokens: number;
     compressedTokens: number;
-    savingsPercent: number;
     compressionTimeMs: number;
     originalText?: string;
     compressedText?: string;
@@ -578,7 +575,6 @@ export class TraceStore {
         tokenReductionProvider = ?,
         tokenReductionOriginalTokens = ?,
         tokenReductionCompressedTokens = ?,
-        tokenReductionSavingsPercent = ?,
         tokenReductionTimeMs = ?,
         tokenReductionOriginalText = ?,
         tokenReductionCompressedText = ?
@@ -587,7 +583,6 @@ export class TraceStore {
         data.provider,
         data.originalTokens,
         data.compressedTokens,
-        data.savingsPercent,
         data.compressionTimeMs,
         originalText,
         compressedText,

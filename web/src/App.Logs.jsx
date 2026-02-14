@@ -274,6 +274,11 @@ function formatTokens(n) {
   return String(n);
 }
 
+function savingsPercent(original, compressed) {
+  if (!original || original <= 0) return 0;
+  return Math.round((original - compressed) / original * 10000) / 100;
+}
+
 function StatusBadge({ status }) {
   const cls = status === 'running' || status === 'pending' || status === 'streaming'
     ? 'logs-badge running'
@@ -636,7 +641,7 @@ const TraceDetailView = memo(function TraceDetailView({ trace, onBack, onSelectL
                 <div className="logs-llm-stats">
                   {formatTokens(c.inputTokens)} in / {formatTokens(c.outputTokens)} out
                   {c.tokenReductionEnabled === 1 && (
-                    <span className="logs-token-reduction-inline"> | compressed: {c.tokenReductionSavingsPercent}% saved</span>
+                    <span className="logs-token-reduction-inline"> | compressed: {savingsPercent(c.tokenReductionOriginalTokens, c.tokenReductionCompressedTokens)}% saved</span>
                   )}
                   {c.callerPurpose && <span> | {c.callerPurpose}</span>}
                   {c.stopReason && <span> | stop: {c.stopReason}</span>}
@@ -730,7 +735,7 @@ const LlmCallDetailView = memo(function LlmCallDetailView({ call, onBack }) {
           <h4 className="logs-collapsible" onClick={() => setShowTokenReduction(!showTokenReduction)}>
             {showTokenReduction ? '▾' : '▸'} Token Reduction
             <span className="logs-token-reduction-badge">
-              {call.tokenReductionSavingsPercent}% saved
+              {savingsPercent(call.tokenReductionOriginalTokens, call.tokenReductionCompressedTokens)}% saved
             </span>
           </h4>
           {showTokenReduction && (
@@ -739,7 +744,7 @@ const LlmCallDetailView = memo(function LlmCallDetailView({ call, onBack }) {
                 <span>Provider: <strong>{call.tokenReductionProvider}</strong></span>
                 <span>Original: <strong>{formatTokens(call.tokenReductionOriginalTokens)} tokens</strong></span>
                 <span>Compressed: <strong>{formatTokens(call.tokenReductionCompressedTokens)} tokens</strong></span>
-                <span>Saved: <strong>{formatTokens(call.tokenReductionOriginalTokens - call.tokenReductionCompressedTokens)} tokens ({call.tokenReductionSavingsPercent}%)</strong></span>
+                <span>Saved: <strong>{formatTokens(call.tokenReductionOriginalTokens - call.tokenReductionCompressedTokens)} tokens ({savingsPercent(call.tokenReductionOriginalTokens, call.tokenReductionCompressedTokens)}%)</strong></span>
                 <span>Compression Time: <strong>{formatDuration(call.tokenReductionTimeMs)}</strong></span>
               </div>
               {call.tokenReductionOriginalText && (

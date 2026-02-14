@@ -111,7 +111,6 @@ export interface LlmCallRecord {
   tokenReductionProvider: string | null;
   tokenReductionOriginalTokens: number | null;
   tokenReductionCompressedTokens: number | null;
-  tokenReductionSavingsPercent: number | null;
   tokenReductionTimeMs: number | null;
   tokenReductionOriginalText: string | null;   // Stored for trace inspection
   tokenReductionCompressedText: string | null;  // Stored for trace inspection
