@@ -42,6 +42,45 @@ export class LLMService {
     this.traceStore = config.traceStore || null;
     this.tokenReduction = config.tokenReduction || null;
     this.settingsService = config.settingsService || null;
+
+    // Wire up compression cache ↔ DB persistence if both services are available
+    if (this.tokenReduction && this.traceStore) {
+      const cache = this.tokenReduction.getCache();
+      const traceStore = this.traceStore;
+
+      cache.setPersistence(
+        (entry) => {
+          traceStore.persistCacheEntry({
+            key: entry.key,
+            inputTextPreview: entry.inputText,
+            resultJson: JSON.stringify(entry.result),
+            createdAt: entry.createdAt,
+          });
+        },
+        (key) => {
+          traceStore.removeCacheEntry(key);
+        }
+      );
+
+      // Load cached entries from DB asynchronously (non-blocking)
+      Promise.resolve().then(() => {
+        try {
+          const rows = traceStore.loadCacheEntries();
+          if (rows.length > 0) {
+            const entries = rows.map(row => ({
+              key: row.key,
+              inputText: row.inputTextPreview,
+              result: JSON.parse(row.resultJson),
+              createdAt: row.createdAt,
+            }));
+            cache.loadEntries(entries);
+            console.log(`[LLMService] Token reduction cache: loaded ${entries.length} entries from DB`);
+          }
+        } catch (err) {
+          console.warn('[LLMService] Failed to load token reduction cache from DB (non-fatal):', err);
+        }
+      });
+    }
   }
 
   // ============================================================
