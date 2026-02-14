@@ -383,6 +383,7 @@ describe('WorkerAgent', () => {
     });
 
     it('reports failure to parent on error', async () => {
+      const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
       const sendToAgentSpy = vi.spyOn(worker as any, 'sendToAgent').mockResolvedValue(undefined);
       (worker as any).generateResponse = vi.fn().mockRejectedValue(new Error('Generation failed'));
 
@@ -405,6 +406,8 @@ describe('WorkerAgent', () => {
           }),
         })
       );
+
+      consoleErrorSpy.mockRestore();
     });
 
     it('sends response to channel (no tools)', async () => {
