@@ -196,40 +196,84 @@ under each metric, and the LLM parser extracts them into the structured JSON for
 
 ## 4. Collection Architecture
 
-### 4.1 Collection Execution Model
+### 4.1 Metric Collection Chat
+
+Metric collection is an agentic process — it requires LLM calls to interpret tool
+output, handle failures, and record results. A chat is the natural execution context
+for multi-turn agent work and provides built-in record-keeping (every tool call,
+result, and decision is captured in the conversation history).
+
+To avoid chat explosion, each mission gets a single **utility metric collection chat**:
+
+```
+Mission: "Developer Experience"
+  └── Chat: "[Metric Collection] Developer Experience"
+        ├── Turn 1: collect build-performance/local-build-time
+        ├── Turn 2: collect build-performance/ci-build-time
+        ├── Turn 3: collect build-performance/cache-hit-rate
+        ├── Turn 4: collect onboarding/time-to-first-pr
+        ├── ...
+        └── Turn N: collect last metric
+```
+
+**Key design decisions:**
+
+- **One chat per mission** — all pillars and all metrics share a single metric
+  collection chat. This keeps the chat count bounded (1 per mission, not 1 per
+  pillar or 1 per metric).
+- **All pillars collected in the same chat** — the Mission Lead iterates through
+  every pillar's metrics within the same conversation, delegating each to the
+  appropriate Pillar Owner worker.
+- **Append-only log** — each cadence cycle appends new turns to the same chat,
+  creating a chronological audit trail of every collection attempt, success, and
+  failure.
+
+### 4.2 Collection Execution Model
+
+Each tool-based metric is collected in a **single-turn agentic loop** within the
+metric collection chat:
 
 ```
 Cadence trigger (cron)
   │
   ▼
-MissionLeadAgent receives cycle prompt
+Metric collection chat receives cycle prompt
   │
   ├── For each pillar:
-  │     ├── For each metric with collection.method === 'tool':
-  │     │     ├── Agent calls collection.toolName with collection.toolParams
-  │     │     ├── Agent interprets result using collection.instructions
-  │     │     ├── Agent extracts numeric value
-  │     │     └── Agent calls mission_metric_record tool to persist
-  │     │
-  │     └── For each metric with collection.method === 'derived':
-  │           ├── System fetches latest values of dependsOn metrics
-  │           ├── System evaluates formula
-  │           └── System persists result automatically
+  │     └── For each metric with collection.method === 'tool':
+  │           │
+  │           │  ┌─────────────────────────────────────────────┐
+  │           └──│  Single-turn agentic loop:                  │
+  │              │  1. Mission Lead delegates to Pillar Owner   │
+  │              │     worker, passing metric instructions and  │
+  │              │     tool configuration                       │
+  │              │  2. Pillar Owner runs the data collection    │
+  │              │     tool → metric value collected             │
+  │              │  3. Pillar Owner calls mission_metric_record │
+  │              │     → metric logged and status computed       │
+  │              └─────────────────────────────────────────────┘
+  │
+  ├── For each metric with collection.method === 'derived':
+  │     ├── System fetches latest values of dependsOn metrics
+  │     ├── System evaluates formula
+  │     └── System persists result automatically
   │
   └── Agent generates status summary (on_target / warning / off_target per metric)
 ```
 
-### 4.2 Agent-Based Collection (Why Agents, Not Cron Jobs)
+### 4.3 Agent-Based Collection (Why Agents, Not Cron Jobs)
 
-The collecting entity is an **agent** (Mission Lead or Pillar Owner), not a background job. This is intentional:
+The collecting entity is an **agent** (Mission Lead delegating to Pillar Owner),
+not a background job. The chat-based execution model is intentional:
 
 1. **Agents can interpret ambiguous results** — tool output may need parsing, filtering, or judgment
 2. **Agents can handle failures** — if a tool fails, the agent can retry, try alternatives, or escalate
 3. **Agents can restrict tool access** — the Pillar Owner template already limits which tools it can use
 4. **Instructions are natural language** — the `collection.instructions` field tells the agent *how* to interpret results, which no cron job can do
 5. **Collection triggers analysis** — after collecting, the agent can immediately identify regressions and create TODOs
+6. **Chat provides record-keeping** — every collection attempt, tool call, result, and agent decision is preserved in conversation history for auditability
 
-### 4.3 New Tool: `mission_metric_record`
+### 4.4 New Tool: `mission_metric_record`
 
 A native tool that persists a metric reading:
 
@@ -461,23 +505,36 @@ Since this is pre-production, we can alter the table directly. For existing rows
 
 ### 7.2 Collection Flow Example: Local Build Time
 
+All collection happens in the mission's dedicated metric collection chat:
+
 ```
-1. Cadence trigger fires (every 4 hours)
-2. MissionLeadAgent receives cycle prompt with metric collection instructions
-3. Agent delegates to pillar-owner for "build-performance" pillar
-4. Pillar-owner calls user.measure_build_time:
-     { "command": "npm run build:dev", "iterations": 3, "warmup": 1 }
-5. Tool returns: { "results": [52.3, 48.7, 50.1], "average": 50.37 }
-6. Agent interprets: "Average build time is 50.37s"
-7. Agent calls mission_metric_record:
-     { missionSlug: "developer-experience", pillarSlug: "build-performance",
-       metricSlug: "local-build-time", value: 50.37,
-       note: "3 runs after warmup" }
-8. Tool persists value, computes status:
-     → current: 50.37, target: < 60 → status: on_target
-     → previous: [55, 53, 50.37] → trend: improving
-9. Agent receives: { status: "on_target", trend: "improving", message: "50.4s (target: < 60s)" }
-10. Agent includes this in its pillar status summary
+Chat: "[Metric Collection] Developer Experience"
+  │
+  │ ── Cadence trigger fires (every 4 hours) ──
+  │
+  │ Turn N: collect build-performance/local-build-time
+  │
+  │  1. Mission Lead delegates to Pillar Owner worker for "build-performance",
+  │     passing metric instructions and tool config for "local-build-time"
+  │  2. Pillar Owner calls user.measure_build_time:
+  │       { "command": "npm run build:dev", "iterations": 3, "warmup": 1 }
+  │  3. Tool returns: { "results": [52.3, 48.7, 50.1], "average": 50.37 }
+  │  4. Pillar Owner calls mission_metric_record:
+  │       { missionSlug: "developer-experience", pillarSlug: "build-performance",
+  │         metricSlug: "local-build-time", value: 50.37,
+  │         note: "3 runs after warmup" }
+  │  5. Tool persists value, computes status:
+  │       → current: 50.37, target: < 60 → status: on_target
+  │       → previous: [55, 53, 50.37] → trend: improving
+  │  6. Returns: { status: "on_target", trend: "improving", message: "50.4s (target: < 60s)" }
+  │
+  │ Turn N+1: collect build-performance/ci-build-time
+  │  ...
+  │
+  │ Turn N+2: collect build-performance/cache-hit-rate
+  │  ...
+  │
+  └── Mission Lead generates status summary across all pillars
 ```
 
 ### 7.3 Sample User Tool Definition (`user/tools/measure-build-time.md`)
