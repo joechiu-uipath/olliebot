@@ -201,6 +201,15 @@ export class MissionManager extends EventEmitter {
     return rows[0] ? this.deserializePillar(rows[0]) : undefined;
   }
 
+  getPillarById(pillarId: string): Pillar | undefined {
+    const db = getDb();
+    const rows = db.rawQuery(
+      'SELECT * FROM pillars WHERE id = ?',
+      [pillarId]
+    ) as PillarRow[];
+    return rows[0] ? this.deserializePillar(rows[0]) : undefined;
+  }
+
   // ========================================================================
   // Metrics CRUD
   // ========================================================================
@@ -243,6 +252,32 @@ export class MissionManager extends EventEmitter {
       value: typeof r.value === 'string' ? parseFloat(r.value) : r.value,
       note: r.note || null,
     }));
+  }
+
+  /**
+   * Get a comprehensive pillar summary with all related data.
+   * Consolidates metrics, strategies, todos, and statistics.
+   * Used by API routes and agents to avoid duplicating this query pattern.
+   */
+  getPillarSummary(pillarId: string) {
+    const metrics = this.getMetricsByPillar(pillarId);
+    const strategies = this.getStrategiesByPillar(pillarId);
+    const todos = this.getTodosByPillar(pillarId);
+    
+    const todosByStatus = {
+      backlog: todos.filter(t => t.status === 'backlog').length,
+      pending: todos.filter(t => t.status === 'pending').length,
+      in_progress: todos.filter(t => t.status === 'in_progress').length,
+      completed: todos.filter(t => t.status === 'completed').length,
+      cancelled: todos.filter(t => t.status === 'cancelled').length,
+    };
+
+    return {
+      metrics,
+      strategies,
+      todos,
+      todosByStatus,
+    };
   }
 
   /**
@@ -403,25 +438,6 @@ export class MissionManager extends EventEmitter {
         ? (typeof row.current === 'string' ? parseFloat(row.current) : row.current as number)
         : null,
     };
-  }
-
-  /** @deprecated Use recordMetric() instead */
-  updateMetric(metricId: string, current: string, trend: PillarMetric['trend']): void {
-    const db = getDb();
-    const now = new Date().toISOString();
-    const numericValue = parseFloat(current);
-    db.rawRun(
-      'UPDATE pillar_metrics SET current = ?, trend = ?, updatedAt = ? WHERE id = ?',
-      [isNaN(numericValue) ? null : numericValue, trend, now, metricId]
-    );
-
-    // Add history point
-    if (!isNaN(numericValue)) {
-      db.rawRun(
-        'INSERT INTO pillar_metric_history (id, metricId, value, note, timestamp) VALUES (?, ?, ?, ?, ?)',
-        [uuid(), metricId, numericValue, null, now]
-      );
-    }
   }
 
   // ========================================================================

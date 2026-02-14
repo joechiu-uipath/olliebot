@@ -197,30 +197,26 @@ export class MissionLeadAgent extends SupervisorAgentImpl {
   private appendPillarDetail(lines: string[], pillar: { id: string }): void {
     if (!this.missionManager) return;
 
-    const metrics = this.missionManager.getMetricsByPillar(pillar.id);
-    const strategies = this.missionManager.getStrategiesByPillar(pillar.id);
-    const todos = this.missionManager.getTodosByPillar(pillar.id);
+    const summary = this.missionManager.getPillarSummary(pillar.id);
 
-    if (metrics.length > 0) {
+    if (summary.metrics.length > 0) {
       lines.push('**Metrics**:');
-      for (const m of metrics) {
+      for (const m of summary.metrics) {
         lines.push(`- ${m.name}: ${m.current} ${m.unit} (target: ${m.target}, trend: ${m.trend})`);
       }
     }
 
-    if (strategies.length > 0) {
+    if (summary.strategies.length > 0) {
       lines.push('**Strategies**:');
-      for (const s of strategies) {
+      for (const s of summary.strategies) {
         lines.push(`- [${s.status}] ${s.description}`);
       }
     }
 
-    if (todos.length > 0) {
-      const byStatus: Record<string, number> = { pending: 0, in_progress: 0, completed: 0, blocked: 0 };
-      for (const t of todos) {
-        byStatus[t.status] = (byStatus[t.status] || 0) + 1;
-      }
-      const parts = Object.entries(byStatus).filter(([, v]) => v > 0).map(([k, v]) => `${v} ${k}`);
+    if (summary.todos.length > 0) {
+      const parts = Object.entries(summary.todosByStatus)
+        .filter(([, v]) => v > 0)
+        .map(([k, v]) => `${v} ${k}`);
       lines.push(`**TODOs**: ${parts.join(', ')}`);
     }
   }

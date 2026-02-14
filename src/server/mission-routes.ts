@@ -86,16 +86,8 @@ export function setupMissionRoutes(app: Express, config: MissionRoutesConfig): v
   app.get('/api/missions/:slug', withMission((req, res, mission) => {
     const pillars = missionManager.getPillarsByMission(mission.id);
     const pillarSummaries = pillars.map(p => {
-      const metrics = missionManager.getMetricsByPillar(p.id);
-      const todos = missionManager.getTodosByPillar(p.id);
-      const todosByStatus = {
-        backlog: todos.filter(t => t.status === 'backlog').length,
-        pending: todos.filter(t => t.status === 'pending').length,
-        in_progress: todos.filter(t => t.status === 'in_progress').length,
-        completed: todos.filter(t => t.status === 'completed').length,
-        cancelled: todos.filter(t => t.status === 'cancelled').length,
-      };
-      return { ...p, metrics, todosByStatus };
+      const summary = missionManager.getPillarSummary(p.id);
+      return { ...p, metrics: summary.metrics, todosByStatus: summary.todosByStatus };
     });
 
     res.json({ ...mission, pillars: pillarSummaries });
@@ -137,10 +129,8 @@ export function setupMissionRoutes(app: Express, config: MissionRoutesConfig): v
 
   // Get pillar detail
   app.get('/api/missions/:slug/pillars/:pillarSlug', withPillar((req, res, mission, pillar) => {
-    const metrics = missionManager.getMetricsByPillar(pillar.id);
-    const strategies = missionManager.getStrategiesByPillar(pillar.id);
-    const todos = missionManager.getTodosByPillar(pillar.id);
-    res.json({ ...pillar, metrics, strategies, todos });
+    const summary = missionManager.getPillarSummary(pillar.id);
+    res.json({ ...pillar, ...summary });
   }));
 
   // Get pillar metrics with history

@@ -8,6 +8,7 @@
 
 import type { NativeTool, NativeToolResult } from './types.js';
 import type { MissionManager } from '../../missions/index.js';
+import { validateRequired, validateEnum } from './mission-validation.js';
 
 export class MissionTodoCreateTool implements NativeTool {
   readonly name = 'mission_todo_create';
@@ -74,27 +75,23 @@ Each TODO should have a clear justification (why this, why now) and measurable c
     const priority = (params.priority as string) || 'medium';
     const targetStatus = (params.targetStatus as string) || 'pending';
 
-    // Validate required fields
-    if (!missionSlug?.trim()) {
-      return { success: false, error: 'missionSlug is required' };
-    }
-    if (!pillarSlug?.trim()) {
-      return { success: false, error: 'pillarSlug is required' };
-    }
-    if (!title?.trim()) {
-      return { success: false, error: 'title is required' };
-    }
+    // Validate required fields using shared validation
+    let error = validateRequired(missionSlug, 'missionSlug');
+    if (error) return error;
+    
+    error = validateRequired(pillarSlug, 'pillarSlug');
+    if (error) return error;
+    
+    error = validateRequired(title, 'title');
+    if (error) return error;
 
-    // Validate priority
-    const validPriorities = ['critical', 'high', 'medium', 'low'];
-    if (!validPriorities.includes(priority)) {
-      return { success: false, error: `Invalid priority "${priority}". Must be one of: ${validPriorities.join(', ')}` };
-    }
+    // Validate enums
+    const validPriorities = ['critical', 'high', 'medium', 'low'] as const;
+    error = validateEnum(priority, 'priority', validPriorities);
+    if (error) return error;
 
-    // Validate targetStatus
-    if (targetStatus !== 'pending' && targetStatus !== 'backlog') {
-      return { success: false, error: `Invalid targetStatus "${targetStatus}". Must be "pending" or "backlog".` };
-    }
+    error = validateEnum(targetStatus, 'targetStatus', ['pending', 'backlog']);
+    if (error) return error;
 
     // Resolve mission
     const mission = this.missionManager.getMissionBySlug(missionSlug);

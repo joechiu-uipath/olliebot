@@ -9,6 +9,7 @@
 
 import type { NativeTool, NativeToolResult } from './types.js';
 import type { MissionManager } from '../../missions/index.js';
+import { validateRequired, validateNumber } from './mission-validation.js';
 
 export class MissionMetricRecordTool implements NativeTool {
   readonly name = 'mission_metric_record';
@@ -46,13 +47,12 @@ Use this after collecting a metric value via the appropriate tool. Pass the raw 
     const value = params.value as number;
     const note = (params.note as string) || undefined;
 
-    // Validate required fields
-    if (!metricId?.trim()) {
-      return { success: false, error: 'metricId is required' };
-    }
-    if (typeof value !== 'number' || isNaN(value)) {
-      return { success: false, error: 'value must be a valid number' };
-    }
+    // Validate required fields using shared validation
+    let error = validateRequired(metricId, 'metricId');
+    if (error) return error;
+    
+    error = validateNumber(value, 'value');
+    if (error) return error;
 
     // Resolve metric by ID
     const metric = this.missionManager.getMetricById(metricId);

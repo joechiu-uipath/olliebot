@@ -8,6 +8,7 @@
 
 import type { NativeTool, NativeToolResult } from './types.js';
 import type { MissionManager } from '../../missions/index.js';
+import { validateRequired, validateEnum } from './mission-validation.js';
 
 export class MissionTodoUpdateTool implements NativeTool {
   readonly name = 'mission_todo_update';
@@ -46,14 +47,19 @@ Cannot cancel an in_progress TODO — there is no reliable cancellation for a ru
     const action = params.action as string;
     const reason = params.reason as string;
 
-    if (!todoId?.trim()) return { success: false, error: 'todoId is required' };
-    if (!action?.trim()) return { success: false, error: 'action is required' };
-    if (!reason?.trim()) return { success: false, error: 'reason is required' };
+    // Validate required fields using shared validation
+    let error = validateRequired(todoId, 'todoId');
+    if (error) return error;
+    
+    error = validateRequired(action, 'action');
+    if (error) return error;
+    
+    error = validateRequired(reason, 'reason');
+    if (error) return error;
 
-    const validActions = ['promote', 'demote', 'start', 'cancel'];
-    if (!validActions.includes(action)) {
-      return { success: false, error: `Invalid action "${action}". Must be one of: ${validActions.join(', ')}` };
-    }
+    const validActions = ['promote', 'demote', 'start', 'cancel'] as const;
+    error = validateEnum(action, 'action', validActions);
+    if (error) return error;
 
     const todo = this.missionManager.getTodoById(todoId);
     if (!todo) {
