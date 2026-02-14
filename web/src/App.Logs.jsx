@@ -295,6 +295,39 @@ export const LogsSidebarContent = memo(function LogsSidebarContent({ logsMode })
   const { stats, activeView, setActiveView, statusFilter, setStatusFilter,
     workloadFilter, setWorkloadFilter, refresh } = logsMode;
 
+  // Token reduction settings state
+  const [trSettings, setTrSettings] = useState(null);
+
+  // Fetch token reduction settings on mount
+  useEffect(() => {
+    fetch(`${API_BASE}/api/settings/token-reduction`)
+      .then(res => res.ok ? res.json() : null)
+      .then(data => { if (data) setTrSettings(data); })
+      .catch(() => {});
+  }, []);
+
+  // Toggle handler for token reduction per workload
+  const handleToggleTokenReduction = useCallback(async (field) => {
+    if (!trSettings) return;
+    const newValue = !trSettings[field];
+    setTrSettings(prev => ({ ...prev, [field]: newValue }));
+    try {
+      const res = await fetch(`${API_BASE}/api/settings/token-reduction`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ [field]: newValue }),
+      });
+      if (res.ok) {
+        const updated = await res.json();
+        setTrSettings(updated);
+      } else {
+        setTrSettings(prev => ({ ...prev, [field]: !newValue }));
+      }
+    } catch {
+      setTrSettings(prev => ({ ...prev, [field]: !newValue }));
+    }
+  }, [trSettings]);
+
   return (
     <div className="logs-sidebar">
       <div className="logs-sidebar-header">
@@ -323,6 +356,58 @@ export const LogsSidebarContent = memo(function LogsSidebarContent({ logsMode })
           </div>
         </div>
       )}
+
+      {/* Token Reduction Settings & Stats */}
+      <div className="logs-token-reduction-stats">
+        <h4 className="logs-token-reduction-title">Token Reduction</h4>
+
+        {/* Toggles */}
+        {trSettings && (
+          <div className="logs-tr-toggles">
+            <label className="logs-tr-toggle" title="Enable prompt compression for Main LLM calls">
+              <input
+                type="checkbox"
+                checked={trSettings.enabledForMain}
+                onChange={() => handleToggleTokenReduction('enabledForMain')}
+              />
+              <span className="logs-tr-toggle-label">Main LLM</span>
+            </label>
+            <label className="logs-tr-toggle" title="Enable prompt compression for Fast LLM calls">
+              <input
+                type="checkbox"
+                checked={trSettings.enabledForFast}
+                onChange={() => handleToggleTokenReduction('enabledForFast')}
+              />
+              <span className="logs-tr-toggle-label">Fast LLM</span>
+            </label>
+            <div className="logs-tr-info">
+              {trSettings.provider} / {trSettings.model} / rate: {trSettings.rate}
+            </div>
+          </div>
+        )}
+
+        {/* Aggregate stats */}
+        {stats?.tokenReduction && (
+          <div className="logs-stats-grid">
+            <div className="logs-stat">
+              <div className="logs-stat-value logs-stat-savings">{stats.tokenReduction.overallSavingsPercent}%</div>
+              <div className="logs-stat-label">Saved</div>
+            </div>
+            <div className="logs-stat">
+              <div className="logs-stat-value">{formatTokens(stats.tokenReduction.totalTokensSaved)}</div>
+              <div className="logs-stat-label">Tokens Saved</div>
+            </div>
+            <div className="logs-stat">
+              <div className="logs-stat-value">{stats.tokenReduction.totalCompressions}</div>
+              <div className="logs-stat-label">Compressions</div>
+            </div>
+            <div className="logs-stat">
+              <div className="logs-stat-value">{stats.tokenReduction.avgCompressionTimeMs}ms</div>
+              <div className="logs-stat-label">Avg Time</div>
+            </div>
+          </div>
+        )}
+      </div>
 
       {/* View switcher */}
       <div className="logs-view-switcher">
@@ -550,6 +635,9 @@ const TraceDetailView = memo(function TraceDetailView({ trace, onBack, onSelectL
                 </div>
                 <div className="logs-llm-stats">
                   {formatTokens(c.inputTokens)} in / {formatTokens(c.outputTokens)} out
+                  {c.tokenReductionEnabled === 1 && (
+                    <span className="logs-token-reduction-inline"> | compressed: {c.tokenReductionSavingsPercent}% saved</span>
+                  )}
                   {c.callerPurpose && <span> | {c.callerPurpose}</span>}
                   {c.stopReason && <span> | stop: {c.stopReason}</span>}
                 </div>
@@ -582,6 +670,7 @@ const LlmCallDetailView = memo(function LlmCallDetailView({ call, onBack }) {
   const [showMessages, setShowMessages] = useState(false);
   const [showResponse, setShowResponse] = useState(true);
   const [showRawRequest, setShowRawRequest] = useState(false);
+  const [showTokenReduction, setShowTokenReduction] = useState(true);
 
   if (!call) return null;
 
@@ -632,6 +721,41 @@ const LlmCallDetailView = memo(function LlmCallDetailView({ call, onBack }) {
         <div className="logs-detail-section">
           <h4>Error</h4>
           <pre className="logs-json-block logs-error-block">{call.error}</pre>
+        </div>
+      )}
+
+      {/* Token Reduction (Prompt Compression) */}
+      {call.tokenReductionEnabled === 1 && (
+        <div className="logs-detail-section logs-token-reduction-section">
+          <h4 className="logs-collapsible" onClick={() => setShowTokenReduction(!showTokenReduction)}>
+            {showTokenReduction ? '▾' : '▸'} Token Reduction
+            <span className="logs-token-reduction-badge">
+              {call.tokenReductionSavingsPercent}% saved
+            </span>
+          </h4>
+          {showTokenReduction && (
+            <div className="logs-token-reduction-detail">
+              <div className="logs-token-reduction-meta">
+                <span>Provider: <strong>{call.tokenReductionProvider}</strong></span>
+                <span>Original: <strong>{formatTokens(call.tokenReductionOriginalTokens)} tokens</strong></span>
+                <span>Compressed: <strong>{formatTokens(call.tokenReductionCompressedTokens)} tokens</strong></span>
+                <span>Saved: <strong>{formatTokens(call.tokenReductionOriginalTokens - call.tokenReductionCompressedTokens)} tokens ({call.tokenReductionSavingsPercent}%)</strong></span>
+                <span>Compression Time: <strong>{formatDuration(call.tokenReductionTimeMs)}</strong></span>
+              </div>
+              {call.tokenReductionOriginalText && (
+                <div className="logs-token-reduction-compare">
+                  <div className="logs-token-reduction-before">
+                    <div className="logs-token-reduction-compare-title">Before Compression</div>
+                    <pre className="logs-text-block">{call.tokenReductionOriginalText}</pre>
+                  </div>
+                  <div className="logs-token-reduction-after">
+                    <div className="logs-token-reduction-compare-title">After Compression</div>
+                    <pre className="logs-text-block">{call.tokenReductionCompressedText}</pre>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
 

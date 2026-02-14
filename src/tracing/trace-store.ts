@@ -119,9 +119,36 @@ export class TraceStore {
         callerPurpose TEXT,
         conversationId TEXT,
         status TEXT NOT NULL DEFAULT 'pending',
-        error TEXT
+        error TEXT,
+        tokenReductionEnabled INTEGER,
+        tokenReductionProvider TEXT,
+        tokenReductionOriginalTokens INTEGER,
+        tokenReductionCompressedTokens INTEGER,
+        tokenReductionSavingsPercent REAL,
+        tokenReductionTimeMs INTEGER,
+        tokenReductionOriginalText TEXT,
+        tokenReductionCompressedText TEXT
       )
     `);
+
+    // Migration: add token reduction columns if missing (for existing databases)
+    const tokenReductionCols = [
+      'tokenReductionEnabled INTEGER',
+      'tokenReductionProvider TEXT',
+      'tokenReductionOriginalTokens INTEGER',
+      'tokenReductionCompressedTokens INTEGER',
+      'tokenReductionSavingsPercent REAL',
+      'tokenReductionTimeMs INTEGER',
+      'tokenReductionOriginalText TEXT',
+      'tokenReductionCompressedText TEXT',
+    ];
+    for (const colDef of tokenReductionCols) {
+      try {
+        db.rawRun(`ALTER TABLE llm_calls ADD COLUMN ${colDef}`);
+      } catch {
+        // Column already exists, ignore
+      }
+    }
 
     db.rawRun(`
       CREATE TABLE IF NOT EXISTS tool_calls (
@@ -517,6 +544,48 @@ export class TraceStore {
   }
 
   // ============================================================
+  // Token Reduction recording
+  // ============================================================
+
+  recordTokenReduction(callId: string, data: {
+    provider: string;
+    originalTokens: number;
+    compressedTokens: number;
+    savingsPercent: number;
+    compressionTimeMs: number;
+    originalText?: string;
+    compressedText?: string;
+  }): void {
+    const db = getDb();
+    // Truncate texts for storage (keep first 2000 chars for inspection)
+    const originalText = data.originalText?.substring(0, 2000) || null;
+    const compressedText = data.compressedText?.substring(0, 2000) || null;
+
+    db.rawRun(
+      `UPDATE llm_calls SET
+        tokenReductionEnabled = 1,
+        tokenReductionProvider = ?,
+        tokenReductionOriginalTokens = ?,
+        tokenReductionCompressedTokens = ?,
+        tokenReductionSavingsPercent = ?,
+        tokenReductionTimeMs = ?,
+        tokenReductionOriginalText = ?,
+        tokenReductionCompressedText = ?
+      WHERE id = ?`,
+      [
+        data.provider,
+        data.originalTokens,
+        data.compressedTokens,
+        data.savingsPercent,
+        data.compressionTimeMs,
+        originalText,
+        compressedText,
+        callId,
+      ]
+    );
+  }
+
+  // ============================================================
   // Tool Call recording
   // ============================================================
 
@@ -791,6 +860,27 @@ export class TraceStore {
       params
     ) as Array<{ inputTok: number; outputTok: number; avgDur: number }>;
 
+    // Token reduction stats
+    const trWhere = conditions.length > 0
+      ? `WHERE tokenReductionEnabled = 1 AND ${conditions.join(' AND ')}`
+      : 'WHERE tokenReductionEnabled = 1';
+    const trRows = db.rawQuery(
+      `SELECT
+        COUNT(*) as cnt,
+        COALESCE(SUM(tokenReductionOriginalTokens), 0) as origTok,
+        COALESCE(SUM(tokenReductionCompressedTokens), 0) as compTok,
+        COALESCE(SUM(tokenReductionTimeMs), 0) as totalTime,
+        AVG(tokenReductionTimeMs) as avgTime
+      FROM llm_calls ${trWhere}`,
+      params
+    ) as Array<{ cnt: number; origTok: number; compTok: number; totalTime: number; avgTime: number }>;
+
+    const trData = trRows[0];
+    const tokensSaved = (trData?.origTok || 0) - (trData?.compTok || 0);
+    const overallSavingsPercent = trData?.origTok > 0
+      ? Math.round((tokensSaved / trData.origTok) * 10000) / 100
+      : 0;
+
     return {
       totalTraces: traceRows[0]?.cnt || 0,
       totalLlmCalls: llmRows[0]?.cnt || 0,
@@ -798,6 +888,15 @@ export class TraceStore {
       totalInputTokens: tokenRows[0]?.inputTok || 0,
       totalOutputTokens: tokenRows[0]?.outputTok || 0,
       avgDurationMs: Math.round(tokenRows[0]?.avgDur || 0),
+      tokenReduction: trData?.cnt > 0 ? {
+        totalCompressions: trData.cnt,
+        totalOriginalTokens: trData.origTok,
+        totalCompressedTokens: trData.compTok,
+        totalTokensSaved: tokensSaved,
+        overallSavingsPercent,
+        totalCompressionTimeMs: trData.totalTime,
+        avgCompressionTimeMs: Math.round(trData.avgTime || 0),
+      } : undefined,
     };
   }
 

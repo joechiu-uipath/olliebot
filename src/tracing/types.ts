@@ -106,6 +106,16 @@ export interface LlmCallRecord {
   callerPurpose: string | null;
   conversationId: string | null;
 
+  // Token reduction (prompt compression)
+  tokenReductionEnabled: number | null;       // 0 or 1
+  tokenReductionProvider: string | null;
+  tokenReductionOriginalTokens: number | null;
+  tokenReductionCompressedTokens: number | null;
+  tokenReductionSavingsPercent: number | null;
+  tokenReductionTimeMs: number | null;
+  tokenReductionOriginalText: string | null;   // Stored for trace inspection
+  tokenReductionCompressedText: string | null;  // Stored for trace inspection
+
   // Status
   status: 'pending' | 'streaming' | 'completed' | 'error';
   error: string | null;
@@ -186,4 +196,14 @@ export interface TraceStats {
   totalInputTokens: number;
   totalOutputTokens: number;
   avgDurationMs: number;
+  // Token reduction aggregate stats
+  tokenReduction?: {
+    totalCompressions: number;
+    totalOriginalTokens: number;
+    totalCompressedTokens: number;
+    totalTokensSaved: number;
+    overallSavingsPercent: number;
+    totalCompressionTimeMs: number;
+    avgCompressionTimeMs: number;
+  };
 }
