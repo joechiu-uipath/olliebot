@@ -22,6 +22,7 @@ import {
   type IndexingProgress,
   type QueryRequest,
   type QueryResponse,
+  type SearchResult,
   type EmbeddingProvider,
   type VectorRecord,
   type SummarizationProvider,
@@ -36,6 +37,7 @@ import {
   type StrategyConfig,
 } from './strategies/index.js';
 import { fuseResults, type StrategySearchResult } from './fusion.js';
+import { createReranker, type RerankerMethod } from './reranker.js';
 
 const DOCUMENTS_FOLDER = 'documents';
 const OLLIEBOT_FOLDER = '.olliebot';
@@ -608,6 +610,7 @@ export class RAGProjectService extends EventEmitter {
         strategies,
         manifest.settings.strategies!,
         manifest.settings.fusionMethod || 'rrf',
+        request.reranker || manifest.settings.reranker || 'none',
         startTime
       );
     }
@@ -627,7 +630,10 @@ export class RAGProjectService extends EventEmitter {
   }
 
   /**
-   * Execute a multi-strategy query: query each strategy in parallel, then fuse results.
+   * Execute the multi-strategy query pipeline:
+   *   1. Query each strategy's index in parallel
+   *   2. Fuse the N ranked lists into one
+   *   3. (Optional) LLM re-rank the fused results
    */
   private async queryMultiStrategy(
     store: LanceStore,
@@ -635,6 +641,7 @@ export class RAGProjectService extends EventEmitter {
     strategies: RetrievalStrategy[],
     strategyConfigs: StrategyConfig[],
     defaultFusionMethod: string,
+    rerankerMethod: RerankerMethod,
     startTime: number
   ): Promise<QueryResponse> {
     const topK = request.topK || RAG_DEFAULT_TOP_K;
@@ -642,15 +649,11 @@ export class RAGProjectService extends EventEmitter {
     const contentType = request.contentType || 'all';
     const fusionMethod = request.fusionMethod || defaultFusionMethod;
 
-    // Query each strategy in parallel
+    // ── Step 1: Query each strategy in parallel ──────────────────
     const strategyResultPromises = strategies.map(async (strategy): Promise<StrategySearchResult> => {
-      // Transform the query text according to this strategy
       const preparedQuery = await strategy.prepareQueryText(request.query);
-
-      // Embed the transformed query
       const queryVector = await this.embeddingProvider.embed(preparedQuery);
 
-      // Search this strategy's table
       // Request more results than topK so fusion has a good pool
       const results = await store.searchByVector(
         queryVector,
@@ -668,17 +671,17 @@ export class RAGProjectService extends EventEmitter {
 
     const strategyResults = await Promise.all(strategyResultPromises);
 
-    // Fuse results from all strategies
+    // ── Step 2: Fuse results from all strategies ─────────────────
     const fusedResults = fuseResults(
       strategyResults,
       strategyConfigs,
       fusionMethod as 'rrf' | 'weighted_score',
-      topK
+      // Give reranker more candidates to work with if it's enabled
+      rerankerMethod !== 'none' ? topK * 2 : topK
     );
 
-    // Map fused results back to SearchResult format
-    // Include fusedScore and strategy provenance in metadata
-    const results = fusedResults.map((fused) => ({
+    // Map fused results to SearchResult format
+    let results: SearchResult[] = fusedResults.map((fused) => ({
       id: fused.id,
       documentPath: fused.documentPath,
       text: fused.text,
@@ -692,11 +695,22 @@ export class RAGProjectService extends EventEmitter {
       },
     }));
 
+    // ── Step 3: Optional LLM re-ranking ──────────────────────────
+    let appliedReranker: RerankerMethod | undefined;
+    if (rerankerMethod !== 'none') {
+      const reranker = createReranker(rerankerMethod, this.summarizationProvider);
+      if (reranker) {
+        results = await reranker.rerank(request.query, results, topK);
+        appliedReranker = rerankerMethod;
+      }
+    }
+
     return {
       results,
       queryTimeMs: Date.now() - startTime,
       strategiesUsed: strategies.map((s) => s.id),
       fusionMethod: fusionMethod as 'rrf' | 'weighted_score',
+      ...(appliedReranker && { reranker: appliedReranker }),
     };
   }
 

@@ -76,3 +76,7 @@ export type {
 // Result fusion
 export { fuseResults } from './fusion.js';
 export type { StrategySearchResult, FusedSearchResult } from './fusion.js';
+
+// Re-ranking
+export { LLMReranker, createReranker } from './reranker.js';
+export type { Reranker, RerankerMethod } from './reranker.js';
