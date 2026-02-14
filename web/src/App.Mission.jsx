@@ -591,7 +591,7 @@ function MissionPillarsView({ pillars, missionSlug, onSelectPillar }) {
                 <div key={m.id} className="pillar-card-metric">
                   <span className="metric-name">{m.name}</span>
                   <span className="metric-value">{m.current || '—'}</span>
-                  <span className="metric-target">→ {m.target}</span>
+                  <span className="metric-target">→ {formatMetricTarget(m.target)}</span>
                 </div>
               ))}
             </div>
@@ -643,7 +643,7 @@ function PillarMetrics({ metrics }) {
         <div key={m.id} className="metrics-row">
           <span className="metrics-name">{m.name}</span>
           <span className="metrics-current">{m.current || '—'}</span>
-          <span className="metrics-target">{m.target}</span>
+          <span className="metrics-target">{formatMetricTarget(m.target)}</span>
           <span className={`metrics-trend ${m.trend}`}>
             {TREND_ICONS[m.trend] || '?'} {m.trend}
           </span>
@@ -841,4 +841,24 @@ function formatTimeAgo(dateStr) {
   if (hours < 24) return `${hours}h ago`;
   const days = Math.floor(hours / 24);
   return `${days}d ago`;
+}
+
+function formatMetricTarget(target) {
+  if (target == null) return '—';
+  if (typeof target === 'string' || typeof target === 'number') return String(target);
+  if (typeof target !== 'object') return String(target);
+
+  const { operator, value } = target;
+  if (value == null) return '—';
+
+  const operatorSymbols = {
+    '>=': '≥',
+    '<=': '≤',
+    '>': '>',
+    '<': '<',
+    '==': '=',
+    '=': '=',
+  };
+  const symbol = operatorSymbols[operator] || operator || '';
+  return symbol ? `${symbol} ${value}` : String(value);
 }

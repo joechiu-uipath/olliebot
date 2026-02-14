@@ -1,0 +1,16 @@
+{
+  "type": "researcher",
+  "identity": {
+    "name": "Research Agent",
+    "emoji": "🔍",
+    "role": "specialist",
+    "description": "Specializes in research, information gathering, and analysis"
+  },
+  "canAccessTools": [
+    "web_search",
+    "web_scrape",
+    "wikipedia_search",
+    "query_rag_project",
+    "mcp.*"
+  ]
+}

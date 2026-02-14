@@ -269,10 +269,10 @@ export class MissionManager extends EventEmitter {
       [uuid(), metricId, normalizedValue, note || null, now]
     );
 
-    // Compute status from target
+    // Compute status from target (normalize target to same units as stored value)
     let target: MetricTarget | null = null;
     try { target = JSON.parse(metric.target) as MetricTarget; } catch { /* invalid JSON */ }
-    const status = this.computeStatus(normalizedValue, target);
+    const status = this.computeStatus(normalizedValue, target, metric.type, metric.unit);
 
     // Compute trend from recent readings
     const history = this.getMetricHistory(metricId, TREND_HISTORY_COUNT);
@@ -315,16 +315,25 @@ export class MissionManager extends EventEmitter {
 
   /**
    * Compute metric status from current value and target.
+   * For duration metrics, target values are normalized to seconds to match stored values.
    */
-  computeStatus(current: number, target: MetricTarget | null): MetricStatus {
+  computeStatus(current: number, target: MetricTarget | null, metricType?: string, metricUnit?: string): MetricStatus {
     if (!target || target.value === undefined) return 'unknown';
 
-    const onTarget = this.evaluateTarget(current, target.operator, target.value);
+    // Normalize target value to match stored units (duration metrics stored in seconds)
+    const normalizedTargetValue = metricType === 'duration'
+      ? this.normalizeMetricValue(target.value, metricType, metricUnit || '')
+      : target.value;
+
+    const onTarget = this.evaluateTarget(current, target.operator, normalizedTargetValue);
     if (onTarget) return 'on_target';
 
-    // Check warning threshold
+    // Check warning threshold (also normalize if duration)
     if (target.warningThreshold !== undefined) {
-      const betterThanWarning = this.evaluateTarget(current, target.operator, target.warningThreshold);
+      const normalizedWarning = metricType === 'duration'
+        ? this.normalizeMetricValue(target.warningThreshold, metricType, metricUnit || '')
+        : target.warningThreshold;
+      const betterThanWarning = this.evaluateTarget(current, target.operator, normalizedWarning);
       if (betterThanWarning) return 'warning';
     }
 
@@ -374,11 +383,22 @@ export class MissionManager extends EventEmitter {
   }
 
   private deserializeMetric(row: PillarMetricRow): PillarMetric {
+    // Parse target from JSON string to object
+    let target = row.target;
+    if (typeof target === 'string') {
+      try {
+        target = JSON.parse(target);
+      } catch {
+        // Keep as string if parsing fails
+      }
+    }
+
     return {
       ...row,
       type: row.type as PillarMetric['type'],
       status: row.status as PillarMetric['status'],
       trend: row.trend as PillarMetric['trend'],
+      target,
       current: row.current !== null && row.current !== undefined
         ? (typeof row.current === 'string' ? parseFloat(row.current) : row.current as number)
         : null,

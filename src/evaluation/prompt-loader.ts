@@ -13,7 +13,7 @@ import { SUPERVISOR_NAME } from '../constants.js';
 
 // Directory paths
 const USER_PROMPTS_DIR = join(process.cwd(), 'user', 'sub-agents');
-const AGENT_PROMPTS_DIR = join(process.cwd(), 'src', 'agents');
+const AGENT_PROMPTS_DIR = join(process.cwd(), 'src', 'agents', 'config');
 
 // Default prompts (fallback if file doesn't exist)
 const DEFAULT_PROMPTS: Record<string, string> = {

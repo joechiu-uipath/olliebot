@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Become a Better Engineer - Dashboard</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #0f1117; color: #e0e0e0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 24px; }
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: #1a1d24; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb { background: #3a3d44; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #4a4d54; }
+    * { scrollbar-width: thin; scrollbar-color: #3a3d44 #1a1d24; }
+    .header { margin-bottom: 24px; }
+    .header h1 { font-size: 24px; margin-bottom: 8px; }
+    .header .meta { color: #888; font-size: 14px; }
+    .status { display: inline-block; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 600; text-transform: uppercase; }
+    .status.active { background: #22c55e33; color: #22c55e; }
+    .status.paused { background: #eab30833; color: #eab308; }
+    .kpi-row { display: flex; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }
+    .kpi-card { background: #1a1d24; border-radius: 8px; padding: 16px 20px; min-width: 150px; flex: 1; }
+    .kpi-card .label { font-size: 12px; color: #888; margin-bottom: 4px; }
+    .kpi-card .value { font-size: 28px; font-weight: 600; }
+    .kpi-card .value.green { color: #22c55e; }
+    .kpi-card .value.yellow { color: #eab308; }
+    .kpi-card .value.red { color: #ef4444; }
+    .pillars { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+    .pillar-card { background: #1a1d24; border-radius: 8px; padding: 20px; }
+    .pillar-card h3 { font-size: 16px; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+    .health-dot { width: 10px; height: 10px; border-radius: 50%; }
+    .health-dot.green { background: #22c55e; }
+    .health-dot.yellow { background: #eab308; }
+    .health-dot.red { background: #ef4444; }
+    .health-dot.unknown { background: #666; }
+    .metrics-list { margin-bottom: 12px; }
+    .metric-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #2a2d34; font-size: 13px; }
+    .metric-row:last-child { border-bottom: none; }
+    .metric-name { color: #aaa; }
+    .metric-value { font-weight: 500; }
+    .trend { font-size: 12px; }
+    .trend.improving { color: #22c55e; }
+    .trend.degrading { color: #ef4444; }
+    .trend.stable { color: #888; }
+    .todos-summary { font-size: 13px; color: #888; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>Become a Better Engineer <span class="status active">active</span></h1>
+    <p class="meta">Generated: 2/13/2026, 8:21:10 PM</p>
+    <p style="margin-top: 8px; color: #aaa;">Personal growth mission focused on continuous improvement as a software engineer — tracking learning, code quality, knowledge sharing, and deep work habits.</p>
+  </div>
+
+  <div class="kpi-row">
+    <div class="kpi-card">
+      <div class="label">Pillars</div>
+      <div class="value">4</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">Total Metrics</div>
+      <div class="value">16</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">On Target</div>
+      <div class="value red">0/16</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">Active TODOs</div>
+      <div class="value">0</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">Total TODOs</div>
+      <div class="value">0</div>
+    </div>
+  </div>
+
+  <div class="pillars">
+    
+    <div class="pillar-card">
+      <h3><span class="health-dot yellow"></span> Code Craft</h3>
+      <div class="metrics-list">
+        
+        <div class="metric-row">
+          <span class="metric-name">Average cyclomatic complexity (new code)</span>
+          <span class="metric-value">11 <span class="trend unknown">?</span></span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-name">PR review feedback ratio</span>
+          <span class="metric-value">12 <span class="trend unknown">?</span></span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-name">Self-review rate</span>
+          <span class="metric-value">80 <span class="trend unknown">?</span></span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-name">Technical debt items addressed</span>
+          <span class="metric-value">1 <span class="trend unknown">?</span></span>
+        </div>
+      </div>
+      <div class="todos-summary">TODOs: 0 active, 0 pending</div>
+    </div>
+    <div class="pillar-card">
+      <h3><span class="health-dot yellow"></span> Learning & Growth</h3>
+      <div class="metrics-list">
+        
+        <div class="metric-row">
+          <span class="metric-name">Courses/workshops completed</span>
+          <span class="metric-value">0 <span class="trend unknown">?</span></span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-name">Learning hours per week</span>
+          <span class="metric-value">2.5 <span class="trend unknown">?</span></span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-name">New tools/libraries explored</span>
+          <span class="metric-value">0 <span class="trend unknown">?</span></span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-name">Technical articles/papers read</span>
+          <span class="metric-value">2 <span class="trend unknown">?</span></span>
+        </div>
+      </div>
+      <div class="todos-summary">TODOs: 0 active, 0 pending</div>
+    </div>
+    <div class="pillar-card">
+      <h3><span class="health-dot yellow"></span> Knowledge Sharing</h3>
+      <div class="metrics-list">
+        
+        <div class="metric-row">
+          <span class="metric-name">Code reviews given per week</span>
+          <span class="metric-value">3 <span class="trend unknown">?</span></span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-name">Internal docs/posts written</span>
+          <span class="metric-value">0 <span class="trend unknown">?</span></span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-name">Mentoring sessions held</span>
+          <span class="metric-value">1 <span class="trend unknown">?</span></span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-name">Team presentations given</span>
+          <span class="metric-value">0 <span class="trend unknown">?</span></span>
+        </div>
+      </div>
+      <div class="todos-summary">TODOs: 0 active, 0 pending</div>
+    </div>
+    <div class="pillar-card">
+      <h3><span class="health-dot yellow"></span> Deep Work Habits</h3>
+      <div class="metrics-list">
+        
+        <div class="metric-row">
+          <span class="metric-name">Context switches per day (avg)</span>
+          <span class="metric-value">7 <span class="trend unknown">?</span></span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-name">Deep work hours per week</span>
+          <span class="metric-value">16 <span class="trend improving">↗</span></span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-name">Longest uninterrupted focus block</span>
+          <span class="metric-value">1.5 <span class="trend unknown">?</span></span>
+        </div>
+        <div class="metric-row">
+          <span class="metric-name">Meeting load (hours/week)</span>
+          <span class="metric-value">14 <span class="trend unknown">?</span></span>
+        </div>
+      </div>
+      <div class="todos-summary">TODOs: 0 active, 0 pending</div>
+    </div>
+  </div>
+</body>
+</html>

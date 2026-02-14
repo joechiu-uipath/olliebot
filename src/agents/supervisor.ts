@@ -101,17 +101,22 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
   protected declare agentRegistry: AgentRegistry;
 
   constructor(llmService: LLMService, registry: AgentRegistry) {
+    // Load config from JSON file
+    const jsonConfig = registry.loadAgentConfig('supervisor');
+    const identity = jsonConfig?.identity as AgentConfig['identity'] | undefined;
+    const capabilities = jsonConfig?.capabilities as AgentConfig['capabilities'] | undefined;
+
     const config: AgentConfig = {
-      identity: {
+      identity: identity || {
         id: 'supervisor-main',
         name: SUPERVISOR_NAME,
         emoji: SUPERVISOR_ICON,
         role: 'supervisor',
         description: 'Main supervisor agent that orchestrates tasks and delegates to specialists',
       },
-      capabilities: {
+      capabilities: capabilities || {
         canSpawnAgents: true,
-        canAccessTools: ['*'], // Private tools (self-coding) are auto-excluded for supervisors unless delegating
+        canAccessTools: ['*'],
         canUseChannels: ['*'],
         maxConcurrentTasks: SUPERVISOR_MAX_CONCURRENT_TASKS,
       },

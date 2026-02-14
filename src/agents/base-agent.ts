@@ -481,6 +481,7 @@ export interface AgentRegistry {
   getSpecialistTemplate(type: string): SpecialistTemplate | undefined;
   findSpecialistTypeByName(name: string): string | undefined;
   loadAgentPrompt(type: string): string;
+  loadAgentConfig(type: string): Record<string, unknown> | null;
   getToolAccessForSpecialist(type: string): string[];
   getAllowedSkillsForSpecialist(type: string): string[] | null;
   // Delegation methods

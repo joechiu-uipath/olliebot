@@ -1,0 +1,22 @@
+{
+  "type": "coding-planner",
+  "identity": {
+    "name": "Coding Planner",
+    "emoji": "📐",
+    "role": "specialist",
+    "description": "Analyzes frontend modification requests, creates change plans, and delegates to workers"
+  },
+  "canAccessTools": [
+    "read_agent_skill",
+    "read_frontend_code",
+    "delegate"
+  ],
+  "delegation": {
+    "canDelegate": true,
+    "allowedDelegates": ["coding-worker"],
+    "restrictedToWorkflow": "self-coding",
+    "supervisorCanInvoke": false
+  },
+  "collapseResponseByDefault": true,
+  "allowedSkills": ["frontend-modifier"]
+}

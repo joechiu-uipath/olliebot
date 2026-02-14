@@ -1,0 +1,22 @@
+{
+  "type": "coding-fixer",
+  "identity": {
+    "name": "Coding Fixer",
+    "emoji": "🔨",
+    "role": "specialist",
+    "description": "Fixes build errors in frontend code, focusing on syntax issues like mismatched tags and brackets"
+  },
+  "canAccessTools": [
+    "read_frontend_code",
+    "modify_frontend_code",
+    "check_frontend_code"
+  ],
+  "delegation": {
+    "canDelegate": false,
+    "allowedDelegates": [],
+    "restrictedToWorkflow": "self-coding",
+    "supervisorCanInvoke": false
+  },
+  "collapseResponseByDefault": true,
+  "allowedSkills": ["frontend-modifier"]
+}

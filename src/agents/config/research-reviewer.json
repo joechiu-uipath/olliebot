@@ -1,0 +1,19 @@
+{
+  "type": "research-reviewer",
+  "identity": {
+    "name": "Research Reviewer",
+    "emoji": "📝",
+    "role": "specialist",
+    "description": "Critical review of research reports for quality assurance"
+  },
+  "canAccessTools": [
+    "web_scrape"
+  ],
+  "delegation": {
+    "canDelegate": false,
+    "allowedDelegates": [],
+    "restrictedToWorkflow": "deep-research",
+    "supervisorCanInvoke": false
+  },
+  "collapseResponseByDefault": true
+}

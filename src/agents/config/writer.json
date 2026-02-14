@@ -1,0 +1,17 @@
+{
+  "type": "writer",
+  "identity": {
+    "name": "Writer Agent",
+    "emoji": "✍️",
+    "role": "specialist",
+    "description": "Specializes in writing, editing, and content creation"
+  },
+  "canAccessTools": [
+    "web_search",
+    "web_scrape",
+    "wikipedia_search",
+    "create_image",
+    "query_rag_project",
+    "mcp.*"
+  ]
+}

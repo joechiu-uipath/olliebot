@@ -26,13 +26,17 @@ export class MissionLeadAgent extends SupervisorAgentImpl {
   constructor(llmService: LLMService, registry: AgentRegistry) {
     super(llmService, registry);
 
-    // Mutate identity (readonly prevents reassignment, not property mutation)
-    this.identity.id = 'mission-lead';
-    this.identity.name = 'Mission Lead';
-    this.identity.emoji = '🎯';
-    this.identity.description = 'Mission Lead agent for strategic mission guidance';
+    // Load identity from JSON config
+    const jsonConfig = registry.loadAgentConfig('mission-lead');
+    const identity = jsonConfig?.identity as Record<string, string> | undefined;
 
-    // Override system prompt (config properties are mutable)
+    // Override identity from JSON (readonly prevents reassignment, not property mutation)
+    this.identity.id = identity?.id || 'mission-lead';
+    this.identity.name = identity?.name || 'Mission Lead';
+    this.identity.emoji = identity?.emoji || '🎯';
+    this.identity.description = identity?.description || 'Mission Lead agent for strategic mission guidance';
+
+    // Override system prompt from .md file
     this.config.systemPrompt = registry.loadAgentPrompt('mission-lead');
   }
 
@@ -124,7 +128,7 @@ export class MissionLeadAgent extends SupervisorAgentImpl {
     const lines: string[] = [];
     lines.push('## Current Mission Context');
     lines.push('');
-    lines.push(`**Mission**: ${mission.name}`);
+    lines.push(`**Mission**: ${mission.name} (slug: \`${mission.slug}\`)`);
     lines.push(`**Status**: ${mission.status}`);
     if (mission.description) {
       lines.push(`**Description**: ${mission.description}`);
@@ -138,7 +142,7 @@ export class MissionLeadAgent extends SupervisorAgentImpl {
     if (ctx.channel === 'pillar' && ctx.pillarId) {
       const pillar = pillars.find(p => p.id === ctx.pillarId);
       if (pillar) {
-        lines.push(`### Current Pillar: ${pillar.name}`);
+        lines.push(`### Current Pillar: ${pillar.name} (slug: \`${pillar.slug}\`)`);
         lines.push(`Status: ${pillar.status}`);
         if (pillar.description) lines.push(`Description: ${pillar.description}`);
         lines.push('');
@@ -152,7 +156,7 @@ export class MissionLeadAgent extends SupervisorAgentImpl {
         lines.push('### Other Pillars (summary)');
         for (const p of siblings) {
           const todoCount = allTodos.filter(t => t.pillarId === p.id).length;
-          lines.push(`- **${p.name}** (${p.status}) — ${todoCount} todos`);
+          lines.push(`- **${p.name}** (slug: \`${p.slug}\`, ${p.status}) — ${todoCount} todos`);
         }
       }
     } else {
@@ -160,7 +164,7 @@ export class MissionLeadAgent extends SupervisorAgentImpl {
       lines.push(`### Pillars (${pillars.length})`);
       lines.push('');
       for (const pillar of pillars) {
-        lines.push(`#### ${pillar.name} (${pillar.status})`);
+        lines.push(`#### ${pillar.name} (slug: \`${pillar.slug}\`, status: ${pillar.status})`);
         if (pillar.description) lines.push(pillar.description);
         lines.push('');
         this.appendPillarDetail(lines, pillar);
