@@ -4,9 +4,14 @@
  * Uses an LLM to generate a concise summary of each chunk, then embeds the summary.
  * This creates a "semantic summary space" where retrieval focuses on the high-level
  * meaning of each chunk, improving results for broad conceptual queries.
+ *
+ * During indexing, prefers pre-computed summaries from ChunkPreprocessor (shared
+ * single LLM call) to avoid redundant input token costs. Falls back to its own
+ * LLM call only if no preprocessed data is available.
  */
 
 import type { DocumentChunk, SummarizationProvider } from '../types.js';
+import type { PreprocessedChunk } from './chunk-preprocessor.js';
 import type { RetrievalStrategy } from './types.js';
 
 const CHUNK_SUMMARY_PROMPT =
@@ -29,7 +34,13 @@ export class SummaryEmbeddingStrategy implements RetrievalStrategy {
     this.summarizationProvider = summarizationProvider;
   }
 
-  async prepareChunkText(chunk: DocumentChunk): Promise<string> {
+  async prepareChunkText(chunk: DocumentChunk, preprocessed?: PreprocessedChunk): Promise<string> {
+    // Use pre-computed summary from shared LLM call when available
+    if (preprocessed) {
+      return preprocessed.summary;
+    }
+
+    // Fallback: standalone LLM call (only when preprocessor is not wired in)
     try {
       const summary = await this.summarizationProvider.summarize(
         chunk.text,
