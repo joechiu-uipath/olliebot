@@ -60,6 +60,12 @@ const VALID_SNAPSHOT_TYPES: SnapshotType[] = ['mission_report', 'agent_analytics
 export function setupDashboardRoutes(app: Express, config: DashboardRoutesConfig): void {
   const { dashboardStore, snapshotEngine, renderEngine } = config;
 
+  /** Extract a named route parameter as string (Express types may widen to string[]) */
+  function param(req: Request, name: string): string {
+    const val = req.params[name];
+    return Array.isArray(val) ? val[0] : val;
+  }
+
   // ================================================================
   // Create snapshot — capture metrics and store
   // ================================================================
@@ -168,7 +174,7 @@ export function setupDashboardRoutes(app: Express, config: DashboardRoutesConfig
 
   app.get('/api/dashboards/snapshots/:id', (req: Request, res: Response) => {
     try {
-      const snapshot = dashboardStore.getSnapshotById(req.params.id);
+      const snapshot = dashboardStore.getSnapshotById(param(req, 'id'));
       if (!snapshot) {
         res.status(404).json({ error: 'Snapshot not found' });
         return;
@@ -188,7 +194,7 @@ export function setupDashboardRoutes(app: Express, config: DashboardRoutesConfig
 
   app.post('/api/dashboards/snapshots/:id/render', async (req: Request, res: Response) => {
     try {
-      const snapshot = dashboardStore.getSnapshotById(req.params.id);
+      const snapshot = dashboardStore.getSnapshotById(param(req, 'id'));
       if (!snapshot) {
         res.status(404).json({ error: 'Snapshot not found' });
         return;
@@ -199,8 +205,8 @@ export function setupDashboardRoutes(app: Express, config: DashboardRoutesConfig
         return;
       }
 
-      const html = await renderEngine.render(req.params.id);
-      const updated = dashboardStore.getSnapshotById(req.params.id);
+      const html = await renderEngine.render(param(req, 'id'));
+      const updated = dashboardStore.getSnapshotById(param(req, 'id'));
 
       res.json({
         id: updated?.id,
@@ -230,13 +236,13 @@ export function setupDashboardRoutes(app: Express, config: DashboardRoutesConfig
         return;
       }
 
-      const snapshot = dashboardStore.getSnapshotById(req.params.id);
+      const snapshot = dashboardStore.getSnapshotById(param(req, 'id'));
       if (!snapshot) {
         res.status(404).json({ error: 'Snapshot not found' });
         return;
       }
 
-      const result = await renderEngine.rerender(req.params.id, specText);
+      const result = await renderEngine.rerender(param(req, 'id'), specText);
       const newSnapshot = dashboardStore.getSnapshotById(result.snapshotId);
 
       res.status(201).json({
@@ -263,7 +269,7 @@ export function setupDashboardRoutes(app: Express, config: DashboardRoutesConfig
 
   app.get('/api/dashboards/snapshots/:id/html', (req: Request, res: Response) => {
     try {
-      const snapshot = dashboardStore.getSnapshotById(req.params.id);
+      const snapshot = dashboardStore.getSnapshotById(param(req, 'id'));
       if (!snapshot) {
         res.status(404).json({ error: 'Snapshot not found' });
         return;
@@ -288,7 +294,7 @@ export function setupDashboardRoutes(app: Express, config: DashboardRoutesConfig
 
   app.delete('/api/dashboards/snapshots/:id', (req: Request, res: Response) => {
     try {
-      const deleted = dashboardStore.deleteSnapshot(req.params.id);
+      const deleted = dashboardStore.deleteSnapshot(param(req, 'id'));
       if (!deleted) {
         res.status(404).json({ error: 'Snapshot not found' });
         return;
@@ -306,7 +312,7 @@ export function setupDashboardRoutes(app: Express, config: DashboardRoutesConfig
 
   app.get('/api/dashboards/lineage/:lineageId', (req: Request, res: Response) => {
     try {
-      const snapshots = dashboardStore.getSnapshotsByLineage(req.params.lineageId);
+      const snapshots = dashboardStore.getSnapshotsByLineage(param(req, 'lineageId'));
       res.json(snapshots.map(toSnapshotSummary));
     } catch (error) {
       console.error('[Dashboard API] Failed to get lineage:', error);

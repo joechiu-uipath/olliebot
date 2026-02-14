@@ -21,11 +21,17 @@ export function setupMissionRoutes(app: Express, config: MissionRoutesConfig): v
 
   type RouteHandler = (req: Request, res: Response) => void;
 
+  /** Extract a named route parameter as string (Express types may widen to string[]) */
+  function param(req: Request, name: string): string {
+    const val = req.params[name];
+    return Array.isArray(val) ? val[0] : val;
+  }
+
   /** Wraps a handler that needs a resolved mission */
   function withMission(handler: (req: Request, res: Response, mission: ReturnType<typeof missionManager.getMissionBySlug> & {}) => void): RouteHandler {
     return (req, res) => {
       try {
-        const mission = missionManager.getMissionBySlug(req.params.slug);
+        const mission = missionManager.getMissionBySlug(param(req, 'slug'));
         if (!mission) {
           res.status(404).json({ error: 'Mission not found' });
           return;
@@ -41,7 +47,7 @@ export function setupMissionRoutes(app: Express, config: MissionRoutesConfig): v
   /** Wraps a handler that needs a resolved mission + pillar */
   function withPillar(handler: (req: Request, res: Response, mission: any, pillar: any) => void): RouteHandler {
     return withMission((req, res, mission) => {
-      const pillar = missionManager.getPillarBySlug(mission.id, req.params.pillarSlug);
+      const pillar = missionManager.getPillarBySlug(mission.id, param(req, 'pillarSlug'));
       if (!pillar) {
         res.status(404).json({ error: 'Pillar not found' });
         return;
@@ -90,19 +96,19 @@ export function setupMissionRoutes(app: Express, config: MissionRoutesConfig): v
 
   // Update mission (whitelisted fields only)
   app.put('/api/missions/:slug', withMission((req, res, mission) => {
-    const updated = missionManager.updateMission(req.params.slug, req.body);
+    const updated = missionManager.updateMission(mission.slug, req.body);
     res.json(updated);
   }));
 
   // Pause mission
   app.post('/api/missions/:slug/pause', withMission((req, res, mission) => {
-    const updated = missionManager.updateMission(req.params.slug, { status: 'paused' });
+    const updated = missionManager.updateMission(mission.slug, { status: 'paused' });
     res.json(updated);
   }));
 
   // Resume mission
   app.post('/api/missions/:slug/resume', withMission((req, res, mission) => {
-    const updated = missionManager.updateMission(req.params.slug, { status: 'active' });
+    const updated = missionManager.updateMission(mission.slug, { status: 'active' });
     res.json(updated);
   }));
 
@@ -176,7 +182,7 @@ export function setupMissionRoutes(app: Express, config: MissionRoutesConfig): v
   // Update a TODO (whitelisted fields only)
   app.put('/api/missions/:slug/pillars/:pillarSlug/todos/:todoId', (_req: Request, res: Response) => {
     try {
-      const updated = missionManager.updateTodo(_req.params.todoId, _req.body);
+      const updated = missionManager.updateTodo(param(_req, 'todoId'), _req.body);
       if (!updated) {
         res.status(404).json({ error: 'TODO not found' });
         return;
@@ -195,7 +201,7 @@ export function setupMissionRoutes(app: Express, config: MissionRoutesConfig): v
   // Serve mission dashboard HTML
   app.get('/api/missions/:slug/dashboard', (req: Request, res: Response) => {
     try {
-      const htmlPath = missionManager.getMissionDashboardPath(req.params.slug);
+      const htmlPath = missionManager.getMissionDashboardPath(param(req, 'slug'));
       if (existsSync(htmlPath)) {
         const html = readFileSync(htmlPath, 'utf-8');
         res.type('html').send(html);
@@ -211,7 +217,7 @@ export function setupMissionRoutes(app: Express, config: MissionRoutesConfig): v
   // Serve pillar dashboard HTML
   app.get('/api/missions/:slug/pillars/:pillarSlug/dashboard', (req: Request, res: Response) => {
     try {
-      const htmlPath = missionManager.getPillarDashboardPath(req.params.slug, req.params.pillarSlug);
+      const htmlPath = missionManager.getPillarDashboardPath(param(req, 'slug'), param(req, 'pillarSlug'));
       if (existsSync(htmlPath)) {
         const html = readFileSync(htmlPath, 'utf-8');
         res.type('html').send(html);
