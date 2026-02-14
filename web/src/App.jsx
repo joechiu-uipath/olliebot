@@ -72,6 +72,23 @@ function App() {
 
   // Sidebar state
   const [sidebarOpen, setSidebarOpen] = useState(true);
+
+  // App width state (resizable, min 1000px)
+  const DEFAULT_APP_WIDTH = 1000;
+  const MIN_APP_WIDTH = 1000;
+  const MAX_APP_WIDTH = 2000;
+  const [appWidth, setAppWidth] = useState(() => {
+    const saved = localStorage.getItem('olliebot-app-width');
+    if (saved) {
+      const parsed = parseInt(saved, 10);
+      if (!isNaN(parsed) && parsed >= MIN_APP_WIDTH && parsed <= MAX_APP_WIDTH) {
+        return parsed;
+      }
+    }
+    return DEFAULT_APP_WIDTH;
+  });
+  const isResizingRef = useRef(false);
+  const resizeSideRef = useRef(null); // 'left' or 'right'
   const [conversations, setConversations] = useState([]);
   const [currentConversationId, setCurrentConversationId] = useState(null);
   const [conversationsLoading, setConversationsLoading] = useState(true);
@@ -208,6 +225,47 @@ function App() {
     window.addEventListener('pdf-view', handlePdfView);
     return () => window.removeEventListener('pdf-view', handlePdfView);
   }, []);
+
+  // Persist app width to localStorage
+  useEffect(() => {
+    localStorage.setItem('olliebot-app-width', String(appWidth));
+  }, [appWidth]);
+
+  // App width resize handler
+  const handleAppResizeStart = useCallback((e, side) => {
+    e.preventDefault();
+    isResizingRef.current = true;
+    resizeSideRef.current = side;
+    document.body.style.cursor = 'ew-resize';
+    document.body.style.userSelect = 'none';
+
+    const startX = e.clientX;
+    const startWidth = appWidth;
+
+    const handleMouseMove = (moveEvent) => {
+      if (!isResizingRef.current) return;
+      // Left handle: dragging left increases width, dragging right decreases
+      // Right handle: dragging right increases width, dragging left decreases
+      const delta = resizeSideRef.current === 'left'
+        ? startX - moveEvent.clientX
+        : moveEvent.clientX - startX;
+      // Multiply by 2 because we're resizing from center (both sides expand)
+      const newWidth = Math.min(MAX_APP_WIDTH, Math.max(MIN_APP_WIDTH, startWidth + delta * 2));
+      setAppWidth(newWidth);
+    };
+
+    const handleMouseUp = () => {
+      isResizingRef.current = false;
+      resizeSideRef.current = null;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+  }, [appWidth]);
 
   // Close PDF viewer
   const closePdfViewer = useCallback(() => {
@@ -1825,7 +1883,19 @@ function App() {
   }, [isLoadingOlder]);
 
   return (
-    <div className="app-layout">
+    <div className="app-layout" style={{ width: appWidth }}>
+      {/* Left resize handle */}
+      <div
+        className="app-resize-handle app-resize-handle-left"
+        onMouseDown={(e) => handleAppResizeStart(e, 'left')}
+        title="Drag to resize"
+      />
+      {/* Right resize handle */}
+      <div
+        className="app-resize-handle app-resize-handle-right"
+        onMouseDown={(e) => handleAppResizeStart(e, 'right')}
+        title="Drag to resize"
+      />
       {/* Collapsible Sidebar */}
       <aside className={`sidebar ${sidebarOpen ? 'open' : 'collapsed'}`}>
         <div className="sidebar-header">

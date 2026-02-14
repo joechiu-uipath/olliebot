@@ -522,6 +522,7 @@
 
 .message.assistant {
   align-self: flex-start;
+  width: 90%;
 }
 
 .message-avatar {

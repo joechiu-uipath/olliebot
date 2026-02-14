@@ -54,11 +54,38 @@
 /* Main App Layout */
 .app-layout {
   display: flex;
+  position: relative;
   height: 100vh;
   background: var(--bg-primary);
-  max-width: 1000px;
+  min-width: 1000px;
+  /* width is set inline via JS for resizable behavior */
   margin: 0 auto;
   box-shadow: 0 0 40px rgba(0, 0, 0, 0.5);
+}
+
+/* App resize handles (left and right edges) */
+.app-resize-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: ew-resize;
+  z-index: 100;
+  background: transparent;
+  transition: background 0.15s;
+}
+
+.app-resize-handle:hover,
+.app-resize-handle:active {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.app-resize-handle-left {
+  left: 0;
+}
+
+.app-resize-handle-right {
+  right: 0;
 }
 
 /* Background for ultra-wide monitors */
@@ -1018,6 +1045,7 @@ html, body {
 
 .message.assistant {
   align-self: flex-start;
+  width: 90%;
 }
 
 .message-avatar {
@@ -2146,8 +2174,14 @@ html, body {
 /* Responsive - Mobile */
 @media (max-width: 768px) {
   .app-layout {
-    max-width: 100%;
+    width: 100% !important;
+    min-width: unset;
     box-shadow: none;
+  }
+
+  /* Hide resize handles on mobile */
+  .app-resize-handle {
+    display: none;
   }
 
   .sidebar.open {
