@@ -3,9 +3,25 @@
   "description": "Continuously improve development tools and workflows so developers spend less time fighting tooling and more time shipping features.",
   "cadence": "0 */4 * * *",
   "scope": "Monorepo tooling, CI/CD, local dev setup, documentation",
+  "todo": {
+    "activeTodoLimit": 10,
+    "backlogTodoLimit": 50
+  },
   "agents": {
     "lead": {
-      "model": "claude-sonnet"
+      "model": "claude-sonnet",
+      "promptFile": "/user/missions/prompts/developer-experience-lead.md"
+    },
+    "pillarOwners": {
+      "build-performance": {
+        "promptFile": "/user/missions/prompts/build-performance-owner.md"
+      },
+      "documentation-currency": {
+        "promptFile": "/user/missions/prompts/doc-currency-owner.md"
+      },
+      "onboarding-friction": {
+        "template": "pillar-owner"
+      }
     },
     "workers": [
       {
@@ -35,33 +51,106 @@
       "description": "Reduce build times and improve caching. Developers should never wait more than 60 seconds for a local dev build.",
       "metrics": [
         {
+          "slug": "local-build-time",
           "name": "Average local build time",
-          "target": "< 60",
-          "current": "",
-          "unit": "s"
+          "type": "duration",
+          "unit": "s",
+          "current": 72,
+          "target": {
+            "operator": "<",
+            "value": 60,
+            "warningThreshold": 90,
+            "desiredDirection": "down"
+          },
+          "collection": {
+            "method": "tool",
+            "toolName": "bash",
+            "toolParams": {
+              "command": "node scripts/measure-build-time.js --mode=local"
+            },
+            "collectionSchedule": "0 */4 * * *",
+            "instructions": "Measure cold build time by clearing the cache first, then measure hot build time. Record the average of 3 runs."
+          }
         },
         {
-          "name": "CI build time",
-          "target": "< 5",
-          "current": "",
-          "unit": "min"
+          "slug": "ci-build-time",
+          "name": "CI build time (P95)",
+          "type": "duration",
+          "unit": "min",
+          "current": 6.2,
+          "target": {
+            "operator": "<",
+            "value": 5,
+            "warningThreshold": 7,
+            "desiredDirection": "down"
+          },
+          "collection": {
+            "method": "tool",
+            "toolName": "bash",
+            "toolParams": {
+              "command": "gh api repos/{owner}/{repo}/actions/runs --jq '[.workflow_runs[].run_duration_ms] | sort | .[(length * 0.95 | floor)]'"
+            },
+            "collectionSchedule": "0 */8 * * *",
+            "instructions": "Fetch the P95 CI build duration from the last 20 workflow runs. Convert milliseconds to minutes."
+          }
         },
         {
-          "name": "Cache hit rate",
-          "target": "> 80",
-          "current": "",
-          "unit": "%"
+          "slug": "cache-hit-rate",
+          "name": "Build cache hit rate",
+          "type": "percentage",
+          "unit": "%",
+          "current": 68,
+          "target": {
+            "operator": ">=",
+            "value": 80,
+            "warningThreshold": 70,
+            "desiredDirection": "up"
+          },
+          "collection": {
+            "method": "tool",
+            "toolName": "bash",
+            "toolParams": {
+              "command": "node scripts/cache-stats.js --period=24h"
+            },
+            "collectionSchedule": "0 6 * * *",
+            "instructions": "Calculate the ratio of cache hits to total build operations over the last 24 hours."
+          }
+        },
+        {
+          "slug": "bundle-size",
+          "name": "Production bundle size",
+          "type": "numeric",
+          "unit": "KB",
+          "current": 485,
+          "target": {
+            "operator": "<=",
+            "value": 500,
+            "warningThreshold": 550,
+            "desiredDirection": "down"
+          },
+          "collection": {
+            "method": "tool",
+            "toolName": "bash",
+            "toolParams": {
+              "command": "npm run build -- --analyze && node scripts/bundle-size.js"
+            },
+            "collectionSchedule": "0 0 * * 1",
+            "instructions": "Build the production bundle and report total gzipped size in KB."
+          }
         }
       ],
       "strategies": [
         {
-          "description": "Profile build pipeline quarterly"
+          "description": "Profile build pipeline quarterly — run comprehensive profiling to identify the slowest plugins, largest bundles, and most expensive transforms"
         },
         {
-          "description": "Evaluate new bundler releases"
+          "description": "Evaluate new bundler releases — assess migration cost vs. performance gain when major bundler versions ship"
         },
         {
-          "description": "Monitor cache invalidation patterns"
+          "description": "Monitor cache invalidation patterns — track why caches miss (dependency updates, config changes, non-deterministic builds)"
+        },
+        {
+          "description": "Track bundle size regressions — fail CI when production bundle exceeds threshold, alert on significant increases"
         }
       ]
     },
@@ -71,33 +160,106 @@
       "description": "Documentation should accurately reflect the current state of the system. Stale docs are worse than no docs.",
       "metrics": [
         {
+          "slug": "stale-api-docs",
           "name": "Documented APIs that no longer exist",
-          "target": "0",
-          "current": "",
-          "unit": "count"
+          "type": "count",
+          "unit": "count",
+          "current": 4,
+          "target": {
+            "operator": "=",
+            "value": 0,
+            "warningThreshold": 2,
+            "desiredDirection": "down"
+          },
+          "collection": {
+            "method": "tool",
+            "toolName": "bash",
+            "toolParams": {
+              "command": "node scripts/doc-drift-scan.js --check=stale"
+            },
+            "collectionSchedule": "0 0 * * 1",
+            "instructions": "Scan all documented API references and compare against actual code exports. Count references to functions/classes that no longer exist."
+          }
         },
         {
-          "name": "New features documented within",
-          "target": "<= 1",
-          "current": "",
-          "unit": "week"
+          "slug": "undocumented-features",
+          "name": "New features without docs (past 2 weeks)",
+          "type": "count",
+          "unit": "count",
+          "current": 3,
+          "target": {
+            "operator": "=",
+            "value": 0,
+            "warningThreshold": 2,
+            "desiredDirection": "down"
+          },
+          "collection": {
+            "method": "tool",
+            "toolName": "bash",
+            "toolParams": {
+              "command": "node scripts/doc-drift-scan.js --check=undocumented --since=14d"
+            },
+            "collectionSchedule": "0 0 * * 1",
+            "instructions": "Find PRs merged in the last 2 weeks that added new public exports without corresponding documentation updates."
+          }
         },
         {
-          "name": "Packages with updated README",
-          "target": "100",
-          "current": "",
-          "unit": "% coverage"
+          "slug": "readme-coverage",
+          "name": "Packages with up-to-date README",
+          "type": "percentage",
+          "unit": "%",
+          "current": 78,
+          "target": {
+            "operator": ">=",
+            "value": 100,
+            "warningThreshold": 90,
+            "desiredDirection": "up"
+          },
+          "collection": {
+            "method": "tool",
+            "toolName": "bash",
+            "toolParams": {
+              "command": "node scripts/readme-audit.js"
+            },
+            "collectionSchedule": "0 0 * * 1",
+            "instructions": "Check each package directory for a README.md, verify it references current exports and has been modified within the last 90 days."
+          }
+        },
+        {
+          "slug": "api-doc-coverage",
+          "name": "Public API documentation coverage",
+          "type": "percentage",
+          "unit": "%",
+          "current": 85,
+          "target": {
+            "operator": ">=",
+            "value": 95,
+            "warningThreshold": 85,
+            "desiredDirection": "up"
+          },
+          "collection": {
+            "method": "tool",
+            "toolName": "bash",
+            "toolParams": {
+              "command": "node scripts/doc-drift-scan.js --check=coverage"
+            },
+            "collectionSchedule": "0 0 * * 1",
+            "instructions": "Count public exports with JSDoc/TypeDoc comments vs total public exports. Report as percentage."
+          }
         }
       ],
       "strategies": [
         {
-          "description": "Weekly doc-drift scan comparing code exports to documented APIs"
+          "description": "Weekly doc-drift scan — compare code exports to documented APIs, flag orphaned docs and undocumented exports"
         },
         {
-          "description": "PR bot that flags undocumented new exports"
+          "description": "PR bot for undocumented exports — ensure PRs adding new public APIs include documentation or create follow-up TODOs"
         },
         {
-          "description": "Quarterly full documentation audit"
+          "description": "Quarterly full documentation audit — comprehensive review of all docs for accuracy, completeness, and clarity"
+        },
+        {
+          "description": "API doc coverage gate — fail CI when public API documentation coverage drops below threshold"
         }
       ]
     },
@@ -107,33 +269,106 @@
       "description": "New team members should be productive within their first week. The onboarding path should be self-service and continuously validated.",
       "metrics": [
         {
+          "slug": "time-to-first-pr",
           "name": "Time to first meaningful PR",
-          "target": "< 3",
-          "current": "",
-          "unit": "days"
+          "type": "duration",
+          "unit": "d",
+          "current": 4.5,
+          "target": {
+            "operator": "<",
+            "value": 3,
+            "warningThreshold": 5,
+            "desiredDirection": "down"
+          },
+          "collection": {
+            "method": "tool",
+            "toolName": "bash",
+            "toolParams": {
+              "command": "node scripts/onboarding-metrics.js --metric=time-to-first-pr"
+            },
+            "collectionSchedule": "0 0 * * 1",
+            "instructions": "For each engineer who joined in the last quarter, measure the calendar days from their start date to their first merged PR. Report the median."
+          }
         },
         {
+          "slug": "setup-success-rate",
           "name": "Setup script success rate",
-          "target": "> 95",
-          "current": "",
-          "unit": "%"
+          "type": "percentage",
+          "unit": "%",
+          "current": 88,
+          "target": {
+            "operator": ">=",
+            "value": 95,
+            "warningThreshold": 90,
+            "desiredDirection": "up"
+          },
+          "collection": {
+            "method": "tool",
+            "toolName": "bash",
+            "toolParams": {
+              "command": "node scripts/onboarding-metrics.js --metric=setup-success"
+            },
+            "collectionSchedule": "0 0 1 * *",
+            "instructions": "Run the setup script in a clean environment (Docker container) and track pass/fail. Also review telemetry from recent new-hire runs."
+          }
         },
         {
+          "slug": "manual-setup-steps",
           "name": "Manual setup steps not covered by automation",
-          "target": "0",
-          "current": "",
-          "unit": "count"
+          "type": "count",
+          "unit": "count",
+          "current": 3,
+          "target": {
+            "operator": "=",
+            "value": 0,
+            "warningThreshold": 1,
+            "desiredDirection": "down"
+          },
+          "collection": {
+            "method": "tool",
+            "toolName": "bash",
+            "toolParams": {
+              "command": "node scripts/onboarding-metrics.js --metric=manual-steps"
+            },
+            "collectionSchedule": "0 0 1 * *",
+            "instructions": "Diff the setup script against the onboarding checklist. Count checklist items that require manual action not covered by the script."
+          }
+        },
+        {
+          "slug": "onboarding-nps",
+          "name": "Onboarding satisfaction (NPS)",
+          "type": "rating",
+          "unit": "score",
+          "current": 7.2,
+          "target": {
+            "operator": ">=",
+            "value": 8,
+            "warningThreshold": 7,
+            "desiredDirection": "up"
+          },
+          "collection": {
+            "method": "tool",
+            "toolName": "bash",
+            "toolParams": {
+              "command": "node scripts/onboarding-metrics.js --metric=nps"
+            },
+            "collectionSchedule": "0 0 1 * *",
+            "instructions": "Pull the latest onboarding survey results. Calculate NPS on a 0-10 scale from responses in the last quarter."
+          }
         }
       ],
       "strategies": [
         {
-          "description": "Monthly onboarding dry-run by existing team member"
+          "description": "Monthly onboarding dry-run — existing team member follows the full onboarding flow in a clean environment to catch regressions"
         },
         {
-          "description": "Track and eliminate every manual step"
+          "description": "Track and eliminate every manual step — maintain a living checklist and automate one manual step per sprint"
         },
         {
-          "description": "Maintain \"golden path\" automation scripts"
+          "description": "Maintain golden-path automation scripts — single-command setup that handles all dependencies, env config, and initial data"
+        },
+        {
+          "description": "Quarterly onboarding retrospective — survey recent joiners and feed improvements back into the process"
         }
       ]
     }

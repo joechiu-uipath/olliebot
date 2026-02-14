@@ -1,0 +1,482 @@
+{
+  "name": "Become a Better Engineer",
+  "description": "Personal growth mission focused on continuous improvement as a software engineer — tracking learning, code quality, knowledge sharing, and deep work habits.",
+  "cadence": "0 9 * * 1",
+  "scope": "Personal engineering skills, code quality habits, learning, knowledge sharing",
+  "todo": {
+    "activeTodoLimit": 8,
+    "backlogTodoLimit": 30
+  },
+  "agents": {
+    "lead": {
+      "model": "claude-sonnet",
+      "promptFile": "/user/missions/prompts/better-engineer-lead.md"
+    },
+    "pillarOwners": {
+      "code-craft": {
+        "template": "pillar-owner"
+      },
+      "learning-growth": {
+        "template": "pillar-owner"
+      },
+      "knowledge-sharing": {
+        "template": "pillar-owner"
+      },
+      "deep-work-habits": {
+        "template": "pillar-owner"
+      }
+    },
+    "workers": [
+      {
+        "type": "deep-research-team",
+        "config": {
+          "purpose": "Researching learning resources, tools, best practices, industry trends"
+        }
+      },
+      {
+        "type": "writer",
+        "config": {
+          "purpose": "Drafting blog posts, documentation, presentation outlines, learning summaries"
+        }
+      }
+    ]
+  },
+  "pillars": [
+    {
+      "name": "Code Craft",
+      "slug": "code-craft",
+      "description": "Write cleaner, more maintainable code. Reduce complexity, improve naming, and consistently apply best practices.",
+      "metrics": [
+        {
+          "slug": "pr-feedback-ratio",
+          "name": "PR review feedback ratio",
+          "type": "percentage",
+          "unit": "%",
+          "current": 12,
+          "target": {
+            "operator": "<",
+            "value": 5,
+            "warningThreshold": 10,
+            "desiredDirection": "down"
+          },
+          "collection": {
+            "method": "tool",
+            "toolName": "bash",
+            "toolParams": {
+              "command": "node scripts/personal-metrics.js --metric=pr-feedback-ratio --window=7d"
+            },
+            "collectionSchedule": "0 9 * * 1",
+            "instructions": "For all PRs authored in the last week, calculate the ratio of reviewer-requested changes to total lines changed. Lower means cleaner first drafts."
+          }
+        },
+        {
+          "slug": "cyclomatic-complexity",
+          "name": "Average cyclomatic complexity (new code)",
+          "type": "numeric",
+          "unit": "score",
+          "current": 11,
+          "target": {
+            "operator": "<=",
+            "value": 8,
+            "warningThreshold": 12,
+            "desiredDirection": "down"
+          },
+          "collection": {
+            "method": "tool",
+            "toolName": "bash",
+            "toolParams": {
+              "command": "npx eslint --rule 'complexity: [warn, 8]' --format json src/ | node scripts/parse-complexity.js"
+            },
+            "collectionSchedule": "0 9 * * 1",
+            "instructions": "Run ESLint complexity check on recently modified files. Calculate the average cyclomatic complexity across functions in new/modified code."
+          }
+        },
+        {
+          "slug": "self-review-rate",
+          "name": "Self-review rate",
+          "type": "percentage",
+          "unit": "%",
+          "current": 80,
+          "target": {
+            "operator": ">=",
+            "value": 95,
+            "warningThreshold": 80,
+            "desiredDirection": "up"
+          },
+          "collection": {
+            "method": "tool",
+            "toolName": "bash",
+            "toolParams": {
+              "command": "node scripts/personal-metrics.js --metric=self-review-rate --window=7d"
+            },
+            "collectionSchedule": "0 9 * * 1",
+            "instructions": "Track the percentage of PRs where you reviewed your own diff before requesting review. Self-reported with commit message convention [self-reviewed]."
+          }
+        },
+        {
+          "slug": "tech-debt-resolved",
+          "name": "Technical debt items addressed",
+          "type": "count",
+          "unit": "count",
+          "current": 1,
+          "target": {
+            "operator": ">=",
+            "value": 2,
+            "warningThreshold": 1,
+            "desiredDirection": "up"
+          },
+          "collection": {
+            "method": "tool",
+            "toolName": "bash",
+            "toolParams": {
+              "command": "node scripts/personal-metrics.js --metric=tech-debt --window=7d"
+            },
+            "collectionSchedule": "0 9 * * 1",
+            "instructions": "Count tech-debt-labeled issues closed or PRs merged with [tech-debt] tag in the last week."
+          }
+        }
+      ],
+      "strategies": [
+        {
+          "description": "Pre-submit self-review checklist — review every PR against a personal quality checklist before requesting review"
+        },
+        {
+          "description": "Refactor one thing per PR — leave the codebase better than you found it, but keep changes scoped"
+        },
+        {
+          "description": "Study one design pattern per month — read, implement a small example, apply in real code"
+        },
+        {
+          "description": "Track and fix recurring review feedback themes"
+        }
+      ]
+    },
+    {
+      "name": "Learning & Growth",
+      "slug": "learning-growth",
+      "description": "Continuously expand technical knowledge. Stay current with the ecosystem, deepen expertise in core areas, and explore adjacent domains.",
+      "metrics": [
+        {
+          "slug": "learning-hours",
+          "name": "Learning hours per week",
+          "type": "duration",
+          "unit": "h",
+          "current": 2.5,
+          "target": {
+            "operator": ">=",
+            "value": 4,
+            "warningThreshold": 2,
+            "desiredDirection": "up"
+          },
+          "collection": {
+            "method": "tool",
+            "toolName": "bash",
+            "toolParams": {
+              "command": "node scripts/personal-metrics.js --metric=learning-hours --window=7d"
+            },
+            "collectionSchedule": "0 9 * * 1",
+            "instructions": "Sum time spent on learning activities: reading technical content, watching talks, online courses, hands-on experimentation with new tools."
+          }
+        },
+        {
+          "slug": "articles-read",
+          "name": "Technical articles/papers read",
+          "type": "count",
+          "unit": "count",
+          "current": 2,
+          "target": {
+            "operator": ">=",
+            "value": 3,
+            "warningThreshold": 1,
+            "desiredDirection": "up"
+          },
+          "collection": {
+            "method": "tool",
+            "toolName": "bash",
+            "toolParams": {
+              "command": "node scripts/personal-metrics.js --metric=articles-read --window=7d"
+            },
+            "collectionSchedule": "0 9 * * 1",
+            "instructions": "Count technical articles, blog posts, or papers read and annotated during the week. Quality over quantity — skimming doesn't count."
+          }
+        },
+        {
+          "slug": "tools-explored",
+          "name": "New tools/libraries explored",
+          "type": "count",
+          "unit": "count",
+          "current": 0,
+          "target": {
+            "operator": ">=",
+            "value": 1,
+            "warningThreshold": 0,
+            "desiredDirection": "up"
+          },
+          "collection": {
+            "method": "tool",
+            "toolName": "bash",
+            "toolParams": {
+              "command": "node scripts/personal-metrics.js --metric=tools-explored --window=30d"
+            },
+            "collectionSchedule": "0 9 1 * *",
+            "instructions": "Count new tools, libraries, or frameworks explored hands-on this month. Must have built something with it, not just read about it."
+          }
+        },
+        {
+          "slug": "courses-completed",
+          "name": "Courses/workshops completed",
+          "type": "count",
+          "unit": "count",
+          "current": 0,
+          "target": {
+            "operator": ">=",
+            "value": 1,
+            "warningThreshold": 0,
+            "desiredDirection": "up"
+          },
+          "collection": {
+            "method": "tool",
+            "toolName": "bash",
+            "toolParams": {
+              "command": "node scripts/personal-metrics.js --metric=courses-completed --window=90d"
+            },
+            "collectionSchedule": "0 9 1 * *",
+            "instructions": "Count online courses, workshops, or structured learning programs completed this quarter."
+          }
+        }
+      ],
+      "strategies": [
+        {
+          "description": "Dedicated learning block — reserve 1 hour daily for reading, watching talks, or hands-on exploration"
+        },
+        {
+          "description": "Reading list pipeline — maintain a curated queue of articles, papers, and books; review weekly"
+        },
+        {
+          "description": "Hands-on experimentation — for every new concept learned, build a small prototype or write a code sample"
+        },
+        {
+          "description": "Conference talk review — watch at least 2 conference talks per month from top engineering conferences"
+        }
+      ]
+    },
+    {
+      "name": "Knowledge Sharing",
+      "slug": "knowledge-sharing",
+      "description": "Teaching is the best way to learn. Share what you know through code reviews, documentation, presentations, and mentoring.",
+      "metrics": [
+        {
+          "slug": "reviews-given",
+          "name": "Code reviews given per week",
+          "type": "count",
+          "unit": "count",
+          "current": 3,
+          "target": {
+            "operator": ">=",
+            "value": 5,
+            "warningThreshold": 3,
+            "desiredDirection": "up"
+          },
+          "collection": {
+            "method": "tool",
+            "toolName": "bash",
+            "toolParams": {
+              "command": "gh api search/issues --jq '.items | length' -f q='is:pr reviewed-by:@me updated:>$(date -d \"7 days ago\" +%Y-%m-%d)'"
+            },
+            "collectionSchedule": "0 9 * * 1",
+            "instructions": "Count distinct PRs where you left a review (approved, commented, or requested changes) in the last 7 days."
+          }
+        },
+        {
+          "slug": "docs-written",
+          "name": "Internal docs/posts written",
+          "type": "count",
+          "unit": "count",
+          "current": 0,
+          "target": {
+            "operator": ">=",
+            "value": 1,
+            "warningThreshold": 0,
+            "desiredDirection": "up"
+          },
+          "collection": {
+            "method": "tool",
+            "toolName": "bash",
+            "toolParams": {
+              "command": "node scripts/personal-metrics.js --metric=docs-written --window=30d"
+            },
+            "collectionSchedule": "0 9 1 * *",
+            "instructions": "Count internal documentation pages, wiki articles, or blog posts published this month."
+          }
+        },
+        {
+          "slug": "mentoring-sessions",
+          "name": "Mentoring sessions held",
+          "type": "count",
+          "unit": "count",
+          "current": 1,
+          "target": {
+            "operator": ">=",
+            "value": 2,
+            "warningThreshold": 1,
+            "desiredDirection": "up"
+          },
+          "collection": {
+            "method": "tool",
+            "toolName": "bash",
+            "toolParams": {
+              "command": "node scripts/personal-metrics.js --metric=mentoring --window=30d"
+            },
+            "collectionSchedule": "0 9 1 * *",
+            "instructions": "Count 1:1 mentoring sessions held with junior engineers this month."
+          }
+        },
+        {
+          "slug": "presentations-given",
+          "name": "Team presentations given",
+          "type": "count",
+          "unit": "count",
+          "current": 0,
+          "target": {
+            "operator": ">=",
+            "value": 1,
+            "warningThreshold": 0,
+            "desiredDirection": "up"
+          },
+          "collection": {
+            "method": "tool",
+            "toolName": "bash",
+            "toolParams": {
+              "command": "node scripts/personal-metrics.js --metric=presentations --window=90d"
+            },
+            "collectionSchedule": "0 9 1 * *",
+            "instructions": "Count tech talks, lunch-and-learns, or team presentations given this quarter."
+          }
+        }
+      ],
+      "strategies": [
+        {
+          "description": "Thorough code reviews — provide substantive, educational feedback on at least 5 PRs per week"
+        },
+        {
+          "description": "Write one internal doc per month — share a lesson learned, a how-to, or a deep-dive into a system"
+        },
+        {
+          "description": "Regular mentoring — hold 30-minute 1:1s with junior engineers twice per month"
+        },
+        {
+          "description": "Quarterly tech talk — present a topic you've learned deeply to the team"
+        }
+      ]
+    },
+    {
+      "name": "Deep Work Habits",
+      "slug": "deep-work-habits",
+      "description": "Protect focused time for complex engineering work. Reduce context switching, improve flow state frequency, and build sustainable productivity habits.",
+      "metrics": [
+        {
+          "slug": "deep-work-hours",
+          "name": "Deep work hours per week",
+          "type": "duration",
+          "unit": "h",
+          "current": 11,
+          "target": {
+            "operator": ">=",
+            "value": 15,
+            "warningThreshold": 10,
+            "desiredDirection": "up"
+          },
+          "collection": {
+            "method": "tool",
+            "toolName": "bash",
+            "toolParams": {
+              "command": "node scripts/personal-metrics.js --metric=deep-work-hours --window=7d"
+            },
+            "collectionSchedule": "0 9 * * 1",
+            "instructions": "Sum hours spent in focused, uninterrupted work blocks (>= 45 minutes) during the week. From time tracker or calendar blocks."
+          }
+        },
+        {
+          "slug": "max-focus-block",
+          "name": "Longest uninterrupted focus block",
+          "type": "duration",
+          "unit": "h",
+          "current": 1.5,
+          "target": {
+            "operator": ">=",
+            "value": 2,
+            "warningThreshold": 1.5,
+            "desiredDirection": "up"
+          },
+          "collection": {
+            "method": "tool",
+            "toolName": "bash",
+            "toolParams": {
+              "command": "node scripts/personal-metrics.js --metric=max-focus-block --window=7d"
+            },
+            "collectionSchedule": "0 9 * * 1",
+            "instructions": "Find the longest continuous work block without interruptions (meetings, Slack, context switches) during the week."
+          }
+        },
+        {
+          "slug": "meeting-load",
+          "name": "Meeting load (hours/week)",
+          "type": "duration",
+          "unit": "h",
+          "current": 14,
+          "target": {
+            "operator": "<=",
+            "value": 10,
+            "warningThreshold": 15,
+            "desiredDirection": "down"
+          },
+          "collection": {
+            "method": "tool",
+            "toolName": "bash",
+            "toolParams": {
+              "command": "node scripts/personal-metrics.js --metric=meeting-load --window=7d"
+            },
+            "collectionSchedule": "0 9 * * 1",
+            "instructions": "Sum total meeting hours from calendar for the week. Include recurring meetings, standups, 1:1s."
+          }
+        },
+        {
+          "slug": "context-switches",
+          "name": "Context switches per day (avg)",
+          "type": "count",
+          "unit": "count",
+          "current": 7,
+          "target": {
+            "operator": "<=",
+            "value": 4,
+            "warningThreshold": 6,
+            "desiredDirection": "down"
+          },
+          "collection": {
+            "method": "tool",
+            "toolName": "bash",
+            "toolParams": {
+              "command": "node scripts/personal-metrics.js --metric=context-switches --window=7d"
+            },
+            "collectionSchedule": "0 9 * * 1",
+            "instructions": "Count the average number of times per day you switched between unrelated tasks or were interrupted mid-flow."
+          }
+        }
+      ],
+      "strategies": [
+        {
+          "description": "Morning focus block — protect 9am-12pm as meeting-free deep work time"
+        },
+        {
+          "description": "Batch communications — check Slack/email at scheduled intervals, not continuously"
+        },
+        {
+          "description": "Meeting audit monthly — decline or shorten meetings that don't require your active participation"
+        },
+        {
+          "description": "Weekly planning ritual — start each week with a prioritized list of the 3 most important engineering tasks"
+        }
+      ]
+    }
+  ]
+}

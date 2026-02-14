@@ -1,0 +1,376 @@
+{
+  "name": "Ensure Jarvis Product Quality",
+  "description": "Ensure Jarvis delivers a reliable, performant, and delightful user experience across every release.",
+  "cadence": "0 */2 * * *",
+  "scope": "Jarvis core platform, API reliability, UX quality, regression prevention",
+  "todo": {
+    "activeTodoLimit": 15,
+    "backlogTodoLimit": 60
+  },
+  "agents": {
+    "lead": {
+      "model": "claude-sonnet",
+      "promptFile": "/user/missions/prompts/jarvis-quality-lead.md"
+    },
+    "pillarOwners": {
+      "reliability-uptime": {
+        "promptFile": "/user/missions/prompts/reliability-owner.md"
+      },
+      "test-coverage": {
+        "promptFile": "/user/missions/prompts/test-quality-owner.md"
+      },
+      "ux-quality": {
+        "template": "pillar-owner"
+      }
+    },
+    "workers": [
+      {
+        "type": "deep-research-team",
+        "config": {
+          "purpose": "Investigating incidents, benchmarking performance, analyzing quality trends"
+        }
+      },
+      {
+        "type": "coder",
+        "config": {
+          "purpose": "Writing tests, fixing regressions, implementing monitoring, CI improvements"
+        }
+      },
+      {
+        "type": "writer",
+        "config": {
+          "purpose": "Runbook updates, incident reports, quality dashboards"
+        }
+      }
+    ]
+  },
+  "pillars": [
+    {
+      "name": "Reliability & Uptime",
+      "slug": "reliability-uptime",
+      "description": "Jarvis must be available and responsive. Users depend on it for critical workflows — downtime directly impacts trust and retention.",
+      "metrics": [
+        {
+          "slug": "api-uptime",
+          "name": "API uptime (30-day rolling)",
+          "type": "percentage",
+          "unit": "%",
+          "current": 99.82,
+          "target": {
+            "operator": ">=",
+            "value": 99.9,
+            "warningThreshold": 99.5,
+            "desiredDirection": "up"
+          },
+          "collection": {
+            "method": "tool",
+            "toolName": "bash",
+            "toolParams": {
+              "command": "node scripts/jarvis-metrics.js --metric=uptime --window=30d"
+            },
+            "collectionSchedule": "0 */2 * * *",
+            "instructions": "Query the status page API for the 30-day rolling uptime percentage. Exclude scheduled maintenance windows."
+          }
+        },
+        {
+          "slug": "api-latency-p95",
+          "name": "P95 API response latency",
+          "type": "duration",
+          "unit": "ms",
+          "current": 620,
+          "target": {
+            "operator": "<",
+            "value": 500,
+            "warningThreshold": 800,
+            "desiredDirection": "down"
+          },
+          "collection": {
+            "method": "tool",
+            "toolName": "bash",
+            "toolParams": {
+              "command": "node scripts/jarvis-metrics.js --metric=latency-p95 --window=1h"
+            },
+            "collectionSchedule": "0 */2 * * *",
+            "instructions": "Pull the P95 response latency from the APM dashboard for the last hour. Report in milliseconds."
+          }
+        },
+        {
+          "slug": "error-rate-5xx",
+          "name": "Error rate (5xx responses)",
+          "type": "percentage",
+          "unit": "%",
+          "current": 0.08,
+          "target": {
+            "operator": "<",
+            "value": 0.1,
+            "warningThreshold": 0.5,
+            "desiredDirection": "down"
+          },
+          "collection": {
+            "method": "tool",
+            "toolName": "bash",
+            "toolParams": {
+              "command": "node scripts/jarvis-metrics.js --metric=error-rate --window=1h"
+            },
+            "collectionSchedule": "0 */2 * * *",
+            "instructions": "Calculate the ratio of 5xx responses to total requests over the last hour. Report as percentage."
+          }
+        },
+        {
+          "slug": "mttr",
+          "name": "Mean time to recovery (MTTR)",
+          "type": "duration",
+          "unit": "min",
+          "current": 42,
+          "target": {
+            "operator": "<",
+            "value": 30,
+            "warningThreshold": 60,
+            "desiredDirection": "down"
+          },
+          "collection": {
+            "method": "tool",
+            "toolName": "bash",
+            "toolParams": {
+              "command": "node scripts/jarvis-metrics.js --metric=mttr --window=30d"
+            },
+            "collectionSchedule": "0 0 * * 1",
+            "instructions": "Pull resolved incidents from PagerDuty for the last 30 days. Calculate the mean time from alert to resolution in minutes."
+          }
+        }
+      ],
+      "strategies": [
+        {
+          "description": "Continuous synthetic monitoring — run health checks from multiple regions every 60 seconds"
+        },
+        {
+          "description": "Automated rollback on error rate spike — deploy canary with auto-rollback at 1% error threshold"
+        },
+        {
+          "description": "Weekly incident review — analyze root causes, update runbooks, close action items"
+        },
+        {
+          "description": "Chaos engineering quarterly — inject controlled failures to validate resilience"
+        }
+      ]
+    },
+    {
+      "name": "Test Coverage & Regression Prevention",
+      "slug": "test-coverage",
+      "description": "Every release should be safer than the last. Comprehensive test coverage and fast feedback loops catch regressions before they reach users.",
+      "metrics": [
+        {
+          "slug": "unit-test-coverage",
+          "name": "Unit test coverage",
+          "type": "percentage",
+          "unit": "%",
+          "current": 72,
+          "target": {
+            "operator": ">=",
+            "value": 85,
+            "warningThreshold": 75,
+            "desiredDirection": "up"
+          },
+          "collection": {
+            "method": "tool",
+            "toolName": "bash",
+            "toolParams": {
+              "command": "npm run test:coverage -- --json | node scripts/parse-coverage.js"
+            },
+            "collectionSchedule": "0 6 * * *",
+            "instructions": "Run the test suite with coverage enabled. Extract the total statement coverage percentage from the JSON output."
+          }
+        },
+        {
+          "slug": "integration-pass-rate",
+          "name": "Integration test pass rate",
+          "type": "percentage",
+          "unit": "%",
+          "current": 97.5,
+          "target": {
+            "operator": ">=",
+            "value": 99,
+            "warningThreshold": 95,
+            "desiredDirection": "up"
+          },
+          "collection": {
+            "method": "tool",
+            "toolName": "bash",
+            "toolParams": {
+              "command": "node scripts/jarvis-metrics.js --metric=integration-pass-rate --window=7d"
+            },
+            "collectionSchedule": "0 6 * * *",
+            "instructions": "Query CI for integration test results from the last 7 days. Calculate passed / total as a percentage."
+          }
+        },
+        {
+          "slug": "e2e-duration",
+          "name": "E2E test suite duration",
+          "type": "duration",
+          "unit": "min",
+          "current": 18,
+          "target": {
+            "operator": "<",
+            "value": 15,
+            "warningThreshold": 20,
+            "desiredDirection": "down"
+          },
+          "collection": {
+            "method": "tool",
+            "toolName": "bash",
+            "toolParams": {
+              "command": "node scripts/jarvis-metrics.js --metric=e2e-duration --window=7d"
+            },
+            "collectionSchedule": "0 6 * * *",
+            "instructions": "Fetch the average E2E test suite wall-clock time from the last 7 days of CI runs. Report in minutes."
+          }
+        },
+        {
+          "slug": "escaped-defects",
+          "name": "Escaped defects per release",
+          "type": "count",
+          "unit": "count",
+          "current": 2,
+          "target": {
+            "operator": "=",
+            "value": 0,
+            "warningThreshold": 2,
+            "desiredDirection": "down"
+          },
+          "collection": {
+            "method": "tool",
+            "toolName": "bash",
+            "toolParams": {
+              "command": "node scripts/jarvis-metrics.js --metric=escaped-defects --window=7d"
+            },
+            "collectionSchedule": "0 0 * * 1",
+            "instructions": "Count bugs reported by users or support that were not caught by any automated test, since the last release."
+          }
+        }
+      ],
+      "strategies": [
+        {
+          "description": "Coverage ratchet — CI fails if coverage drops below current high-water mark"
+        },
+        {
+          "description": "Flaky test quarantine — auto-detect and isolate flaky tests, track fix SLA"
+        },
+        {
+          "description": "E2E critical path suite — maintain a fast-running subset covering the top 10 user journeys"
+        },
+        {
+          "description": "Post-release defect analysis — for each escaped defect, add a regression test and trace the gap"
+        }
+      ]
+    },
+    {
+      "name": "User Experience Quality",
+      "slug": "ux-quality",
+      "description": "Quality isn't just about uptime — the product should feel fast, intuitive, and polished. UX quality directly drives adoption and retention.",
+      "metrics": [
+        {
+          "slug": "lcp",
+          "name": "Core Web Vitals (LCP)",
+          "type": "duration",
+          "unit": "s",
+          "current": 3.1,
+          "target": {
+            "operator": "<",
+            "value": 2.5,
+            "warningThreshold": 4,
+            "desiredDirection": "down"
+          },
+          "collection": {
+            "method": "tool",
+            "toolName": "bash",
+            "toolParams": {
+              "command": "node scripts/jarvis-metrics.js --metric=lcp --window=24h"
+            },
+            "collectionSchedule": "0 6 * * *",
+            "instructions": "Pull the P75 Largest Contentful Paint from Real User Monitoring (RUM) data for the last 24 hours. Report in seconds."
+          }
+        },
+        {
+          "slug": "csat",
+          "name": "User satisfaction (CSAT)",
+          "type": "rating",
+          "unit": "score",
+          "current": 3.9,
+          "target": {
+            "operator": ">=",
+            "value": 4.2,
+            "warningThreshold": 3.8,
+            "desiredDirection": "up"
+          },
+          "collection": {
+            "method": "tool",
+            "toolName": "bash",
+            "toolParams": {
+              "command": "node scripts/jarvis-metrics.js --metric=csat --window=7d"
+            },
+            "collectionSchedule": "0 0 * * 1",
+            "instructions": "Pull the average CSAT rating from in-app surveys submitted in the last 7 days. Scale is 1-5."
+          }
+        },
+        {
+          "slug": "a11y-score",
+          "name": "Accessibility audit score",
+          "type": "percentage",
+          "unit": "%",
+          "current": 88,
+          "target": {
+            "operator": ">=",
+            "value": 95,
+            "warningThreshold": 85,
+            "desiredDirection": "up"
+          },
+          "collection": {
+            "method": "tool",
+            "toolName": "bash",
+            "toolParams": {
+              "command": "npx axe-core --reporter=json | node scripts/parse-a11y.js"
+            },
+            "collectionSchedule": "0 0 * * 1",
+            "instructions": "Run axe-core against the main application routes. Calculate the pass rate as a percentage of total rules checked."
+          }
+        },
+        {
+          "slug": "client-error-rate",
+          "name": "UI error rate (client-side)",
+          "type": "percentage",
+          "unit": "%",
+          "current": 0.72,
+          "target": {
+            "operator": "<",
+            "value": 0.5,
+            "warningThreshold": 1,
+            "desiredDirection": "down"
+          },
+          "collection": {
+            "method": "tool",
+            "toolName": "bash",
+            "toolParams": {
+              "command": "node scripts/jarvis-metrics.js --metric=client-errors --window=24h"
+            },
+            "collectionSchedule": "0 6 * * *",
+            "instructions": "Query Sentry for unhandled client-side errors in the last 24 hours. Calculate as percentage of total page views."
+          }
+        }
+      ],
+      "strategies": [
+        {
+          "description": "Performance budget enforcement — fail CI when Core Web Vitals exceed thresholds"
+        },
+        {
+          "description": "Monthly UX audit — review top 5 user flows for friction points, accessibility, and responsiveness"
+        },
+        {
+          "description": "Client-side error triage — auto-file bugs for new client errors, prioritize by user impact"
+        },
+        {
+          "description": "Quarterly usability testing — run moderated sessions with real users, feed findings into backlog"
+        }
+      ]
+    }
+  ]
+}
