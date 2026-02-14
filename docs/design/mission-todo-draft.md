@@ -33,7 +33,7 @@ The current TODO system has a basic schema and a create tool, but lacks:
 │ Active TODOs (default limit: 10)            │
 │                                             │
 │ These are the CURRENT priorities.           │
-│ Status: pending | in_progress | blocked     │
+│ Status: pending | in_progress               │
 │ Agents execute these NOW.                   │
 │                                             │
 │ When completed/cancelled → freed slot       │
@@ -128,11 +128,11 @@ interface MissionTodo {
                                          ┌────────────┐
   ┌───────────┐  complete (Mission Lead) │ in_progress│
   │ completed │  ◄───────────────────── └────────────┘
-  └───────────┘                                │
-                                               │ blocked
-  ┌───────────┐  cancel (from any state) ┌────▼───────┐
-  │ cancelled │  ◄───────────────────── │  blocked   │
-  └───────────┘                          └────────────┘
+  └───────────┘
+
+  ┌───────────┐  cancel (from any state)
+  │ cancelled │  ◄───────────────────── (any non-completed)
+  └───────────┘
 ```
 
 Valid transitions:
@@ -144,9 +144,7 @@ Valid transitions:
 | `pending` | `backlog` | Mission Lead | `mission_todo_update` (demote) |
 | `pending` | `in_progress` | Mission Lead | `mission_todo_update` (start) |
 | `in_progress` | `completed` | Mission Lead **only** | `mission_todo_complete` |
-| `in_progress` | `blocked` | Pillar Owner, Worker | `mission_todo_update` |
-| `blocked` | `in_progress` | Mission Lead | `mission_todo_update` |
-| any | `cancelled` | Mission Lead | `mission_todo_update` (cancel) |
+| any (not completed) | `cancelled` | Mission Lead | `mission_todo_update` (cancel) |
 
 **Key constraint:** Only Mission Lead can mark a TODO as `completed`. This ensures
 a review step — the executing agent cannot self-certify completion.
@@ -175,7 +173,7 @@ Add these new fields to the existing tool:
 ```
 
 **Enforcement logic:**
-1. Count active TODOs (pending + in_progress + blocked) for this mission
+1. Count active TODOs (pending + in_progress) for this mission
 2. If `targetStatus === 'pending'` and count >= `activeTodoLimit`:
    - Create as `backlog` instead, warn agent:
      "Active TODO limit (10) reached. Created in backlog instead."
@@ -188,7 +186,7 @@ Add these new fields to the existing tool:
 {
   missionSlug: string,         // required
   todoId: string,              // required (the TODO to update)
-  action: 'promote' | 'demote' | 'start' | 'block' | 'unblock' | 'cancel',
+  action: 'promote' | 'demote' | 'start' | 'cancel',
   reason: string,              // required: why this action
 }
 ```
@@ -200,13 +198,11 @@ Add these new fields to the existing tool:
 | `promote` | backlog | pending | Checks active limit; fails if full |
 | `demote` | pending | backlog | Frees an active slot |
 | `start` | pending | in_progress | Creates execution conversation, sets startedAt |
-| `block` | in_progress | blocked | Agent explains why blocked |
-| `unblock` | blocked | in_progress | Resume work |
 | `cancel` | any (not completed) | cancelled | Requires reason |
 
 **Permission model:**
 - Mission Lead: all actions
-- Pillar Owner: `block`, `cancel` only (cannot self-promote or self-complete)
+- Pillar Owner: `cancel` only (cannot self-promote or self-complete)
 
 ### 4.3 `mission_todo_complete` (new)
 
@@ -222,7 +218,7 @@ Separate from `mission_todo_update` because completion requires review authority
 ```
 
 **Completion logic:**
-1. Verify TODO is `in_progress` (cannot complete from `pending` or `blocked`)
+1. Verify TODO is `in_progress` (cannot complete from `pending`)
 2. Verify caller is Mission Lead (pillar-owners and workers cannot complete)
 3. Set `status = 'completed'`, `completedAt = now`, `outcome = outcome`
 4. If `metricsImpacted` is provided, trigger metric re-collection for those metrics
@@ -404,7 +400,7 @@ CREATE TABLE IF NOT EXISTS mission_todos (
   completionCriteria TEXT NOT NULL DEFAULT '',    -- NEW
   deadline TEXT,                                  -- NEW: ISO 8601 date
   status TEXT NOT NULL DEFAULT 'pending'
-    CHECK(status IN ('backlog', 'pending', 'in_progress', 'completed', 'blocked', 'cancelled')),
+    CHECK(status IN ('backlog', 'pending', 'in_progress', 'completed', 'cancelled')),
   priority TEXT NOT NULL DEFAULT 'medium'
     CHECK(priority IN ('critical', 'high', 'medium', 'low')),
   assignedAgent TEXT,
@@ -420,7 +416,7 @@ CREATE TABLE IF NOT EXISTS mission_todos (
 - Added `justification` column
 - Added `completionCriteria` column
 - Added `deadline` column
-- Added `backlog` and `cancelled` to status CHECK constraint
+- Added `backlog` and `cancelled` to status CHECK constraint; removed `blocked`
 
 ### 7.2 Updated `missions` Table (for limits)
 
@@ -540,19 +536,18 @@ At each cadence cycle, the Mission Lead checks all active TODOs for overdue item
 
 ```
 For each active TODO with a deadline:
-  If deadline < now AND status IN ('pending', 'in_progress', 'blocked'):
+  If deadline < now AND status IN ('pending', 'in_progress'):
     → Mark as overdue (add tag or flag)
-    → If blocked: escalate to user via mission chat
     → If in_progress: give a warning to the worker, extend or cancel
     → If pending (never started): auto-cancel or demote to backlog
 ```
 
 ### 9.2 Escalation to Human
 
-When a TODO is overdue and blocked:
+When a TODO is overdue:
 1. Mission Lead posts a message in the **mission chat** (not pillar chat):
-   "TODO overdue: [title]. Blocked since [date]. Reason: [blocked reason].
-   Please advise: extend deadline, cancel, or unblock?"
+   "TODO overdue: [title]. Status: [status] since [date].
+   Please advise: extend deadline or cancel?"
 2. User responds in mission chat
 3. Mission Lead acts on the response (update deadline, cancel, etc.)
 
@@ -586,7 +581,7 @@ When a TODO is overdue and blocked:
 | Phase | Description | Effort |
 |-------|-------------|--------|
 | **Phase 1** | Schema migration: add `justification`, `completionCriteria`, `deadline`, new statuses (`backlog`, `cancelled`) | S |
-| **Phase 2** | Implement `mission_todo_update` tool with promote/demote/start/block/cancel actions | M |
+| **Phase 2** | Implement `mission_todo_update` tool with promote/demote/start/cancel actions | M |
 | **Phase 3** | Implement `mission_todo_complete` tool with permission restriction (private tool) | S |
 | **Phase 4** | Add capacity enforcement to `mission_todo_create` (active + backlog limits from config) | S |
 | **Phase 5** | TODO execution flow: conversation creation on `start`, delegation to pillar-owner | L |
