@@ -1,4 +1,5 @@
 import { v4 as uuid } from 'uuid';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import type {
   LLMProvider,
   LLMMessage,
@@ -23,8 +24,10 @@ export class LLMService {
   private fast: LLMProvider;
   private traceStore: TraceStore | null;
 
-  // Context stack for associating LLM calls with traces/spans
-  private contextStack: TraceContext[] = [];
+  // AsyncLocalStorage provides request-scoped context that is safe for concurrent async operations.
+  // Unlike a shared stack, each async execution chain maintains its own isolated context,
+  // preventing race conditions when multiple requests run concurrently.
+  private contextStorage = new AsyncLocalStorage<TraceContext>();
 
   constructor(config: LLMServiceConfig) {
     this.main = config.main;
@@ -37,26 +40,19 @@ export class LLMService {
   // ============================================================
 
   /**
-   * Push a trace context. Called by agents before making LLM calls.
+   * Run a function with the given trace context.
+   * All LLM calls made within the callback will be associated with this context.
+   * Uses AsyncLocalStorage to ensure concurrent requests maintain isolated contexts.
    */
-  pushContext(ctx: TraceContext): void {
-    this.contextStack.push(ctx);
+  runWithContext<T>(ctx: TraceContext, fn: () => T): T {
+    return this.contextStorage.run(ctx, fn);
   }
 
   /**
-   * Pop the most recent trace context.
-   */
-  popContext(): void {
-    this.contextStack.pop();
-  }
-
-  /**
-   * Get the current (top of stack) trace context.
+   * Get the current trace context for this async execution chain.
    */
   private getContext(): TraceContext | undefined {
-    return this.contextStack.length > 0
-      ? this.contextStack[this.contextStack.length - 1]
-      : undefined;
+    return this.contextStorage.getStore();
   }
 
   /**
