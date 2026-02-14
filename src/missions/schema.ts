@@ -6,6 +6,7 @@
  */
 
 import { getDb } from '../db/index.js';
+import { metricConversationId, pillarTodoConversationId } from './constants.js';
 
 export function initMissionSchema(): void {
   const db = getDb();
@@ -145,7 +146,7 @@ export function validateMissionConversations(): void {
 
   for (const mission of missions) {
     // Ensure metric collection conversation exists
-    const metricConvId = `${mission.slug}-metric`;
+    const metricConvId = metricConversationId(mission.slug);
     const metricExists = db.rawQuery('SELECT id FROM conversations WHERE id = ?', [metricConvId]) as Array<{ id: string }>;
     if (metricExists.length === 0) {
       console.log(`[MissionSchema] Creating missing metric collection conversation: ${metricConvId}`);
@@ -161,7 +162,7 @@ export function validateMissionConversations(): void {
     }>;
 
     for (const pillar of pillars) {
-      const todoConvId = `${mission.slug}-${pillar.slug}-todo`;
+      const todoConvId = pillarTodoConversationId(mission.slug, pillar.slug);
       const todoExists = db.rawQuery('SELECT id FROM conversations WHERE id = ?', [todoConvId]) as Array<{ id: string }>;
       if (todoExists.length === 0) {
         console.log(`[MissionSchema] Creating missing pillar TODO conversation: ${todoConvId}`);

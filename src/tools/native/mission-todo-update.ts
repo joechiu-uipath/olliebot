@@ -65,54 +65,54 @@ Cannot cancel an in_progress TODO — there is no reliable cancellation for a ru
     switch (action) {
       case 'promote': {
         if (todo.status !== 'backlog') {
-          return { success: false, error: `Cannot promote: TODO status is "${todo.status}", expected "backlog"` };
+          return { success: false, error: `Cannot promote "${todo.title}": status is "${todo.status}", expected "backlog"` };
         }
         // Check active limit
         const limits = this.missionManager.getTodoLimits(todo.missionId);
         const activeCount = this.missionManager.getActiveTodoCount(todo.missionId);
         if (activeCount >= limits.activeTodoLimit) {
-          return { success: false, error: `Cannot promote: active TODO limit (${limits.activeTodoLimit}) reached. ${activeCount} active TODOs. Cancel or complete existing items first.` };
+          return { success: false, error: `Cannot promote "${todo.title}": active TODO limit (${limits.activeTodoLimit}) reached. ${activeCount} active TODOs. Cancel or complete existing items first.` };
         }
         this.missionManager.updateTodo(todoId, { status: 'pending' });
         return {
           success: true,
-          output: { todoId, action, fromStatus: 'backlog', toStatus: 'pending', reason, message: `Promoted "${todo.title}" from backlog to pending` },
+          output: { todoId, title: todo.title, action, fromStatus: 'backlog', toStatus: 'pending', reason, message: `Promoted "${todo.title}" from backlog to pending` },
         };
       }
 
       case 'demote': {
         if (todo.status !== 'pending') {
-          return { success: false, error: `Cannot demote: TODO status is "${todo.status}", expected "pending"` };
+          return { success: false, error: `Cannot demote "${todo.title}": status is "${todo.status}", expected "pending"` };
         }
         this.missionManager.updateTodo(todoId, { status: 'backlog' });
         return {
           success: true,
-          output: { todoId, action, fromStatus: 'pending', toStatus: 'backlog', reason, message: `Demoted "${todo.title}" from pending to backlog` },
+          output: { todoId, title: todo.title, action, fromStatus: 'pending', toStatus: 'backlog', reason, message: `Demoted "${todo.title}" from pending to backlog` },
         };
       }
 
       case 'start': {
         if (todo.status !== 'pending') {
-          return { success: false, error: `Cannot start: TODO status is "${todo.status}", expected "pending"` };
+          return { success: false, error: `Cannot start "${todo.title}": status is "${todo.status}", expected "pending"` };
         }
         this.missionManager.updateTodo(todoId, { status: 'in_progress', startedAt: now });
         return {
           success: true,
-          output: { todoId, action, fromStatus: 'pending', toStatus: 'in_progress', startedAt: now, reason, message: `Started "${todo.title}" — status: in_progress` },
+          output: { todoId, title: todo.title, action, fromStatus: 'pending', toStatus: 'in_progress', startedAt: now, reason, message: `Started "${todo.title}" — status: in_progress` },
         };
       }
 
       case 'cancel': {
         if (todo.status === 'in_progress') {
-          return { success: false, error: 'Cannot cancel an in_progress TODO. There is no reliable cancellation for a running agent turn. The TODO must be completed or left to finish.' };
+          return { success: false, error: `Cannot cancel "${todo.title}": in_progress TODOs cannot be cancelled. There is no reliable cancellation for a running agent turn. The TODO must be completed or left to finish.` };
         }
         if (todo.status === 'completed' || todo.status === 'cancelled') {
-          return { success: false, error: `Cannot cancel: TODO is already "${todo.status}"` };
+          return { success: false, error: `Cannot cancel "${todo.title}": TODO is already "${todo.status}"` };
         }
         this.missionManager.updateTodo(todoId, { status: 'cancelled', completedAt: now });
         return {
           success: true,
-          output: { todoId, action, fromStatus: todo.status, toStatus: 'cancelled', completedAt: now, reason, message: `Cancelled "${todo.title}"` },
+          output: { todoId, title: todo.title, action, fromStatus: todo.status, toStatus: 'cancelled', completedAt: now, reason, message: `Cancelled "${todo.title}"` },
         };
       }
 

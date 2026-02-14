@@ -29,6 +29,17 @@ import type {
   MetricStatus,
   MetricTrend,
 } from './types.js';
+import {
+  DEFAULT_ACTIVE_TODO_LIMIT,
+  DEFAULT_BACKLOG_TODO_LIMIT,
+  DEFAULT_METRIC_HISTORY_LIMIT,
+  TREND_HISTORY_COUNT,
+  TREND_MIN_READINGS,
+  TREND_STABILITY_THRESHOLD,
+  METRIC_PRECISION,
+  metricConversationId,
+  pillarTodoConversationId,
+} from './constants.js';
 
 export interface MissionManagerConfig {
   missionsDir: string;
@@ -221,7 +232,7 @@ export class MissionManager extends EventEmitter {
     return rows[0] ? this.deserializeMetric(rows[0]) : undefined;
   }
 
-  getMetricHistory(metricId: string, limit = 30): PillarMetricHistory[] {
+  getMetricHistory(metricId: string, limit = DEFAULT_METRIC_HISTORY_LIMIT): PillarMetricHistory[] {
     const db = getDb();
     const rows = db.rawQuery(
       'SELECT * FROM pillar_metric_history WHERE metricId = ? ORDER BY timestamp DESC LIMIT ?',
@@ -263,8 +274,8 @@ export class MissionManager extends EventEmitter {
     try { target = JSON.parse(metric.target) as MetricTarget; } catch { /* invalid JSON */ }
     const status = this.computeStatus(normalizedValue, target);
 
-    // Compute trend from last 10 readings
-    const history = this.getMetricHistory(metricId, 10);
+    // Compute trend from recent readings
+    const history = this.getMetricHistory(metricId, TREND_HISTORY_COUNT);
     const trend = this.computeTrend(history, target?.desiredDirection);
 
     // Update current value, status, trend, lastCollectedAt
@@ -298,8 +309,8 @@ export class MissionManager extends EventEmitter {
       // 's', 'sec', 'seconds' → already in seconds
     }
 
-    // Round to 2 decimal places
-    return Math.round(normalized * 100) / 100;
+    const factor = 10 ** METRIC_PRECISION;
+    return Math.round(normalized * factor) / factor;
   }
 
   /**
@@ -337,9 +348,9 @@ export class MissionManager extends EventEmitter {
    * Uses simple linear regression slope direction.
    */
   computeTrend(history: PillarMetricHistory[], desiredDirection?: string): MetricTrend {
-    if (history.length < 3) return 'unknown';
+    if (history.length < TREND_MIN_READINGS) return 'unknown';
 
-    // Simple: compare mean of first half vs mean of second half
+    // Compare mean of first half vs second half
     const mid = Math.floor(history.length / 2);
     const firstHalf = history.slice(0, mid);
     const secondHalf = history.slice(mid);
@@ -348,7 +359,7 @@ export class MissionManager extends EventEmitter {
     const secondMean = secondHalf.reduce((sum, h) => sum + h.value, 0) / secondHalf.length;
 
     const delta = secondMean - firstMean;
-    const threshold = Math.abs(firstMean) * 0.05; // 5% change threshold for "stable"
+    const threshold = Math.abs(firstMean) * TREND_STABILITY_THRESHOLD;
 
     if (Math.abs(delta) <= threshold) return 'stable';
 
@@ -466,16 +477,17 @@ export class MissionManager extends EventEmitter {
   getTodoLimits(missionId: string): { activeTodoLimit: number; backlogTodoLimit: number } {
     const db = getDb();
     const rows = db.rawQuery('SELECT jsonConfig FROM missions WHERE id = ?', [missionId]) as Array<{ jsonConfig: string }>;
-    if (!rows[0]) return { activeTodoLimit: 10, backlogTodoLimit: 50 };
+    const defaults = { activeTodoLimit: DEFAULT_ACTIVE_TODO_LIMIT, backlogTodoLimit: DEFAULT_BACKLOG_TODO_LIMIT };
+    if (!rows[0]) return defaults;
 
     try {
       const config = JSON.parse(rows[0].jsonConfig);
       return {
-        activeTodoLimit: config.todo?.activeTodoLimit ?? 10,
-        backlogTodoLimit: config.todo?.backlogTodoLimit ?? 50,
+        activeTodoLimit: config.todo?.activeTodoLimit ?? DEFAULT_ACTIVE_TODO_LIMIT,
+        backlogTodoLimit: config.todo?.backlogTodoLimit ?? DEFAULT_BACKLOG_TODO_LIMIT,
       };
     } catch {
-      return { activeTodoLimit: 10, backlogTodoLimit: 50 };
+      return defaults;
     }
   }
 
@@ -599,7 +611,7 @@ export class MissionManager extends EventEmitter {
       );
 
       // Create well-known metric collection conversation for this mission
-      const metricConvId = `${slug}-metric`;
+      const metricConvId = metricConversationId(slug);
       db.rawRun(
         'INSERT OR IGNORE INTO conversations (id, title, createdAt, updatedAt, manuallyNamed, metadata) VALUES (?, ?, ?, ?, ?, ?)',
         [metricConvId, `[Metric Collection] ${missionName}`, now, now, 1, JSON.stringify({ channel: 'metric-collection', missionId, missionSlug: slug })]
@@ -634,7 +646,7 @@ export class MissionManager extends EventEmitter {
       );
 
       // Create well-known pillar TODO chat
-      const todoConvId = `${missionSlug}-${pillarSlug}-todo`;
+      const todoConvId = pillarTodoConversationId(missionSlug, pillarSlug);
       db.rawRun(
         'INSERT OR IGNORE INTO conversations (id, title, createdAt, updatedAt, manuallyNamed, metadata) VALUES (?, ?, ?, ?, ?, ?)',
         [todoConvId, `[TODOs] ${pillarConfig.name}`, now, now, 1, JSON.stringify({ channel: 'pillar-todo', missionId, missionSlug, pillarId, pillarSlug })]

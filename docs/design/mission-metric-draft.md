@@ -300,16 +300,14 @@ A native tool that persists a metric reading:
 ```typescript
 // Tool: mission_metric_record
 {
-  missionSlug: string,      // e.g., "developer-experience"
-  pillarSlug: string,       // e.g., "build-performance"
-  metricSlug: string,       // e.g., "local-build-time"
-  value: number,            // the collected value
+  metricId: string,         // GUID of the metric (no slug — only missions/pillars have slugs)
+  value: number,            // the collected value (raw — normalization is automatic)
   note?: string,            // optional context ("collected after webpack 5.9 upgrade")
 }
 ```
 
 The tool:
-1. Resolves slugs to IDs
+1. Resolves metric by GUID ID
 2. **Normalizes value** — for `duration` type metrics, converts to seconds
    (e.g., if unit is "min", multiplies by 60). Rounds the value before writing
    to avoid floating-point noise (e.g., `50.3712...` → `50.37`)
@@ -555,8 +553,7 @@ Chat: "[Metric Collection] Developer Experience"
   │       { "command": "npm run build:dev", "iterations": 3, "warmup": 1 }
   │  3. Tool returns: { "results": [52.3, 48.7, 50.1], "average": 50.37 }
   │  4. Pillar Owner calls mission_metric_record:
-  │       { missionSlug: "developer-experience", pillarSlug: "build-performance",
-  │         metricSlug: "local-build-time", value: 50.37,
+  │       { metricId: "a1b2c3d4-...", value: 50.37,
   │         note: "3 runs after warmup" }
   │  5. Tool persists value, computes status:
   │       → current: 50.37, target: < 60 → status: on_target

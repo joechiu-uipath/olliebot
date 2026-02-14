@@ -51,7 +51,7 @@ This tool is restricted to Mission Lead agents — Pillar Owners cannot self-cer
     }
 
     if (todo.status !== 'in_progress') {
-      return { success: false, error: `Cannot complete: TODO status is "${todo.status}", expected "in_progress". Only in_progress TODOs can be completed.` };
+      return { success: false, error: `Cannot complete "${todo.title}": status is "${todo.status}", expected "in_progress". Only in_progress TODOs can be completed.` };
     }
 
     const now = new Date().toISOString();
