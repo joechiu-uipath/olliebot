@@ -40,11 +40,9 @@ archetypes, and a tool-based collection model that agents can execute autonomous
 | `duration` | Seconds (stored), display converts | P95 latency: 0.230s | Same as numeric |
 | `boolean` | `true` / `false` | CI pipeline green: true | `= true` (pass) or `= false` (fail) |
 | `rating` | 1–N point scale (configurable, decimal values allowed e.g. 4.5) | Code quality: 4.5/5 | `>=` threshold |
-| `nps` | -100 to +100 (Net Promoter Score) | NPS: 42 | `>=` threshold |
 
 All types are stored as `REAL` in `pillar_metric_history.value`:
 - `boolean`: stored as `1.0` (true) or `0.0` (false)
-- `nps`: stored as the raw score (-100 to +100)
 - `rating`: stored as the numeric rating value (supports decimals, e.g. 4.5 stars)
 
 ### 2.2 Target Specification
@@ -71,7 +69,7 @@ interface MetricTarget {
 | Zero stale APIs | `{ "operator": "=", "value": 0, "desiredDirection": "down" }` |
 | CI green | `{ "operator": "=", "value": 1 }` (boolean = 1.0 for true) |
 | CSAT >= 4.5 (rating) | `{ "operator": ">=", "value": 4.5, "warningThreshold": 3.5, "desiredDirection": "up" }` |
-| NPS > 40 | `{ "operator": ">", "value": 40, "warningThreshold": 20, "desiredDirection": "up" }` |
+| NPS > 40 (numeric) | `{ "operator": ">", "value": 40, "warningThreshold": 20, "desiredDirection": "up" }` |
 
 ### 2.3 Metric Status (Computed)
 
@@ -265,7 +263,7 @@ to validate the schema covers all common patterns.
 
 | # | Metric | Type | Unit | Target Example | Collection |
 |---|--------|------|------|----------------|------------|
-| 1 | Net Promoter Score (NPS) | `nps` | score | `> 40` | tool (survey platform API) |
+| 1 | Net Promoter Score (NPS) | `numeric` | score | `> 40` | tool (survey platform API) |
 | 2 | Monthly Active Users (MAU) | `count` | users | `> 10000` | tool (analytics API) |
 | 3 | Daily Active Users (DAU) | `count` | users | `> 3000` | tool (analytics API) |
 | 4 | DAU/MAU Ratio (Stickiness) | `percentage` | % | `> 30` | derived (DAU/MAU*100) |
@@ -320,7 +318,7 @@ to validate the schema covers all common patterns.
 | 43 | Time to First PR (onboarding) | `duration` | days | `< 3` | tool (git API) |
 | 44 | Setup Script Success Rate | `percentage` | % | `> 95` | tool (CI / telemetry) |
 | 45 | Documentation Coverage | `percentage` | % | `> 90` | tool (doc scanner) |
-| 46 | Team eNPS | `nps` | score | `> 30` | tool (HR/survey platform API) |
+| 46 | Team eNPS | `numeric` | score | `> 30` | tool (HR/survey platform API) |
 | 47 | Meeting Load | `duration` | hours/week | `< 10` | tool (calendar API) |
 | 48 | Deploy Rollback Rate | `percentage` | % | `< 5` | tool (CI/CD API) |
 | 49 | Infrastructure Cost per User | `numeric` | USD/user | `< 2` | derived (infra_cost/MAU) |
@@ -328,17 +326,16 @@ to validate the schema covers all common patterns.
 
 ### 5.4 Schema Validation Summary
 
-All 50 metrics fit cleanly into the 7 metric types:
+All 50 metrics fit cleanly into the 6 metric types:
 
 | Type | Count | Examples |
 |------|-------|---------|
-| `numeric` | 9 | MRR, CAC, LTV, velocity, tech debt score, infra cost |
+| `numeric` | 11 | MRR, CAC, LTV, NPS, eNPS, velocity, tech debt score, infra cost |
 | `percentage` | 20 | Churn, coverage, cache hit, uptime, conversion |
 | `count` | 11 | MAU, DAU, bugs, vulnerabilities, incidents |
 | `duration` | 14 | Build time, MTTR, lead time, cycle time, PR review time |
 | `boolean` | 0 | (Useful for: CI green, feature flag on, compliance check) |
 | `rating` | 1 | CSAT (1-5 scale) |
-| `nps` | 2 | NPS, eNPS |
 
 Collection method breakdown:
 - `tool`: 45 metrics (90%) — automated via native, user, or MCP tools
@@ -357,7 +354,7 @@ CREATE TABLE IF NOT EXISTS pillar_metrics (
   slug TEXT NOT NULL,                    -- NEW: URL-safe identifier
   name TEXT NOT NULL,
   type TEXT NOT NULL DEFAULT 'numeric'   -- NEW: metric type enum
-    CHECK(type IN ('numeric', 'percentage', 'count', 'duration', 'boolean', 'rating', 'nps')),
+    CHECK(type IN ('numeric', 'percentage', 'count', 'duration', 'boolean', 'rating')),
   unit TEXT NOT NULL DEFAULT '',
   target TEXT NOT NULL DEFAULT '{}',     -- CHANGED: JSON object (MetricTarget)
   current REAL,                          -- CHANGED: numeric (was string)
