@@ -7,6 +7,7 @@
  */
 
 import type { DocumentChunk, SummarizationProvider } from '../types.js';
+import type { PreprocessedChunk } from './chunk-preprocessor.js';
 
 /**
  * Built-in strategy identifiers.
@@ -47,10 +48,16 @@ export interface RetrievalStrategy {
 
   /**
    * Transform a chunk's text before embedding for indexing.
-   * For example, extract keywords, generate a summary, or return as-is.
+   *
+   * When `preprocessed` is provided, the strategy should use the already-computed
+   * data (keywords/summary from a single shared LLM call) instead of making its
+   * own LLM call. This avoids sending the same input tokens multiple times.
+   *
+   * @param chunk - The document chunk
+   * @param preprocessed - Pre-computed keywords/summary from ChunkPreprocessor (if available)
    * @returns The text to be embedded and stored alongside the original chunk text.
    */
-  prepareChunkText(chunk: DocumentChunk): Promise<string>;
+  prepareChunkText(chunk: DocumentChunk, preprocessed?: PreprocessedChunk): Promise<string>;
 
   /**
    * Transform a query string before embedding for search.

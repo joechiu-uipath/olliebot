@@ -31,6 +31,7 @@ import {
 import { RAG_DEFAULT_TOP_K } from '../constants.js';
 import {
   createStrategiesFromConfig,
+  ChunkPreprocessor,
   type RetrievalStrategy,
   type StrategyConfig,
 } from './strategies/index.js';
@@ -231,19 +232,38 @@ export class RAGProjectService extends EventEmitter {
   }
 
   /**
+   * Check if any of the enabled strategies require LLM preprocessing
+   * (keyword or summary). If so, we use ChunkPreprocessor to make one
+   * combined LLM call instead of N separate calls per chunk.
+   */
+  private needsLLMPreprocessing(strategies: RetrievalStrategy[]): boolean {
+    return strategies.some((s) => s.id === 'keyword' || s.id === 'summary');
+  }
+
+  /**
    * Index a single chunk across all enabled strategies.
-   * Each strategy transforms the text differently before embedding.
+   *
+   * When multiple strategies need LLM preprocessing (keyword + summary),
+   * a single combined LLM call via ChunkPreprocessor produces both outputs.
+   * Each strategy receives the shared preprocessed data instead of making
+   * its own redundant LLM call with the same input tokens.
    */
   private async indexChunkMultiStrategy(
     chunk: DocumentChunk,
     strategies: RetrievalStrategy[],
     projectId: string,
     relativePath: string,
-    store: LanceStore
+    store: LanceStore,
+    preprocessor: ChunkPreprocessor | null
   ): Promise<void> {
+    // One LLM call produces keywords + summary for all strategies that need it
+    const preprocessed = preprocessor
+      ? await preprocessor.process(chunk.text)
+      : undefined;
+
     for (const strategy of strategies) {
-      // Transform the chunk text according to this strategy
-      const preparedText = await strategy.prepareChunkText(chunk);
+      // Strategy uses preprocessed data if available, otherwise falls back to its own LLM call
+      const preparedText = await strategy.prepareChunkText(chunk, preprocessed);
 
       // Embed the transformed text
       const embedding = await this.embeddingProvider.embed(preparedText);
@@ -437,6 +457,12 @@ export class RAGProjectService extends EventEmitter {
           }
 
           if (useMultiStrategy) {
+            // Create preprocessor if any strategy needs LLM (keyword/summary).
+            // One LLM call per chunk produces both keywords + summary.
+            const preprocessor = this.needsLLMPreprocessing(strategies) && this.summarizationProvider
+              ? new ChunkPreprocessor(this.summarizationProvider)
+              : null;
+
             // Multi-strategy: index each chunk across all strategies
             for (const chunk of chunks) {
               await this.indexChunkMultiStrategy(
@@ -444,7 +470,8 @@ export class RAGProjectService extends EventEmitter {
                 strategies,
                 projectId,
                 relativePath,
-                store
+                store,
+                preprocessor
               );
             }
           } else {

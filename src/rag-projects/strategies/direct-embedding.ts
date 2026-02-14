@@ -6,6 +6,7 @@
  */
 
 import type { DocumentChunk } from '../types.js';
+import type { PreprocessedChunk } from './chunk-preprocessor.js';
 import type { RetrievalStrategy } from './types.js';
 
 export class DirectEmbeddingStrategy implements RetrievalStrategy {
@@ -13,7 +14,7 @@ export class DirectEmbeddingStrategy implements RetrievalStrategy {
   readonly name = 'Direct Embedding';
   readonly description = 'Embeds the raw chunk text directly. Best for literal and semantic matching.';
 
-  async prepareChunkText(chunk: DocumentChunk): Promise<string> {
+  async prepareChunkText(chunk: DocumentChunk, _preprocessed?: PreprocessedChunk): Promise<string> {
     return chunk.text;
   }
 

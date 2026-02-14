@@ -61,6 +61,7 @@ export {
   DirectEmbeddingStrategy,
   KeywordEmbeddingStrategy,
   SummaryEmbeddingStrategy,
+  ChunkPreprocessor,
 } from './strategies/index.js';
 
 export type {
@@ -69,6 +70,7 @@ export type {
   StrategyType,
   FusionMethod,
   StrategyFactoryOptions,
+  PreprocessedChunk,
 } from './strategies/index.js';
 
 // Result fusion

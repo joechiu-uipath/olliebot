@@ -5,9 +5,14 @@
  * This creates a "keyword-space" index where retrieval focuses on key concepts
  * rather than full prose, improving recall for queries that use different wording
  * than the source text.
+ *
+ * During indexing, prefers pre-computed keywords from ChunkPreprocessor (shared
+ * single LLM call) to avoid redundant input token costs. Falls back to its own
+ * LLM call only if no preprocessed data is available.
  */
 
 import type { DocumentChunk, SummarizationProvider } from '../types.js';
+import type { PreprocessedChunk } from './chunk-preprocessor.js';
 import type { RetrievalStrategy } from './types.js';
 
 const KEYWORD_EXTRACTION_PROMPT =
@@ -31,7 +36,13 @@ export class KeywordEmbeddingStrategy implements RetrievalStrategy {
     this.summarizationProvider = summarizationProvider;
   }
 
-  async prepareChunkText(chunk: DocumentChunk): Promise<string> {
+  async prepareChunkText(chunk: DocumentChunk, preprocessed?: PreprocessedChunk): Promise<string> {
+    // Use pre-computed keywords from shared LLM call when available
+    if (preprocessed) {
+      return preprocessed.keywords;
+    }
+
+    // Fallback: standalone LLM call (only when preprocessor is not wired in)
     try {
       const keywords = await this.summarizationProvider.summarize(
         chunk.text,

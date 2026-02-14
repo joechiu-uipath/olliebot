@@ -120,3 +120,5 @@ export type { RetrievalStrategy, StrategyConfig, StrategyType, FusionMethod, Str
 export { DirectEmbeddingStrategy } from './direct-embedding.js';
 export { KeywordEmbeddingStrategy } from './keyword-embedding.js';
 export { SummaryEmbeddingStrategy } from './summary-embedding.js';
+export { ChunkPreprocessor } from './chunk-preprocessor.js';
+export type { PreprocessedChunk } from './chunk-preprocessor.js';
