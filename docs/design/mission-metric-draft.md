@@ -150,7 +150,7 @@ This replaces the manual `trend` field with a computable status. The `trend` fie
 ```typescript
 interface MetricCollection {
   /** How to collect this metric */
-  method: 'tool' | 'manual' | 'derived';
+  method: 'tool' | 'derived';
 
   // --- For method: 'tool' ---
   /** Tool identifier: 'native_tool_name', 'user.tool_name', or 'mcp.server__tool_name' */
@@ -168,20 +168,20 @@ interface MetricCollection {
   formula?: string;
   /** Slugs of metrics this depends on (auto-recalculate when inputs change) */
   dependsOn?: string[];
-
-  // --- For method: 'manual' ---
-  /** Prompt shown to user when requesting manual input */
-  promptText?: string;
 }
 ```
 
-**Three collection methods:**
+**Two collection methods:**
 
 | Method | Use Case | Example |
 |--------|----------|---------|
-| `tool` | Automated collection via native, user, or MCP tool | CI build time via `mcp.ci__get_build_stats` |
+| `tool` | Automated collection via native, user, or MCP tool | CI build time via `mcp.ci__get_build_stats`, NPS via `mcp.survey__get_results` |
 | `derived` | Calculated from other metrics | "Productivity = features_shipped / engineer_count" |
-| `manual` | Human-entered (surveys, subjective ratings) | NPS score, team satisfaction |
+
+> **Why no `manual` method?** Manual collection requires human input which doesn't scale.
+> Metrics that seem inherently human-entered (NPS, CSAT, eNPS) should be collected via
+> tool integrations — survey platforms (Delighted, Typeform, Google Forms), helpdesk APIs,
+> or internal feedback tools all expose APIs that agents can call autonomously.
 
 ### 3.3 Where Collection Instructions Live
 
@@ -213,13 +213,10 @@ MissionLeadAgent receives cycle prompt
   │     │     ├── Agent extracts numeric value
   │     │     └── Agent calls mission_metric_record tool to persist
   │     │
-  │     ├── For each metric with collection.method === 'derived':
-  │     │     ├── System fetches latest values of dependsOn metrics
-  │     │     ├── System evaluates formula
-  │     │     └── System persists result automatically
-  │     │
-  │     └── For each metric with collection.method === 'manual':
-  │           └── Agent flags these for user input (chat message or UI prompt)
+  │     └── For each metric with collection.method === 'derived':
+  │           ├── System fetches latest values of dependsOn metrics
+  │           ├── System evaluates formula
+  │           └── System persists result automatically
   │
   └── Agent generates status summary (on_target / warning / off_target per metric)
 ```
@@ -268,7 +265,7 @@ to validate the schema covers all common patterns.
 
 | # | Metric | Type | Unit | Target Example | Collection |
 |---|--------|------|------|----------------|------------|
-| 1 | Net Promoter Score (NPS) | `nps` | score | `> 40` | manual (survey) |
+| 1 | Net Promoter Score (NPS) | `nps` | score | `> 40` | tool (survey platform API) |
 | 2 | Monthly Active Users (MAU) | `count` | users | `> 10000` | tool (analytics API) |
 | 3 | Daily Active Users (DAU) | `count` | users | `> 3000` | tool (analytics API) |
 | 4 | DAU/MAU Ratio (Stickiness) | `percentage` | % | `> 30` | derived (DAU/MAU*100) |
@@ -280,7 +277,7 @@ to validate the schema covers all common patterns.
 | 10 | Trial-to-Paid Conversion Rate | `percentage` | % | `> 15` | tool (billing API) |
 | 11 | Feature Adoption Rate | `percentage` | % | `> 40` | tool (analytics API) |
 | 12 | Time to Value (TTV) | `duration` | days | `< 7` | tool (event tracking) |
-| 13 | Customer Satisfaction (CSAT) | `rating` | 1-5 | `>= 4.5` | manual (survey) |
+| 13 | Customer Satisfaction (CSAT) | `rating` | 1-5 | `>= 4.5` | tool (survey platform API) |
 | 14 | Support Ticket Volume | `count` | tickets/week | `< 50` | tool (helpdesk API) |
 | 15 | Support Resolution Time | `duration` | hours | `< 24` | tool (helpdesk API) |
 
@@ -323,7 +320,7 @@ to validate the schema covers all common patterns.
 | 43 | Time to First PR (onboarding) | `duration` | days | `< 3` | tool (git API) |
 | 44 | Setup Script Success Rate | `percentage` | % | `> 95` | tool (CI / telemetry) |
 | 45 | Documentation Coverage | `percentage` | % | `> 90` | tool (doc scanner) |
-| 46 | Team eNPS | `nps` | score | `> 30` | manual (survey) |
+| 46 | Team eNPS | `nps` | score | `> 30` | tool (HR/survey platform API) |
 | 47 | Meeting Load | `duration` | hours/week | `< 10` | tool (calendar API) |
 | 48 | Deploy Rollback Rate | `percentage` | % | `< 5` | tool (CI/CD API) |
 | 49 | Infrastructure Cost per User | `numeric` | USD/user | `< 2` | derived (infra_cost/MAU) |
@@ -344,9 +341,8 @@ All 50 metrics fit cleanly into the 7 metric types:
 | `nps` | 2 | NPS, eNPS |
 
 Collection method breakdown:
-- `tool`: 40 metrics (80%) — automated via native, user, or MCP tools
+- `tool`: 45 metrics (90%) — automated via native, user, or MCP tools
 - `derived`: 5 metrics (10%) — computed from other metrics
-- `manual`: 5 metrics (10%) — surveys, subjective assessments
 
 ---
 
@@ -384,7 +380,7 @@ Since this is pre-production, we can alter the table directly. For existing rows
 - `type`: Infer from unit — `%` → percentage, `s`/`min` → duration, else numeric
 - `slug`: Generate from name via slugify
 - `status`: Compute from current vs. target
-- `collection`: Default to `{"method": "manual"}`
+- `collection`: Default to `{"method": "tool"}` (toolName and instructions must be configured)
 
 ---
 
