@@ -12,15 +12,15 @@ import { DATA_SIZE_THRESHOLDS } from './types.js';
 import { LLM_SUMMARIZE_MAX_TOKENS, LLM_TASK_CONFIG_MAX_TOKENS } from '../constants.js';
 import type { TraceStore } from '../tracing/trace-store.js';
 import type { TraceContext, LlmWorkload } from '../tracing/types.js';
-import type { TokenReductionService } from './token-reduction/token-reduction-service.js';
-import type { CompressionResult } from './token-reduction/types.js';
+import { TokenReductionService } from './token-reduction/token-reduction-service.js';
+import type { TokenReductionConfig, CompressionResult } from './token-reduction/types.js';
 import type { UserSettingsService } from '../settings/service.js';
 
 export interface LLMServiceConfig {
   main: LLMProvider;
   fast: LLMProvider;
   traceStore?: TraceStore;
-  tokenReduction?: TokenReductionService;
+  tokenReduction?: TokenReductionConfig;
   settingsService?: UserSettingsService;
 }
 
@@ -28,7 +28,8 @@ export class LLMService {
   private main: LLMProvider;
   private fast: LLMProvider;
   private traceStore: TraceStore | null;
-  private tokenReduction: TokenReductionService | null;
+  private tokenReduction: TokenReductionService | null = null;
+  private tokenReductionConfig: TokenReductionConfig | null;
   private settingsService: UserSettingsService | null;
 
   // AsyncLocalStorage provides request-scoped context that is safe for concurrent async operations.
@@ -40,12 +41,33 @@ export class LLMService {
     this.main = config.main;
     this.fast = config.fast;
     this.traceStore = config.traceStore || null;
-    this.tokenReduction = config.tokenReduction || null;
+    this.tokenReductionConfig = config.tokenReduction || null;
     this.settingsService = config.settingsService || null;
+  }
 
-    // Wire up compression cache ↔ DB persistence if both services are available
-    if (this.tokenReduction && this.traceStore) {
-      const cache = this.tokenReduction.getCache();
+  /**
+   * Initialize async subsystems (token reduction provider, compression cache).
+   * Call after construction.
+   */
+  async init(): Promise<void> {
+    if (!this.tokenReductionConfig || !this.tokenReductionConfig.enabled) {
+      return;
+    }
+
+    const service = new TokenReductionService(this.tokenReductionConfig);
+    try {
+      await service.init();
+      this.tokenReduction = service;
+      console.log(`[LLMService] Token reduction initialized: ${this.tokenReductionConfig.provider} (rate: ${this.tokenReductionConfig.rate}, model: ${this.tokenReductionConfig.model})`);
+    } catch (error) {
+      console.error('[LLMService] Failed to initialize token reduction:', error);
+      console.log('[LLMService] Token reduction disabled due to initialization failure');
+      return;
+    }
+
+    // Wire up compression cache ↔ DB persistence
+    if (this.traceStore) {
+      const cache = service.getCache();
       const traceStore = this.traceStore;
 
       cache.setPersistence(
@@ -80,6 +102,16 @@ export class LLMService {
           console.warn('[LLMService] Failed to load token reduction cache from DB (non-fatal):', err);
         }
       });
+    }
+  }
+
+  /**
+   * Shut down async subsystems.
+   */
+  async shutdown(): Promise<void> {
+    if (this.tokenReduction) {
+      await this.tokenReduction.shutdown();
+      this.tokenReduction = null;
     }
   }
 

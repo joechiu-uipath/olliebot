@@ -10,7 +10,6 @@ import {
   GoogleProvider,
   OpenAIProvider,
   AzureOpenAIProvider,
-  TokenReductionService,
   type LLMProvider,
   type TokenReductionConfig,
 } from './llm/index.js';
@@ -306,43 +305,29 @@ async function main(): Promise<void> {
   // Load user settings early (needed for token reduction config)
   const userSettings = getUserSettingsService();
 
-  // Initialize Token Reduction service (prompt compression)
-  // Settings system controls per-workload toggles; .env provides the base config
+  // Build token reduction config from .env + user settings
   const trSettings = userSettings.getTokenReductionSettings();
   const tokenReductionWanted = CONFIG.tokenReductionEnabled || trSettings.enabledForMain || trSettings.enabledForFast;
-  let tokenReductionService: TokenReductionService | undefined;
-  if (tokenReductionWanted) {
-    console.log('[Init] Initializing token reduction service...');
-    const trConfig: TokenReductionConfig = {
-      enabled: true,
-      provider: (trSettings.provider || CONFIG.tokenReductionProvider) as 'llmlingua2',
-      rate: trSettings.rate || CONFIG.tokenReductionRate,
-      model: trSettings.model || CONFIG.tokenReductionModel,
-      forceTokens: CONFIG.tokenReductionForceTokens,
-      forceReserveDigit: CONFIG.tokenReductionForceReserveDigit,
-      dropConsecutive: CONFIG.tokenReductionDropConsecutive,
-    };
-    tokenReductionService = new TokenReductionService(trConfig);
-    try {
-      await tokenReductionService.init();
-      console.log(`[Init] Token reduction: ${trConfig.provider} (rate: ${trConfig.rate}, model: ${trConfig.model})`);
-      console.log(`[Init] Token reduction: main=${trSettings.enabledForMain}, fast=${trSettings.enabledForFast}`);
-    } catch (error) {
-      console.error('[Init] Failed to initialize token reduction service:', error);
-      console.log('[Init] Token reduction disabled due to initialization failure');
-      tokenReductionService = undefined;
-    }
-  } else {
-    console.log('[Init] Token reduction: disabled');
-  }
+  const tokenReductionConfig: TokenReductionConfig | undefined = tokenReductionWanted
+    ? {
+        enabled: true,
+        provider: (trSettings.provider || CONFIG.tokenReductionProvider) as 'llmlingua2',
+        rate: trSettings.rate || CONFIG.tokenReductionRate,
+        model: trSettings.model || CONFIG.tokenReductionModel,
+        forceTokens: CONFIG.tokenReductionForceTokens,
+        forceReserveDigit: CONFIG.tokenReductionForceReserveDigit,
+        dropConsecutive: CONFIG.tokenReductionDropConsecutive,
+      }
+    : undefined;
 
   const llmService = new LLMService({
     main: mainProvider,
     fast: fastProvider,
     traceStore,
-    tokenReduction: tokenReductionService,
+    tokenReduction: tokenReductionConfig,
     settingsService: userSettings,
   });
+  await llmService.init();
 
   console.log(`[Init] Main LLM: ${CONFIG.mainProvider}/${CONFIG.mainModel}`);
   console.log(`[Init] Fast LLM: ${CONFIG.fastProvider}/${CONFIG.fastModel}`);
@@ -861,9 +846,7 @@ async function main(): Promise<void> {
     if (ragProjectService) {
       await ragProjectService.close();
     }
-    if (tokenReductionService) {
-      await tokenReductionService.shutdown();
-    }
+    await llmService.shutdown();
     await closeDb();
     console.log('[Shutdown] Complete');
     process.exit(0);
