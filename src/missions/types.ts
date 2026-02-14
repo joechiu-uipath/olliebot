@@ -92,19 +92,19 @@ export interface PillarStrategy {
 }
 
 export interface MissionTodo {
-  id: string;
+  id: string;                             // GUID — TODOs referenced by ID, not slug
   pillarId: string;
   missionId: string;
   title: string;
   description: string;
-  status: 'pending' | 'in_progress' | 'completed' | 'blocked';
+  justification: string;                  // Why this, why now
+  completionCriteria: string;             // How to judge "done"
+  status: 'backlog' | 'pending' | 'in_progress' | 'completed' | 'cancelled';
   priority: 'critical' | 'high' | 'medium' | 'low';
-  assignedAgent: string | null;
-  conversationId: string | null;  // execution log conversation
   outcome: string | null;
   createdAt: string;
-  startedAt: string | null;
-  completedAt: string | null;
+  startedAt: string | null;              // When status → in_progress
+  completedAt: string | null;            // When status → completed OR cancelled
 }
 
 // ============================================================================

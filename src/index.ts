@@ -43,6 +43,8 @@ import {
   RunPythonTool,
   WebsiteCrawlerTool,
   MissionTodoCreateTool,
+  MissionTodoUpdateTool,
+  MissionTodoCompleteTool,
   MissionMetricRecordTool,
 } from './tools/index.js';
 import {
@@ -51,7 +53,7 @@ import {
   CheckFrontendCodeTool,
 } from './self-coding/index.js';
 import { TaskManager } from './tasks/index.js';
-import { MissionManager, initMissionSchema } from './missions/index.js';
+import { MissionManager, initMissionSchema, validateMissionConversations } from './missions/index.js';
 import { MemoryService } from './memory/index.js';
 import { UserToolManager } from './tools/user/index.js';
 import {
@@ -533,10 +535,15 @@ async function main(): Promise<void> {
   });
   await missionManager.init();
 
+  // Validate all well-known mission conversations exist (non-blocking)
+  validateMissionConversations();
+
   // Register mission tools (requires mission manager)
   toolRunner.registerNativeTool(new MissionTodoCreateTool(missionManager));
+  toolRunner.registerNativeTool(new MissionTodoUpdateTool(missionManager));
+  toolRunner.registerNativeTool(new MissionTodoCompleteTool(missionManager));
   toolRunner.registerNativeTool(new MissionMetricRecordTool(missionManager));
-  console.log('[Init] Mission tools registered (todo_create, metric_record)');
+  console.log('[Init] Mission tools registered (todo_create, todo_update, todo_complete, metric_record)');
 
   // Create supervisor agent (multi-agent architecture)
   console.log('[Init] Creating supervisor agent...');

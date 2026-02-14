@@ -96,10 +96,12 @@ export function initMissionSchema(): void {
       missionId TEXT NOT NULL REFERENCES missions(id) ON DELETE CASCADE,
       title TEXT NOT NULL,
       description TEXT NOT NULL DEFAULT '',
-      status TEXT NOT NULL DEFAULT 'pending' CHECK(status IN ('pending', 'in_progress', 'completed', 'blocked')),
-      priority TEXT NOT NULL DEFAULT 'medium' CHECK(priority IN ('critical', 'high', 'medium', 'low')),
-      assignedAgent TEXT,
-      conversationId TEXT,
+      justification TEXT NOT NULL DEFAULT '',
+      completionCriteria TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'pending'
+        CHECK(status IN ('backlog', 'pending', 'in_progress', 'completed', 'cancelled')),
+      priority TEXT NOT NULL DEFAULT 'medium'
+        CHECK(priority IN ('critical', 'high', 'medium', 'low')),
       outcome TEXT,
       createdAt TEXT NOT NULL,
       startedAt TEXT,
@@ -121,10 +123,82 @@ export function initMissionSchema(): void {
     CREATE INDEX IF NOT EXISTS idx_mission_todos_status ON mission_todos(missionId, status);
   `);
 
-  // Migrate existing pillar_metrics schema (add new columns if missing)
+  // Migrate existing schemas (add new columns if missing)
   migratePillarMetrics(db);
+  migrateMissionTodos(db);
 
   console.log('[MissionSchema] Mission tables and indexes created');
+}
+
+/**
+ * Validate that all well-known mission conversations exist.
+ * Creates any that are missing. Non-blocking — safe to call on every startup.
+ */
+export function validateMissionConversations(): void {
+  const db = getDb();
+  const now = new Date().toISOString();
+
+  // Find all active missions and their pillars
+  const missions = db.rawQuery('SELECT id, slug, name FROM missions WHERE status = ?', ['active']) as Array<{
+    id: string; slug: string; name: string;
+  }>;
+
+  for (const mission of missions) {
+    // Ensure metric collection conversation exists
+    const metricConvId = `${mission.slug}-metric`;
+    const metricExists = db.rawQuery('SELECT id FROM conversations WHERE id = ?', [metricConvId]) as Array<{ id: string }>;
+    if (metricExists.length === 0) {
+      console.log(`[MissionSchema] Creating missing metric collection conversation: ${metricConvId}`);
+      db.rawRun(
+        'INSERT OR IGNORE INTO conversations (id, title, createdAt, updatedAt, manuallyNamed, metadata) VALUES (?, ?, ?, ?, ?, ?)',
+        [metricConvId, `[Metric Collection] ${mission.name}`, now, now, 1, JSON.stringify({ channel: 'metric-collection', missionId: mission.id, missionSlug: mission.slug })]
+      );
+    }
+
+    // Ensure pillar TODO conversations exist
+    const pillars = db.rawQuery('SELECT id, slug, name FROM pillars WHERE missionId = ? AND status = ?', [mission.id, 'active']) as Array<{
+      id: string; slug: string; name: string;
+    }>;
+
+    for (const pillar of pillars) {
+      const todoConvId = `${mission.slug}-${pillar.slug}-todo`;
+      const todoExists = db.rawQuery('SELECT id FROM conversations WHERE id = ?', [todoConvId]) as Array<{ id: string }>;
+      if (todoExists.length === 0) {
+        console.log(`[MissionSchema] Creating missing pillar TODO conversation: ${todoConvId}`);
+        db.rawRun(
+          'INSERT OR IGNORE INTO conversations (id, title, createdAt, updatedAt, manuallyNamed, metadata) VALUES (?, ?, ?, ?, ?, ?)',
+          [todoConvId, `[TODOs] ${pillar.name}`, now, now, 1, JSON.stringify({ channel: 'pillar-todo', missionId: mission.id, missionSlug: mission.slug, pillarId: pillar.id, pillarSlug: pillar.slug })]
+        );
+      }
+    }
+  }
+}
+
+/**
+ * Migrate mission_todos table from old schema (with assignedAgent, conversationId, blocked)
+ * to new schema (with justification, completionCriteria, backlog, cancelled).
+ */
+function migrateMissionTodos(db: ReturnType<typeof getDb>): void {
+  try {
+    const columns = db.rawQuery('PRAGMA table_info(mission_todos)') as Array<{ name: string }>;
+    const columnNames = new Set(columns.map(c => c.name));
+
+    // If 'justification' column already exists, migration was already done
+    if (columnNames.has('justification')) return;
+
+    console.log('[MissionSchema] Migrating mission_todos to enhanced schema...');
+
+    // Add new columns
+    db.rawExec('ALTER TABLE mission_todos ADD COLUMN justification TEXT NOT NULL DEFAULT \'\'');
+    db.rawExec('ALTER TABLE mission_todos ADD COLUMN completionCriteria TEXT NOT NULL DEFAULT \'\'');
+
+    // Migrate 'blocked' status to 'pending' (blocked is removed)
+    db.rawRun('UPDATE mission_todos SET status = ? WHERE status = ?', ['pending', 'blocked']);
+
+    console.log('[MissionSchema] Migrated mission_todos to enhanced schema');
+  } catch {
+    console.log('[MissionSchema] mission_todos migration skipped (fresh install or already migrated)');
+  }
 }
 
 /**

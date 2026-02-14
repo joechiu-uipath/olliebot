@@ -14,8 +14,8 @@ The current TODO system has a basic schema and a create tool, but lacks:
 
 1. **Capacity limits** — Without limits, agents create unbounded TODOs and never
    prioritize. We need artificial scarcity to force focus.
-2. **Rich schema** — Current TODOs have `title` + `description` but no justification,
-   completion criteria, or deadline. Agents can't judge "is this done?" or "why this?"
+2. **Rich schema** — Current TODOs have `title` + `description` but no justification
+   or completion criteria. Agents can't judge "is this done?" or "why this?"
 3. **Lifecycle management** — No tools for updating, promoting, demoting, or completing
    TODOs. No backlog concept.
 4. **Execution model** — No defined flow for how a TODO goes from "pending" to "done".
@@ -46,7 +46,7 @@ The current TODO system has a basic schema and a create tool, but lacks:
 │ Reviewed during planning cadence.           │
 │                                             │
 │ When promoted → moves to Active             │
-│ When stale → cancelled/archived             │
+│ When stale → cancelled                      │
 └─────────────────────────────────────────────┘
 ```
 
@@ -87,7 +87,7 @@ across pillars.
 
 ```typescript
 interface MissionTodo {
-  id: string;
+  id: string;                       // GUID — TODOs are always referenced by ID
   pillarId: string;
   missionId: string;
 
@@ -96,12 +96,10 @@ interface MissionTodo {
   description: string;              // What needs to be done (detailed)
   justification: string;            // NEW: Why this, why now — links to metrics/strategy
   completionCriteria: string;       // NEW: How to judge "done" — measurable criteria
-  deadline: string | null;          // NEW: ISO 8601 date or null (no deadline)
 
   // --- Lifecycle ---
   status: 'backlog' | 'pending' | 'in_progress' | 'completed' | 'cancelled';
-  priority: 'critical' | 'high' | 'medium' | 'low';  // Reserved: not used in v1
-  assignedAgent: string | null;     // Reserved: not used in v1 (always pillar-owner)
+  priority: 'critical' | 'high' | 'medium' | 'low';
 
   // --- Execution ---
   outcome: string | null;           // Result summary (filled on completion)
@@ -109,9 +107,15 @@ interface MissionTodo {
   // --- Timestamps ---
   createdAt: string;
   startedAt: string | null;         // When status → in_progress
-  completedAt: string | null;       // When status → completed
+  completedAt: string | null;       // When status → completed OR cancelled
 }
 ```
+
+**Key decisions:**
+- **TODOs use GUID IDs** — there are no TODO slugs. Only missions and pillars have slugs.
+- **`completedAt` is used for both completion and cancellation** — when a TODO is
+  cancelled, `completedAt` records the cancellation time and `status` distinguishes
+  cancelled from completed. No separate `cancelledAt` field.
 
 ### 3.2 Status Transitions
 
@@ -128,8 +132,8 @@ interface MissionTodo {
   │ completed │  ◄───────────────────── └────────────┘
   └───────────┘
 
-  ┌───────────┐  cancel (from any state)
-  │ cancelled │  ◄───────────────────── (any non-completed)
+  ┌───────────┐  cancel (from backlog or pending only)
+  │ cancelled │  ◄───────────────────── (backlog | pending)
   └───────────┘
 ```
 
@@ -142,10 +146,15 @@ Valid transitions:
 | `pending` | `backlog` | Mission Lead | `mission_todo_update` (demote) |
 | `pending` | `in_progress` | Mission Lead | `mission_todo_update` (start) |
 | `in_progress` | `completed` | Mission Lead **only** | `mission_todo_complete` |
-| any (not completed) | `cancelled` | Mission Lead | `mission_todo_update` (cancel) |
+| `backlog` | `cancelled` | Mission Lead | `mission_todo_update` (cancel) |
+| `pending` | `cancelled` | Mission Lead | `mission_todo_update` (cancel) |
 
-**Key constraint:** Only Mission Lead can mark a TODO as `completed`. This ensures
-a review step — the executing agent cannot self-certify completion.
+**Key constraints:**
+- Only Mission Lead can mark a TODO as `completed`. This ensures a review step —
+  the executing agent cannot self-certify completion.
+- **Cannot cancel an `in_progress` TODO.** We have no reliable cancellation for a
+  running agent turn. An in-progress TODO must either be completed or left to finish.
+  Cancellation only applies to `backlog` and `pending` items.
 
 ---
 
@@ -163,9 +172,7 @@ Add these new fields to the existing tool:
   description: string,         // what needs to be done
   justification: string,       // NEW: why this, why now
   completionCriteria: string,  // NEW: measurable "done" definition
-  deadline: string | null,     // NEW: ISO 8601 date or null
-  priority: 'critical' | 'high' | 'medium' | 'low',  // reserved: not used in v1
-  assignedAgent: string | null,  // reserved: not used in v1 (always pillar-owner)
+  priority: 'critical' | 'high' | 'medium' | 'low',
   targetStatus: 'pending' | 'backlog',  // NEW: default 'pending'
 }
 ```
@@ -182,8 +189,7 @@ Add these new fields to the existing tool:
 
 ```typescript
 {
-  missionSlug: string,         // required
-  todoId: string,              // required (the TODO to update)
+  todoId: string,              // required (GUID of the TODO to update)
   action: 'promote' | 'demote' | 'start' | 'cancel',
   reason: string,              // required: why this action
 }
@@ -195,12 +201,12 @@ Add these new fields to the existing tool:
 |--------|------------|-----------|-------|
 | `promote` | backlog | pending | Checks active limit; fails if full |
 | `demote` | pending | backlog | Frees an active slot |
-| `start` | pending | in_progress | Sets startedAt, execution happens in pillar TODO chat |
-| `cancel` | any (not completed) | cancelled | Requires reason |
+| `start` | pending | in_progress | Sets `startedAt = now` |
+| `cancel` | backlog, pending | cancelled | Sets `completedAt = now`. **Cannot cancel in_progress.** |
 
-**Permission model:**
-- Mission Lead: all actions
-- Pillar Owner: `cancel` only (cannot self-promote or self-complete)
+**Tool access:**
+- Available to Mission Lead agent (all actions)
+- Available to Pillar Owner agent (restricted to `cancel` only via agent prompt guidance)
 
 ### 4.3 `mission_todo_complete` (new)
 
@@ -208,23 +214,24 @@ Separate from `mission_todo_update` because completion requires review authority
 
 ```typescript
 {
-  missionSlug: string,         // required
-  todoId: string,              // required
+  todoId: string,              // required (GUID)
   outcome: string,             // required: summary of what was accomplished
-  metricsImpacted: string[],   // optional: metric slugs that may have changed
 }
 ```
 
 **Completion logic:**
 1. Verify TODO is `in_progress` (cannot complete from `pending`)
-2. Verify caller is Mission Lead (pillar-owners and workers cannot complete)
-3. Set `status = 'completed'`, `completedAt = now`, `outcome = outcome`
-4. If `metricsImpacted` is provided, trigger metric re-collection for those metrics
-5. Return completion summary
+2. Set `status = 'completed'`, `completedAt = now`, `outcome = outcome`
+3. Return completion summary
 
-**Permission restriction:** The `mission_todo_complete` tool is marked `private: true`
-in the tool runner. Only agents with explicit tool access (Mission Lead) can use it.
-Pillar Owner's `canAccessTools` list does NOT include `mission_todo_complete`.
+**Tool access:** Only Mission Lead agent has access to `mission_todo_complete`.
+This is enforced via the agent's `canAccessTools` configuration — the tool is
+included in Mission Lead's tool list but NOT in Pillar Owner's.
+
+**Mission tools visibility:** All mission-related tools (`mission_todo_create`,
+`mission_todo_update`, `mission_todo_complete`, `mission_metric_record`) are
+restricted to mission-specific agents only. Regular supervisor agents and worker
+agents outside the mission context do NOT have access to these tools.
 
 ---
 
@@ -252,57 +259,63 @@ Mission Lead decides to start a TODO
   │
   ├── 4. Mission Lead reviews the result in the pillar TODO chat
   │     ├── If satisfied: calls mission_todo_complete({
-  │     │     todoId, outcome: "...", metricsImpacted: ["build-time"]
+  │     │     todoId, outcome: "..."
   │     │   })
   │     └── If not: sends feedback, pillar-owner continues work
   │
   └── 5. Completed TODO frees an active slot for the next item
 ```
 
-### 5.2 Chat as the Context of Execution
+### 5.2 Pillar TODO Chat — Well-Known Conversation IDs
 
-Each pillar gets **one TODO chat** for all its TODO execution:
+Each pillar gets **one TODO chat** for **all** TODO planning and execution. The chat
+uses a **well-known (non-GUID) conversation ID** derived from slugs:
 
 ```
-Mission: "Developer Experience"
-  ├── Pillar: "Build Performance"
-  │     └── Chat: "[TODOs] Build Performance"
-  │           ├── Turn 1: execute TODO "Profile webpack build..."
-  │           ├── Turn 2: execute TODO "Evaluate esbuild-loader..."
+Mission slug: "developer-experience"
+  ├── Pillar: "build-performance"
+  │     └── Conversation ID: "developer-experience-build-performance-todo"
+  │         Title: "[TODOs] Build Performance"
+  │           ├── Turn 1: plan TODOs for this pillar
+  │           ├── Turn 2: execute TODO "Profile webpack build..."
+  │           ├── Turn 3: execute TODO "Evaluate esbuild-loader..."
   │           └── ...
-  ├── Pillar: "Onboarding"
-  │     └── Chat: "[TODOs] Onboarding"
+  ├── Pillar: "onboarding"
+  │     └── Conversation ID: "developer-experience-onboarding-todo"
+  │         Title: "[TODOs] Onboarding"
   │           └── ...
   └── ...
 ```
 
+**Well-known conversation ID pattern:**
+- Pillar TODO chat: `{missionSlug}-{pillarSlug}-todo`
+- Metric collection chat: `{missionSlug}-metric`
+- These are **not GUIDs** — they are predictable, human-readable, and can be
+  constructed from slugs without a DB lookup.
+
+**Chat creation and validation:**
+- All mission-related chats (mission, pillar, pillar-todo, metric) are created
+  during `syncPillars()` when a mission is first loaded.
+- On startup, a **non-blocking validation** checks that all expected well-known
+  conversations exist and creates any that are missing.
+
 **Key design decisions:**
 
-- **One TODO chat per pillar** — all TODOs for a pillar share a single conversation.
-  This avoids chat explosion (not 1 chat per TODO) while keeping pillar work
-  naturally separated.
-- **Created during mission initialization** — alongside the existing mission and
-  pillar conversations, with metadata:
-  `{ channel: 'pillar-todo', missionId, missionSlug, pillarId, pillarSlug }`
-- **Append-only log** — each TODO execution appends turns to the same chat,
-  creating a chronological trail of all work done for the pillar.
-- **Human can view the chat** — provides visibility into TODO execution for a pillar
+- **One TODO chat per pillar for both planning AND execution** — all TODO work for a
+  pillar happens in a single conversation. This includes planning (reviewing metrics,
+  creating/cancelling TODOs) and execution (running tasks, reporting results).
+- **Stateless per-turn execution** — following the feed channel pattern, each TODO
+  execution turn does NOT use chat history context. The execution prompt includes all
+  needed context (TODO definition, completion criteria, tool config). This avoids
+  unbounded context growth in the TODO chat.
+- **Mission Lead orchestrates through pillar TODO chat** — all invocations of the
+  Pillar Owner worker agent go through the Mission Lead, which delegates to the
+  Pillar Owner in the pillar TODO chat for actual tool use.
+- **Human can view the chat** — provides visibility into TODO execution for a pillar.
 - **Human can send messages** (when agent is idle) — these feed into the conversation
-  context for the next agent turn
+  context for the next agent turn.
 
-### 5.3 Conversation Resumption (No Time Limits)
-
-Both OpenAI and Anthropic APIs are **stateless** — there are no time limits on
-resuming a conversation. The full message history is sent with each request.
-
-**Key implications for long-running TODOs:**
-- A TODO can span hours or days. The agent resumes by loading the conversation
-  history from the DB and continuing.
-- The **context window** is the only constraint. For very long execution conversations,
-  we'll need message compaction (summarize older messages).
-- No need for a "keep-alive" mechanism or session tokens.
-
-### 5.4 Async Delegation via the `delegate` Tool
+### 5.3 Async Delegation via the `delegate` Tool
 
 **Current state:** The supervisor (and MissionLeadAgent) **blocks** while a delegated
 worker executes. It `await`s `handleDelegatedTask()` and cannot process new messages
@@ -347,7 +360,7 @@ With async: true:
 **Risk:** Detached promises can lose error context. Mitigate by wrapping in
 try/catch with error persisted to the conversation.
 
-### 5.5 Human Intervention
+### 5.4 Human Intervention
 
 For v1, human intervention is minimal:
 - Human can view the pillar TODO chat in the UI (read-only while agent is
@@ -364,11 +377,11 @@ For v1, human intervention is minimal:
 ### 6.1 When Planning Happens
 
 At each mission cadence cycle, the Pillar Owner should perform **TODO planning**
-for their pillar. This happens in the **pillar chat** (not the TODO execution chat).
+for their pillar. This happens in the **pillar TODO chat** (same chat as execution).
 
 ### 6.2 Planning Prompt
 
-The Mission Lead (or system) injects a planning prompt into the pillar chat:
+The Mission Lead injects a planning prompt into the pillar TODO chat:
 
 ```
 ## TODO Planning Cycle
@@ -385,14 +398,14 @@ Review the current state of the {pillarName} pillar:
 {for each strategy: description, status}
 
 ### Active TODOs ({activeCount}/{activeTodoLimit})
-{for each active TODO: title, status, priority, assignedAgent, age}
+{for each active TODO: id, title, status, age}
 
 ### Backlog ({backlogCount}/{backlogTodoLimit})
-{for each backlog TODO: title, priority, age}
+{for each backlog TODO: id, title, age}
 
 ### Instructions
 1. Review whether active TODOs are still the right priorities given current metrics
-2. Cancel any TODOs that are no longer relevant
+2. Cancel any TODOs that are no longer relevant (use their ID)
 3. Promote backlog items that are now higher priority
 4. Create new TODOs if there are open slots and unaddressed metric gaps
 5. Ensure each TODO has clear justification and completion criteria
@@ -406,7 +419,6 @@ The Pillar Owner uses `mission_todo_create` and `mission_todo_update` tools to:
 2. Cancel stale TODOs (frees slots)
 3. Promote high-priority backlog items
 4. Demote active TODOs that are no longer urgent
-5. Re-prioritize existing TODOs
 
 The Mission Lead reviews the planning output and may adjust priorities across pillars.
 
@@ -425,24 +437,22 @@ CREATE TABLE IF NOT EXISTS mission_todos (
   description TEXT NOT NULL DEFAULT '',
   justification TEXT NOT NULL DEFAULT '',        -- NEW
   completionCriteria TEXT NOT NULL DEFAULT '',    -- NEW
-  deadline TEXT,                                  -- NEW: ISO 8601 date
   status TEXT NOT NULL DEFAULT 'pending'
     CHECK(status IN ('backlog', 'pending', 'in_progress', 'completed', 'cancelled')),
   priority TEXT NOT NULL DEFAULT 'medium'
     CHECK(priority IN ('critical', 'high', 'medium', 'low')),
-  assignedAgent TEXT,
   outcome TEXT,
   createdAt TEXT NOT NULL,
-  startedAt TEXT,
-  completedAt TEXT
+  startedAt TEXT,                                -- When status → in_progress
+  completedAt TEXT                               -- When status → completed OR cancelled
 );
 ```
 
 **Changes from current:**
 - Added `justification` column
 - Added `completionCriteria` column
-- Added `deadline` column
-- Removed `conversationId` column (TODO execution uses per-pillar TODO chat)
+- Removed `conversationId` column (TODO execution uses well-known pillar TODO chats)
+- Removed `assignedAgent` column (always pillar-owner in v1)
 - Added `backlog` and `cancelled` to status CHECK constraint; removed `blocked`
 
 ### 7.2 Updated `missions` Table (for limits)
@@ -456,9 +466,9 @@ and `todo.backlogTodoLimit` values live in `jsonConfig`. No schema change needed
 
 ### Scenario: "Profile webpack build to identify slow plugins"
 
-**1. Creation (during TODO planning)**
+**1. Creation (during TODO planning in pillar TODO chat)**
 
-Pillar Owner for Build Performance runs TODO planning in pillar chat:
+Pillar Owner for Build Performance runs TODO planning:
 ```
 Agent: Based on the current build time of 72s (target: <60s, warning: 90s, status: warning),
 I'm creating a TODO to investigate.
@@ -475,7 +485,6 @@ I'm creating a TODO to investigate.
   completionCriteria: "Deliver a list of the top 3 plugins by time contribution,
     with percentage of total build time. Include recommendation for each: keep, replace,
     or configure differently."
-  deadline: "2026-02-21"
   targetStatus: "pending"
 ```
 
@@ -484,8 +493,7 @@ I'm creating a TODO to investigate.
 Mission Lead reviews the pillar's TODO list and starts execution:
 ```
 [calls mission_todo_update]
-  missionSlug: "developer-experience"
-  todoId: "todo_abc123"
+  todoId: "a3f8b2c1-4567-89ab-cdef-0123456789ab"
   action: "start"
   reason: "Build time degradation confirmed by 3 consecutive readings. Starting investigation."
 
@@ -494,7 +502,8 @@ Mission Lead reviews the pillar's TODO list and starts execution:
 
 **3. Execution (Pillar Owner works in the pillar TODO chat)**
 
-Mission Lead delegates to pillar-owner in the "[TODOs] Build Performance" chat:
+Mission Lead delegates to pillar-owner in the
+"developer-experience-build-performance-todo" chat:
 ```
 "Execute: Profile webpack build to identify top 3 slow plugins.
 
@@ -524,15 +533,12 @@ Pillar Owner works:
 Mission Lead reviews the result in the pillar TODO chat:
 ```
 [calls mission_todo_complete]
-  missionSlug: "developer-experience"
-  todoId: "todo_abc123"
+  todoId: "a3f8b2c1-4567-89ab-cdef-0123456789ab"
   outcome: "Identified ts-loader (39%), css-loader+postcss (17%), terser (12%) as
     top 3 contributors. Recommended switching to esbuild-loader for ts-loader.
     Follow-up TODO created for migration evaluation."
-  metricsImpacted: ["local-build-time"]
 
 → Sets todo.status = 'completed', todo.completedAt = now
-→ Triggers re-collection of local-build-time metric
 → Frees one active TODO slot
 ```
 
@@ -550,32 +556,7 @@ Mission Lead reviews the result in the pillar TODO chat:
 
 ---
 
-## 9. Deadline and Escalation
-
-### 9.1 Deadline Checking
-
-At each cadence cycle, the Mission Lead checks all active TODOs for overdue items:
-
-```
-For each active TODO with a deadline:
-  If deadline < now AND status IN ('pending', 'in_progress'):
-    → Mark as overdue (add tag or flag)
-    → If in_progress: give a warning to the worker, extend or cancel
-    → If pending (never started): auto-cancel or demote to backlog
-```
-
-### 9.2 Escalation to Human
-
-When a TODO is overdue:
-1. Mission Lead posts a message in the **mission chat** (not pillar chat):
-   "TODO overdue: [title]. Status: [status] since [date].
-   Please advise: extend deadline or cancel?"
-2. User responds in mission chat
-3. Mission Lead acts on the response (update deadline, cancel, etc.)
-
----
-
-## 10. Open Questions
+## 9. Open Questions
 
 1. **Active limit enforcement granularity** — Should the limit be strictly enforced
    (hard reject at 10) or soft (warn at 10, reject at 12)?
@@ -592,22 +573,18 @@ When a TODO is overdue:
 5. **Backlog pruning** — Should backlog items older than N days be auto-cancelled?
    Or should the agent explicitly review and decide?
 
-6. **Async delegation implementation** — The fire-and-forget delegation model is
-   a significant architecture change. Should we implement a message queue or use
-   Node.js detached promises?
-
 ---
 
-## 11. Implementation Priority
+## 10. Implementation Priority
 
 | Phase | Description | Effort |
 |-------|-------------|--------|
-| **Phase 1** | Schema migration: add `justification`, `completionCriteria`, `deadline`, new statuses (`backlog`, `cancelled`) | S |
+| **Phase 1** | Schema migration: add `justification`, `completionCriteria`, new statuses (`backlog`, `cancelled`), remove `conversationId`, `assignedAgent`, `blocked` | S |
 | **Phase 2** | Implement `mission_todo_update` tool with promote/demote/start/cancel actions | M |
-| **Phase 3** | Implement `mission_todo_complete` tool with permission restriction (private tool) | S |
+| **Phase 3** | Implement `mission_todo_complete` tool (Mission Lead only) | S |
 | **Phase 4** | Add capacity enforcement to `mission_todo_create` (active + backlog limits from config) | S |
-| **Phase 5** | TODO execution flow: pillar TODO chat creation during mission init, delegation to pillar-owner on `start` | L |
-| **Phase 6** | Async delegation model (fire-and-forget for long-running TODOs) | L |
-| **Phase 7** | Planning cadence: inject TODO planning prompt into pillar chat at cycle time | M |
-| **Phase 8** | Deadline checking and escalation logic | M |
-| **Phase 9** | UI integration: TODO detail view with execution chat, status badges, deadline indicators | L |
+| **Phase 5** | Well-known pillar TODO chats: create during mission init, validate on startup | M |
+| **Phase 6** | TODO execution flow: stateless delegation to pillar-owner on `start` (feed channel pattern) | L |
+| **Phase 7** | Async delegation model (fire-and-forget for long-running TODOs) | L |
+| **Phase 8** | Planning cadence: inject TODO planning prompt into pillar TODO chat at cycle time | M |
+| **Phase 9** | UI integration: TODO detail view with execution chat, status badges | L |

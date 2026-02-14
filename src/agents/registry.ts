@@ -116,13 +116,15 @@ const SPECIALIST_TEMPLATES: SpecialistTemplate[] = [
       role: 'specialist',
       description: 'Owns a mission pillar — monitors metrics, refines strategies, and creates TODOs',
     },
-    // Pillar owner: same tools as researcher + mission TODO creation
+    // Pillar owner: research tools + mission tools (create/update/record)
+    // Note: mission_todo_complete is NOT included — only Mission Lead can complete TODOs
     canAccessTools: [
       'web_search',
       'web_scrape',
       'wikipedia_search',
       'query_rag_project',
       'mission_todo_create',
+      'mission_todo_update',
       'mission_metric_record',
       'mcp.*', // MCP tools
     ],

@@ -434,14 +434,59 @@ export class MissionManager extends EventEmitter {
     return rows[0] as MissionTodo | undefined;
   }
 
+  /**
+   * Count active TODOs (pending + in_progress) for a mission.
+   * Used for capacity enforcement.
+   */
+  getActiveTodoCount(missionId: string): number {
+    const db = getDb();
+    const rows = db.rawQuery(
+      'SELECT COUNT(*) as count FROM mission_todos WHERE missionId = ? AND status IN (?, ?)',
+      [missionId, 'pending', 'in_progress']
+    ) as Array<{ count: number }>;
+    return rows[0]?.count ?? 0;
+  }
+
+  /**
+   * Count backlog TODOs for a mission.
+   * Used for capacity enforcement.
+   */
+  getBacklogTodoCount(missionId: string): number {
+    const db = getDb();
+    const rows = db.rawQuery(
+      'SELECT COUNT(*) as count FROM mission_todos WHERE missionId = ? AND status = ?',
+      [missionId, 'backlog']
+    ) as Array<{ count: number }>;
+    return rows[0]?.count ?? 0;
+  }
+
+  /**
+   * Get TODO capacity limits from mission config.
+   */
+  getTodoLimits(missionId: string): { activeTodoLimit: number; backlogTodoLimit: number } {
+    const db = getDb();
+    const rows = db.rawQuery('SELECT jsonConfig FROM missions WHERE id = ?', [missionId]) as Array<{ jsonConfig: string }>;
+    if (!rows[0]) return { activeTodoLimit: 10, backlogTodoLimit: 50 };
+
+    try {
+      const config = JSON.parse(rows[0].jsonConfig);
+      return {
+        activeTodoLimit: config.todo?.activeTodoLimit ?? 10,
+        backlogTodoLimit: config.todo?.backlogTodoLimit ?? 50,
+      };
+    } catch {
+      return { activeTodoLimit: 10, backlogTodoLimit: 50 };
+    }
+  }
+
   createTodo(todo: Omit<MissionTodo, 'id' | 'createdAt' | 'startedAt' | 'completedAt'>): MissionTodo {
     const db = getDb();
     const now = new Date().toISOString();
     const id = uuid();
 
     db.rawRun(
-      'INSERT INTO mission_todos (id, pillarId, missionId, title, description, status, priority, assignedAgent, conversationId, outcome, createdAt, startedAt, completedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      [id, todo.pillarId, todo.missionId, todo.title, todo.description, todo.status, todo.priority, todo.assignedAgent, todo.conversationId, todo.outcome, now, null, null]
+      'INSERT INTO mission_todos (id, pillarId, missionId, title, description, justification, completionCriteria, status, priority, outcome, createdAt, startedAt, completedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [id, todo.pillarId, todo.missionId, todo.title, todo.description, todo.justification, todo.completionCriteria, todo.status, todo.priority, todo.outcome, now, null, null]
     );
 
     const created = this.getTodoById(id)!;
@@ -449,9 +494,9 @@ export class MissionManager extends EventEmitter {
     return created;
   }
 
-  private static TODO_UPDATABLE_FIELDS = new Set(['title', 'description', 'status', 'priority', 'assignedAgent', 'conversationId', 'outcome', 'startedAt', 'completedAt']);
+  private static TODO_UPDATABLE_FIELDS = new Set(['title', 'description', 'justification', 'completionCriteria', 'status', 'priority', 'outcome', 'startedAt', 'completedAt']);
 
-  updateTodo(todoId: string, updates: Partial<Pick<MissionTodo, 'title' | 'description' | 'status' | 'priority' | 'assignedAgent' | 'conversationId' | 'outcome' | 'startedAt' | 'completedAt'>>): MissionTodo | undefined {
+  updateTodo(todoId: string, updates: Partial<Pick<MissionTodo, 'title' | 'description' | 'justification' | 'completionCriteria' | 'status' | 'priority' | 'outcome' | 'startedAt' | 'completedAt'>>): MissionTodo | undefined {
     const db = getDb();
     const setClauses: string[] = [];
     const values: unknown[] = [];
@@ -586,6 +631,13 @@ export class MissionManager extends EventEmitter {
       db.rawRun(
         'INSERT INTO pillars (id, missionId, slug, name, description, status, conversationId, createdAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
         [pillarId, missionId, pillarSlug, pillarConfig.name || '', pillarConfig.description || '', 'active', conversationId, now, now]
+      );
+
+      // Create well-known pillar TODO chat
+      const todoConvId = `${missionSlug}-${pillarSlug}-todo`;
+      db.rawRun(
+        'INSERT OR IGNORE INTO conversations (id, title, createdAt, updatedAt, manuallyNamed, metadata) VALUES (?, ?, ?, ?, ?, ?)',
+        [todoConvId, `[TODOs] ${pillarConfig.name}`, now, now, 1, JSON.stringify({ channel: 'pillar-todo', missionId, missionSlug, pillarId, pillarSlug })]
       );
 
       // Sync metrics (enhanced schema)

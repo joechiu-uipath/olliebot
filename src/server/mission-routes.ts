@@ -76,10 +76,11 @@ export function setupMissionRoutes(app: Express, config: MissionRoutesConfig): v
       const metrics = missionManager.getMetricsByPillar(p.id);
       const todos = missionManager.getTodosByPillar(p.id);
       const todosByStatus = {
+        backlog: todos.filter(t => t.status === 'backlog').length,
         pending: todos.filter(t => t.status === 'pending').length,
         in_progress: todos.filter(t => t.status === 'in_progress').length,
         completed: todos.filter(t => t.status === 'completed').length,
-        blocked: todos.filter(t => t.status === 'blocked').length,
+        cancelled: todos.filter(t => t.status === 'cancelled').length,
       };
       return { ...p, metrics, todosByStatus };
     });
@@ -153,7 +154,7 @@ export function setupMissionRoutes(app: Express, config: MissionRoutesConfig): v
 
   // Create a TODO (used by Mission Lead agent programmatically)
   app.post('/api/missions/:slug/pillars/:pillarSlug/todos', withPillar((req, res, mission, pillar) => {
-    const { title, description, priority, assignedAgent } = req.body;
+    const { title, description, priority, justification, completionCriteria } = req.body;
     if (!title) {
       res.status(400).json({ error: 'title is required' });
       return;
@@ -163,10 +164,10 @@ export function setupMissionRoutes(app: Express, config: MissionRoutesConfig): v
       missionId: mission.id,
       title,
       description: description || '',
+      justification: justification || '',
+      completionCriteria: completionCriteria || '',
       status: 'pending',
       priority: priority || 'medium',
-      assignedAgent: assignedAgent || null,
-      conversationId: null,
       outcome: null,
     });
     res.status(201).json(todo);

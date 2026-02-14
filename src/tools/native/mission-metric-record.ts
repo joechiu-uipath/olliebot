@@ -2,9 +2,9 @@
  * Mission Metric Record Tool
  *
  * Allows agents to record a metric reading for a mission pillar's metric.
- * Normalizes values (durations to seconds, rounding), computes status
- * (on_target/warning/off_target) and trend (improving/stable/degrading),
- * and persists to both current value and history.
+ * Metrics are referenced by their GUID ID (not slugs — only missions and
+ * pillars have slugs). Normalizes values (durations to seconds, rounding),
+ * computes status and trend, and persists to both current value and history.
  */
 
 import type { NativeTool, NativeToolResult } from './types.js';
@@ -14,22 +14,14 @@ export class MissionMetricRecordTool implements NativeTool {
   readonly name = 'mission_metric_record';
   readonly description = `Record a metric measurement for a mission pillar. The value is automatically normalized (durations converted to seconds), rounded, and persisted. Status (on_target/warning/off_target) and trend (improving/stable/degrading) are computed from the target definition and recent history.
 
-Use this after collecting a metric value via the appropriate tool. Pass the raw value as collected — normalization is handled automatically.`;
+Use this after collecting a metric value via the appropriate tool. Pass the raw value as collected — normalization is handled automatically. Reference the metric by its ID (GUID).`;
 
   readonly inputSchema = {
     type: 'object',
     properties: {
-      missionSlug: {
+      metricId: {
         type: 'string',
-        description: 'The slug of the mission (e.g., "developer-experience")',
-      },
-      pillarSlug: {
-        type: 'string',
-        description: 'The slug of the pillar within the mission (e.g., "build-performance")',
-      },
-      metricSlug: {
-        type: 'string',
-        description: 'The slug of the metric within the pillar (e.g., "local-build-time")',
+        description: 'The ID (GUID) of the metric to record a value for',
       },
       value: {
         type: 'number',
@@ -40,7 +32,7 @@ Use this after collecting a metric value via the appropriate tool. Pass the raw 
         description: 'Optional context for this reading (e.g., "collected after webpack 5.9 upgrade")',
       },
     },
-    required: ['missionSlug', 'pillarSlug', 'metricSlug', 'value'],
+    required: ['metricId', 'value'],
   };
 
   private missionManager: MissionManager;
@@ -50,52 +42,22 @@ Use this after collecting a metric value via the appropriate tool. Pass the raw 
   }
 
   async execute(params: Record<string, unknown>): Promise<NativeToolResult> {
-    const missionSlug = params.missionSlug as string;
-    const pillarSlug = params.pillarSlug as string;
-    const metricSlug = params.metricSlug as string;
+    const metricId = params.metricId as string;
     const value = params.value as number;
     const note = (params.note as string) || undefined;
 
     // Validate required fields
-    if (!missionSlug?.trim()) {
-      return { success: false, error: 'missionSlug is required' };
-    }
-    if (!pillarSlug?.trim()) {
-      return { success: false, error: 'pillarSlug is required' };
-    }
-    if (!metricSlug?.trim()) {
-      return { success: false, error: 'metricSlug is required' };
+    if (!metricId?.trim()) {
+      return { success: false, error: 'metricId is required' };
     }
     if (typeof value !== 'number' || isNaN(value)) {
       return { success: false, error: 'value must be a valid number' };
     }
 
-    // Resolve mission
-    const mission = this.missionManager.getMissionBySlug(missionSlug);
-    if (!mission) {
-      return { success: false, error: `Mission not found: "${missionSlug}"` };
-    }
-
-    // Resolve pillar
-    const pillar = this.missionManager.getPillarBySlug(mission.id, pillarSlug);
-    if (!pillar) {
-      const pillars = this.missionManager.getPillarsByMission(mission.id);
-      const available = pillars.map(p => p.slug).join(', ');
-      return {
-        success: false,
-        error: `Pillar "${pillarSlug}" not found in mission "${missionSlug}". Available pillars: ${available || 'none'}`,
-      };
-    }
-
-    // Resolve metric
-    const metric = this.missionManager.getMetricBySlug(pillar.id, metricSlug);
+    // Resolve metric by ID
+    const metric = this.missionManager.getMetricById(metricId);
     if (!metric) {
-      const metrics = this.missionManager.getMetricsByPillar(pillar.id);
-      const available = metrics.map(m => m.slug).join(', ');
-      return {
-        success: false,
-        error: `Metric "${metricSlug}" not found in pillar "${pillarSlug}". Available metrics: ${available || 'none'}`,
-      };
+      return { success: false, error: `Metric not found: "${metricId}"` };
     }
 
     // Record the metric (normalization, status/trend computation happens inside)
@@ -122,10 +84,7 @@ Use this after collecting a metric value via the appropriate tool. Pass the raw 
         success: true,
         output: {
           metricId: metric.id,
-          metricSlug: metric.slug,
           metricName: metric.name,
-          pillar: pillar.name,
-          mission: mission.name,
           value: result.normalizedValue,
           status: result.status,
           trend: result.trend,

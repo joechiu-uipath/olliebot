@@ -1,5 +1,5 @@
 export { MissionManager, type MissionManagerConfig } from './manager.js';
-export { initMissionSchema } from './schema.js';
+export { initMissionSchema, validateMissionConversations } from './schema.js';
 export type {
   Mission,
   Pillar,

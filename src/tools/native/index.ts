@@ -19,6 +19,8 @@ export * from './generate-python.js';
 export * from './run-python.js';
 export * from './website-crawler.js';
 export * from './mission-todo-create.js';
+export * from './mission-todo-update.js';
+export * from './mission-todo-complete.js';
 export * from './mission-metric-record.js';
 
 // Frontend code tools moved to src/self-coding/tools/
