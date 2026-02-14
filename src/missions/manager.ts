@@ -144,12 +144,21 @@ export class MissionManager extends EventEmitter {
   // Mission CRUD
   // ========================================================================
 
+  /**
+   * Get all missions, ordered by most recently updated.
+   * @returns Array of all missions
+   */
   getMissions(): Mission[] {
     const db = getDb();
     const rows = db.rawQuery('SELECT * FROM missions ORDER BY updatedAt DESC') as MissionRow[];
     return rows.map(r => this.deserializeMission(r));
   }
 
+  /**
+   * Get a mission by its slug.
+   * @param slug - Mission slug (unique identifier)
+   * @returns Mission if found, undefined otherwise
+   */
   getMissionBySlug(slug: string): Mission | undefined {
     const db = getDb();
     const rows = db.rawQuery('SELECT * FROM missions WHERE slug = ?', [slug]) as MissionRow[];
@@ -158,6 +167,12 @@ export class MissionManager extends EventEmitter {
 
   private static MISSION_UPDATABLE_FIELDS = new Set(['name', 'description', 'status', 'cadence', 'jsonConfig']);
 
+  /**
+   * Update mission fields (name, description, status, cadence, or jsonConfig).
+   * @param slug - Mission slug
+   * @param updates - Partial mission updates (only whitelisted fields are applied)
+   * @returns Updated mission if successful, undefined if mission not found
+   */
   updateMission(slug: string, updates: Partial<Pick<Mission, 'name' | 'description' | 'status' | 'cadence' | 'jsonConfig'>>): Mission | undefined {
     const db = getDb();
     const setClauses: string[] = [];
@@ -183,6 +198,11 @@ export class MissionManager extends EventEmitter {
   // Pillar CRUD
   // ========================================================================
 
+  /**
+   * Get all pillars for a mission, ordered by creation date.
+   * @param missionId - Mission GUID
+   * @returns Array of pillars belonging to the mission
+   */
   getPillarsByMission(missionId: string): Pillar[] {
     const db = getDb();
     const rows = db.rawQuery(
@@ -192,6 +212,12 @@ export class MissionManager extends EventEmitter {
     return rows.map(r => this.deserializePillar(r));
   }
 
+  /**
+   * Get a pillar by its slug within a mission.
+   * @param missionId - Mission GUID
+   * @param pillarSlug - Pillar slug (unique within mission)
+   * @returns Pillar if found, undefined otherwise
+   */
   getPillarBySlug(missionId: string, pillarSlug: string): Pillar | undefined {
     const db = getDb();
     const rows = db.rawQuery(
@@ -201,10 +227,29 @@ export class MissionManager extends EventEmitter {
     return rows[0] ? this.deserializePillar(rows[0]) : undefined;
   }
 
+  /**
+   * Get a pillar by its ID.
+   * @param pillarId - Pillar GUID
+   * @returns Pillar if found, undefined otherwise
+   */
+  getPillarById(pillarId: string): Pillar | undefined {
+    const db = getDb();
+    const rows = db.rawQuery(
+      'SELECT * FROM pillars WHERE id = ?',
+      [pillarId]
+    ) as PillarRow[];
+    return rows[0] ? this.deserializePillar(rows[0]) : undefined;
+  }
+
   // ========================================================================
   // Metrics CRUD
   // ========================================================================
 
+  /**
+   * Get all metrics for a pillar, ordered by name.
+   * @param pillarId - Pillar GUID
+   * @returns Array of metrics belonging to the pillar
+   */
   getMetricsByPillar(pillarId: string): PillarMetric[] {
     const db = getDb();
     const rows = db.rawQuery(
@@ -214,6 +259,12 @@ export class MissionManager extends EventEmitter {
     return rows.map(r => this.deserializeMetric(r));
   }
 
+  /**
+   * Get a metric by its slug within a pillar.
+   * @param pillarId - Pillar GUID
+   * @param metricSlug - Metric slug (unique within pillar)
+   * @returns Metric if found, undefined otherwise
+   */
   getMetricBySlug(pillarId: string, metricSlug: string): PillarMetric | undefined {
     const db = getDb();
     const rows = db.rawQuery(
@@ -223,6 +274,11 @@ export class MissionManager extends EventEmitter {
     return rows[0] ? this.deserializeMetric(rows[0]) : undefined;
   }
 
+  /**
+   * Get a metric by its ID.
+   * @param metricId - Metric GUID
+   * @returns Metric if found, undefined otherwise
+   */
   getMetricById(metricId: string): PillarMetric | undefined {
     const db = getDb();
     const rows = db.rawQuery(
@@ -232,6 +288,12 @@ export class MissionManager extends EventEmitter {
     return rows[0] ? this.deserializeMetric(rows[0]) : undefined;
   }
 
+  /**
+   * Get metric history (time-series readings).
+   * @param metricId - Metric GUID
+   * @param limit - Maximum number of history points to return (default: 30)
+   * @returns Array of history points, oldest first
+   */
   getMetricHistory(metricId: string, limit = DEFAULT_METRIC_HISTORY_LIMIT): PillarMetricHistory[] {
     const db = getDb();
     const rows = db.rawQuery(
@@ -246,8 +308,41 @@ export class MissionManager extends EventEmitter {
   }
 
   /**
+   * Get a comprehensive pillar summary with all related data.
+   * Consolidates metrics, strategies, todos, and statistics.
+   * Used by API routes and agents to avoid duplicating this query pattern.
+   * @param pillarId - Pillar GUID
+   * @returns Object containing metrics, strategies, todos, and todo counts by status
+   */
+  getPillarSummary(pillarId: string) {
+    const metrics = this.getMetricsByPillar(pillarId);
+    const strategies = this.getStrategiesByPillar(pillarId);
+    const todos = this.getTodosByPillar(pillarId);
+    
+    const todosByStatus = {
+      backlog: todos.filter(t => t.status === 'backlog').length,
+      pending: todos.filter(t => t.status === 'pending').length,
+      in_progress: todos.filter(t => t.status === 'in_progress').length,
+      completed: todos.filter(t => t.status === 'completed').length,
+      cancelled: todos.filter(t => t.status === 'cancelled').length,
+    };
+
+    return {
+      metrics,
+      strategies,
+      todos,
+      todosByStatus,
+    };
+  }
+
+  /**
    * Record a new metric value. Normalizes durations to seconds, rounds values,
    * computes status and trend, and persists to both current and history.
+   * @param metricId - Metric GUID
+   * @param rawValue - Raw metric value (will be normalized)
+   * @param note - Optional context note for this reading
+   * @returns Object containing computed status, trend, and normalized value
+   * @throws Error if metric not found
    */
   recordMetric(metricId: string, rawValue: number, note?: string): {
     status: MetricStatus;
@@ -405,25 +500,6 @@ export class MissionManager extends EventEmitter {
     };
   }
 
-  /** @deprecated Use recordMetric() instead */
-  updateMetric(metricId: string, current: string, trend: PillarMetric['trend']): void {
-    const db = getDb();
-    const now = new Date().toISOString();
-    const numericValue = parseFloat(current);
-    db.rawRun(
-      'UPDATE pillar_metrics SET current = ?, trend = ?, updatedAt = ? WHERE id = ?',
-      [isNaN(numericValue) ? null : numericValue, trend, now, metricId]
-    );
-
-    // Add history point
-    if (!isNaN(numericValue)) {
-      db.rawRun(
-        'INSERT INTO pillar_metric_history (id, metricId, value, note, timestamp) VALUES (?, ?, ?, ?, ?)',
-        [uuid(), metricId, numericValue, null, now]
-      );
-    }
-  }
-
   // ========================================================================
   // Strategy CRUD
   // ========================================================================
@@ -441,6 +517,11 @@ export class MissionManager extends EventEmitter {
   // TODO CRUD
   // ========================================================================
 
+  /**
+   * Get all TODOs for a pillar, ordered by priority then creation date.
+   * @param pillarId - Pillar GUID
+   * @returns Array of TODOs for the pillar
+   */
   getTodosByPillar(pillarId: string): MissionTodo[] {
     const db = getDb();
     const rows = db.rawQuery(
@@ -450,6 +531,11 @@ export class MissionManager extends EventEmitter {
     return rows as MissionTodo[];
   }
 
+  /**
+   * Get all TODOs for a mission, ordered by creation date (newest first).
+   * @param missionId - Mission GUID
+   * @returns Array of TODOs for the mission
+   */
   getTodosByMission(missionId: string): MissionTodo[] {
     const db = getDb();
     const rows = db.rawQuery(
@@ -459,6 +545,11 @@ export class MissionManager extends EventEmitter {
     return rows as MissionTodo[];
   }
 
+  /**
+   * Get a TODO by its ID.
+   * @param todoId - TODO GUID
+   * @returns TODO if found, undefined otherwise
+   */
   getTodoById(todoId: string): MissionTodo | undefined {
     const db = getDb();
     const rows = db.rawQuery('SELECT * FROM mission_todos WHERE id = ?', [todoId]) as MissionTodoRow[];
@@ -468,6 +559,8 @@ export class MissionManager extends EventEmitter {
   /**
    * Count active TODOs (pending + in_progress) for a pillar.
    * Used for capacity enforcement (limits are per-pillar).
+   * @param pillarId - Pillar GUID
+   * @returns Number of active TODOs
    */
   getActiveTodoCount(pillarId: string): number {
     const db = getDb();
@@ -481,6 +574,8 @@ export class MissionManager extends EventEmitter {
   /**
    * Count backlog TODOs for a pillar.
    * Used for capacity enforcement (limits are per-pillar).
+   * @param pillarId - Pillar GUID
+   * @returns Number of backlog TODOs
    */
   getBacklogTodoCount(pillarId: string): number {
     const db = getDb();
@@ -494,6 +589,8 @@ export class MissionManager extends EventEmitter {
   /**
    * Get TODO capacity limits from mission config.
    * Limits are enforced per-pillar but configured at mission level.
+   * @param missionId - Mission GUID
+   * @returns Object with activeTodoLimit and backlogTodoLimit
    */
   getTodoLimits(missionId: string): { activeTodoLimit: number; backlogTodoLimit: number } {
     const db = getDb();
@@ -512,6 +609,11 @@ export class MissionManager extends EventEmitter {
     }
   }
 
+  /**
+   * Create a new TODO item.
+   * @param todo - TODO data (id, timestamps generated automatically)
+   * @returns The created TODO with generated id and timestamps
+   */
   createTodo(todo: Omit<MissionTodo, 'id' | 'createdAt' | 'startedAt' | 'completedAt'>): MissionTodo {
     const db = getDb();
     const now = new Date().toISOString();
@@ -529,6 +631,12 @@ export class MissionManager extends EventEmitter {
 
   private static TODO_UPDATABLE_FIELDS = new Set(['title', 'description', 'justification', 'completionCriteria', 'status', 'priority', 'outcome', 'startedAt', 'completedAt']);
 
+  /**
+   * Update TODO fields (whitelisted fields only).
+   * @param todoId - TODO GUID
+   * @param updates - Partial TODO updates
+   * @returns Updated TODO if successful, undefined if not found
+   */
   updateTodo(todoId: string, updates: Partial<Pick<MissionTodo, 'title' | 'description' | 'justification' | 'completionCriteria' | 'status' | 'priority' | 'outcome' | 'startedAt' | 'completedAt'>>): MissionTodo | undefined {
     const db = getDb();
     const setClauses: string[] = [];

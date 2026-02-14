@@ -49,8 +49,14 @@
 }
 
 .mission-chat-resize-handle:hover::after,
+.mission-chat-resize-handle:focus::after,
 .mission-chat-panel:has(.mission-chat-resize-handle:active)::after {
   opacity: 1;
+}
+
+.mission-chat-resize-handle:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .mission-chat-header {
@@ -64,8 +70,11 @@
   font-weight: 600;
   color: var(--text-primary);
   background: var(--bg-secondary);
+  border: none;
   border-bottom: 1px solid transparent;
   transition: background 0.15s;
+  width: 100%;
+  text-align: left;
 }
 
 .mission-chat-panel.expanded .mission-chat-header {

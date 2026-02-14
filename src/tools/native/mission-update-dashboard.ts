@@ -11,6 +11,7 @@ import type { MissionManager } from '../../missions/index.js';
 import type { DashboardStore } from '../../dashboard/dashboard-store.js';
 import type { RenderEngine } from '../../dashboard/render-engine.js';
 import type { SnapshotEngine } from '../../dashboard/snapshot-engine.js';
+import { validateRequired } from './mission-validation.js';
 
 export interface MissionUpdateDashboardDeps {
   missionManager: MissionManager;
@@ -63,13 +64,12 @@ After successful execution, the user can click the Refresh button in the Dashboa
     const pillarSlug = params.pillarSlug as string | undefined;
     const spec = params.spec as string;
 
-    // Validate required fields
-    if (!missionSlug?.trim()) {
-      return { success: false, error: 'missionSlug is required' };
-    }
-    if (!spec?.trim()) {
-      return { success: false, error: 'spec is required' };
-    }
+    // Validate required fields using shared validation
+    let error = validateRequired(missionSlug, 'missionSlug');
+    if (error) return error;
+    
+    error = validateRequired(spec, 'spec');
+    if (error) return error;
 
     // Resolve mission
     const mission = this.missionManager.getMissionBySlug(missionSlug);

@@ -8,6 +8,7 @@
 import { useState, useEffect, useCallback, memo } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { MissionChat } from './components/mission/MissionChat';
+import { ErrorBoundary } from './components/ErrorBoundary';
 
 const API_BASE = '/api/missions';
 
@@ -407,13 +408,19 @@ export const MissionMainContent = memo(function MissionMainContent({ missionMode
           )}
         </div>
 
-        <MissionChat
-          conversationId={selectedPillar.conversationId}
-          contextLabel={`${selectedPillar.name} Chat`}
-          placeholder={`Message about ${selectedPillar.name}...`}
-          sendMessage={sendMessage}
-          subscribe={subscribe}
-        />
+        <ErrorBoundary fallback={
+          <div style={{ padding: '20px', textAlign: 'center', color: '#ff6666' }}>
+            Failed to load chat. Please refresh the page.
+          </div>
+        }>
+          <MissionChat
+            conversationId={selectedPillar.conversationId}
+            contextLabel={`${selectedPillar.name} Chat`}
+            placeholder={`Message about ${selectedPillar.name}...`}
+            sendMessage={sendMessage}
+            subscribe={subscribe}
+          />
+        </ErrorBoundary>
       </div>
     );
   }
@@ -470,13 +477,19 @@ export const MissionMainContent = memo(function MissionMainContent({ missionMode
         )}
       </div>
 
-      <MissionChat
-        conversationId={selectedMission.conversationId}
-        contextLabel="Mission Chat"
-        placeholder="Message the Mission Lead..."
-        sendMessage={sendMessage}
-        subscribe={subscribe}
-      />
+      <ErrorBoundary fallback={
+        <div style={{ padding: '20px', textAlign: 'center', color: '#ff6666' }}>
+          Failed to load mission chat. Please refresh the page.
+        </div>
+      }>
+        <MissionChat
+          conversationId={selectedMission.conversationId}
+          contextLabel="Mission Chat"
+          placeholder="Message the Mission Lead..."
+          sendMessage={sendMessage}
+          subscribe={subscribe}
+        />
+      </ErrorBoundary>
     </div>
   );
 }, (prev, next) => {
@@ -840,15 +853,21 @@ function TodoExecution({ todoId, missionSlug, pillarSlug, onBack, sendMessage, s
           {todo.conversationId && (
             <div className="todo-execution-section">
               <h4>Execution Log</h4>
-              <MissionChat
-                conversationId={todo.conversationId}
-                contextLabel="Task Execution"
-                placeholder="Intervene in this task..."
-                sendMessage={sendMessage}
-                subscribe={subscribe}
-                readOnly={todo.status === 'completed'}
-                defaultExpanded={true}
-              />
+              <ErrorBoundary fallback={
+                <div style={{ padding: '20px', textAlign: 'center', color: '#ff6666' }}>
+                  Failed to load execution log. Please refresh the page.
+                </div>
+              }>
+                <MissionChat
+                  conversationId={todo.conversationId}
+                  contextLabel="Task Execution"
+                  placeholder="Intervene in this task..."
+                  sendMessage={sendMessage}
+                  subscribe={subscribe}
+                  readOnly={todo.status === 'completed'}
+                  defaultExpanded={true}
+                />
+              </ErrorBoundary>
             </div>
           )}
         </div>

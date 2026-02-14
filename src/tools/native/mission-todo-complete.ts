@@ -10,6 +10,7 @@
 
 import type { NativeTool, NativeToolResult } from './types.js';
 import type { MissionManager } from '../../missions/index.js';
+import { validateRequired } from './mission-validation.js';
 
 export class MissionTodoCompleteTool implements NativeTool {
   readonly name = 'mission_todo_complete';
@@ -42,8 +43,12 @@ This tool is restricted to Mission Lead agents — Pillar Owners cannot self-cer
     const todoId = params.todoId as string;
     const outcome = params.outcome as string;
 
-    if (!todoId?.trim()) return { success: false, error: 'todoId is required' };
-    if (!outcome?.trim()) return { success: false, error: 'outcome is required — provide a summary of what was accomplished' };
+    // Validate required fields using shared validation
+    let error = validateRequired(todoId, 'todoId');
+    if (error) return error;
+    
+    error = validateRequired(outcome, 'outcome', 'outcome is required — provide a summary of what was accomplished');
+    if (error) return error;
 
     const todo = this.missionManager.getTodoById(todoId);
     if (!todo) {
