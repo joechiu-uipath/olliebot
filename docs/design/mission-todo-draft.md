@@ -302,7 +302,7 @@ resuming a conversation. The full message history is sent with each request.
   we'll need message compaction (summarize older messages).
 - No need for a "keep-alive" mechanism or session tokens.
 
-### 5.4 Supervisor Wait Model — Relaxation Required
+### 5.4 Async Delegation via the `delegate` Tool
 
 **Current state:** The supervisor (and MissionLeadAgent) **blocks** while a delegated
 worker executes. It `await`s `handleDelegatedTask()` and cannot process new messages
@@ -312,20 +312,31 @@ until the worker finishes.
 the Mission Lead for the entire duration means no other TODO can start, no other
 pillar chat can be served, and no metric collection can happen.
 
-**Proposed solution:** Fire-and-forget delegation for TODO execution.
+**Proposed solution:** Add an `async` parameter to the native `delegate` tool for
+fire-and-forget delegation.
+
+```typescript
+// delegate tool — new parameter
+{
+  type: string,           // existing
+  mission: string,        // existing
+  rationale?: string,     // existing
+  async?: boolean,        // NEW: fire-and-forget delegation (default: false)
+  callerAgentId?: string, // existing
+}
+```
 
 ```
-Current (blocking):
+Current (blocking, async: false — default):
   Mission Lead → await delegateToWorker(task) → wait... → worker done → idle
 
-Proposed (async for TODOs):
-  Mission Lead → delegateToWorker(task, { async: true }) → immediately idle
-  Worker runs independently, posts result to conversation when done
+With async: true:
+  Mission Lead → delegate(task, { async: true }) → immediately idle
+  Worker runs independently, posts result to pillar TODO chat when done
   Mission Lead picks up result on next message/cycle
 ```
 
 **Implementation approach:**
-- Add an `async` flag to the delegation flow
 - When `async: true`, `handleDelegationFromTool` does NOT await the worker
 - Instead, it fires `agent.handleDelegatedTask()` as a detached promise
 - The worker posts its result to the pillar TODO chat (persisted in DB)
