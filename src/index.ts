@@ -11,7 +11,6 @@ import {
   OpenAIProvider,
   AzureOpenAIProvider,
   type LLMProvider,
-  type TokenReductionConfig,
 } from './llm/index.js';
 import { ConsoleChannel } from './channels/index.js';
 import { AssistantServer } from './server/index.js';
@@ -192,15 +191,6 @@ const CONFIG = {
   voiceProvider: (process.env.VOICE_PROVIDER || 'azure_openai') as 'openai' | 'azure_openai',
   voiceModel: process.env.VOICE_MODEL || 'gpt-4o-realtime-preview',
   voiceVoice: 'alloy',
-
-  // Token Reduction (Prompt Compression)
-  tokenReductionEnabled: process.env.TOKEN_REDUCTION_ENABLED === 'true',
-  tokenReductionProvider: (process.env.TOKEN_REDUCTION_PROVIDER || 'llmlingua2') as 'llmlingua2',
-  tokenReductionRate: parseFloat(process.env.TOKEN_REDUCTION_RATE || '0.5'),
-  tokenReductionModel: process.env.TOKEN_REDUCTION_MODEL || 'bert-multilingual',
-  tokenReductionForceTokens: process.env.TOKEN_REDUCTION_FORCE_TOKENS?.split(','),
-  tokenReductionForceReserveDigit: process.env.TOKEN_REDUCTION_FORCE_RESERVE_DIGIT !== 'false',
-  tokenReductionDropConsecutive: process.env.TOKEN_REDUCTION_DROP_CONSECUTIVE !== 'false',
 };
 
 function createLLMProvider(provider: string, model: string): LLMProvider {
@@ -305,26 +295,11 @@ async function main(): Promise<void> {
   // Load user settings early (needed for token reduction config)
   const userSettings = getUserSettingsService();
 
-  // Build token reduction config from .env + user settings
-  const trSettings = userSettings.getTokenReductionSettings();
-  const tokenReductionWanted = CONFIG.tokenReductionEnabled || trSettings.enabledForMain || trSettings.enabledForFast;
-  const tokenReductionConfig: TokenReductionConfig | undefined = tokenReductionWanted
-    ? {
-        enabled: true,
-        provider: (trSettings.provider || CONFIG.tokenReductionProvider) as 'llmlingua2',
-        rate: trSettings.rate || CONFIG.tokenReductionRate,
-        model: trSettings.model || CONFIG.tokenReductionModel,
-        forceTokens: CONFIG.tokenReductionForceTokens,
-        forceReserveDigit: CONFIG.tokenReductionForceReserveDigit,
-        dropConsecutive: CONFIG.tokenReductionDropConsecutive,
-      }
-    : undefined;
-
   const llmService = new LLMService({
     main: mainProvider,
     fast: fastProvider,
     traceStore,
-    tokenReduction: tokenReductionConfig,
+    tokenReduction: LLMService.buildTokenReductionConfig(process.env, userSettings),
     settingsService: userSettings,
   });
   await llmService.init();

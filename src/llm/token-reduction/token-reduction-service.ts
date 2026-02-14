@@ -15,6 +15,7 @@ import type {
   TokenReductionProvider,
   CompressionResult,
   TokenReductionProviderType,
+  CompressionLevel,
 } from './types.js';
 import { LLMLingua2Provider } from './llmlingua2-provider.js';
 import { CompressionCache } from './compression-cache.js';
@@ -44,7 +45,7 @@ export class TokenReductionService {
     this.provider = this.createProvider(this.config.provider);
     await this.provider.init();
     this.initialized = true;
-    console.log(`[TokenReduction] Service initialized (provider: ${this.config.provider}, rate: ${this.config.rate})`);
+    console.log(`[TokenReduction] Service initialized (provider: ${this.config.provider}, level: ${this.config.compressionLevel})`);
   }
 
   /**
@@ -154,8 +155,10 @@ export class TokenReductionService {
       throw new Error('Token reduction provider not initialized');
     }
 
-    // Build cache key from input + rate + provider
-    const cacheKey = CompressionCache.buildKey(text, this.config.rate, this.config.provider);
+    const level = this.config.compressionLevel;
+
+    // Build cache key from input + level + provider
+    const cacheKey = CompressionCache.buildKey(text, level, this.config.provider);
     const cached = this.cache.get(cacheKey);
     if (cached) {
       this.cacheHits++;
@@ -165,11 +168,7 @@ export class TokenReductionService {
 
     this.cacheMisses++;
 
-    const result = await this.provider.compress(text, this.config.rate, {
-      forceTokens: this.config.forceTokens,
-      forceReserveDigit: this.config.forceReserveDigit,
-      dropConsecutive: this.config.dropConsecutive,
-    });
+    const result = await this.provider.compress(text, level);
 
     // Store in cache
     this.cache.set(cacheKey, text, result);
@@ -195,7 +194,7 @@ export class TokenReductionService {
   private createProvider(type: TokenReductionProviderType): TokenReductionProvider {
     switch (type) {
       case 'llmlingua2':
-        return new LLMLingua2Provider(this.config.model);
+        return new LLMLingua2Provider();
       default:
         throw new Error(`Unknown token reduction provider: ${type}`);
     }

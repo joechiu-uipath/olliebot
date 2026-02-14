@@ -4,44 +4,63 @@
  * Uses the @atjsh/llmlingua-2 library (pure JS/TS implementation)
  * to compress prompts using BERT-based models.
  *
- * Supported models:
- * - bert-multilingual (BERT base multilingual cased) - 710MB, good balance
- * - xlm-roberta (XLM-RoBERTa large) - 2240MB, highest accuracy
+ * All provider-specific knobs (model choice, rate, thresholds, token
+ * preservation) are encapsulated here and driven by the provider-agnostic
+ * CompressionLevel enum.
  *
- * The default is bert-multilingual for reasonable size and performance.
+ * Level presets (estimated token counts via ~4 chars/token heuristic):
+ *
+ *   default:
+ *     - skip if < 800 estimated tokens
+ *     - rate = 0.5  (keep ~50 % of tokens)
+ *
+ *   aggressive:
+ *     - skip if < 2000 estimated tokens
+ *     - rate = 0.8  (keep ~20 % of tokens)
  */
 
 import type {
   TokenReductionProvider,
   CompressionResult,
-  CompressOptions,
+  CompressionLevel,
 } from './types.js';
 
-// Model name mapping to HuggingFace ONNX-compatible model repos
-const MODEL_MAP: Record<string, string> = {
-  'bert-multilingual': 'Arcoldd/llmlingua4j-bert-base-onnx',
-  'xlm-roberta': 'atjsh/llmlingua-2-js-xlm-roberta-large-meetingbank',
+// ────────────────────────────────────────────────────────────
+// Provider-specific constants
+// ────────────────────────────────────────────────────────────
+
+/** HuggingFace ONNX model used by this provider (bert-multilingual, 710 MB). */
+const MODEL_NAME = 'Arcoldd/llmlingua4j-bert-base-onnx';
+
+/** Per-level presets.  All tuning lives here. */
+interface LevelPreset {
+  /** Minimum estimated token count to activate compression */
+  activationThreshold: number;
+  /** Compression rate passed to llmlingua-2 (0 = remove all, 1 = keep all) */
+  rate: number;
+}
+
+const LEVEL_PRESETS: Record<CompressionLevel, LevelPreset> = {
+  default: { activationThreshold: 800, rate: 0.5 },
+  aggressive: { activationThreshold: 2000, rate: 0.8 },
 };
 
-type LLMLingua2ModelType = 'bert-multilingual' | 'xlm-roberta';
+/** Tokens that should always be preserved (applies to every level). */
+const FORCE_TOKENS = ['\n', '?', '.', '!', ','];
+
+// ────────────────────────────────────────────────────────────
+// Provider implementation
+// ────────────────────────────────────────────────────────────
 
 export class LLMLingua2Provider implements TokenReductionProvider {
   readonly name = 'llmlingua2' as const;
   private promptCompressor: unknown = null;
   private initialized = false;
-  private modelType: LLMLingua2ModelType;
-  private modelName: string;
-
-  constructor(model?: string) {
-    // Default to bert-multilingual (smaller, faster)
-    this.modelType = (model === 'xlm-roberta' ? 'xlm-roberta' : 'bert-multilingual') as LLMLingua2ModelType;
-    this.modelName = MODEL_MAP[this.modelType] || model || MODEL_MAP['bert-multilingual'];
-  }
 
   async init(): Promise<void> {
     if (this.initialized) return;
 
-    console.log(`[TokenReduction:LLMLingua2] Initializing with model: ${this.modelType} (${this.modelName})`);
+    console.log(`[TokenReduction:LLMLingua2] Initializing with model: bert-multilingual (${MODEL_NAME})`);
 
     try {
       // Dynamic import to avoid loading heavy ML dependencies when disabled
@@ -52,7 +71,6 @@ export class LLMLingua2Provider implements TokenReductionProvider {
       const o200k_base = (await import('js-tiktoken/ranks/o200k_base')).default;
       const oaiTokenizer = new Tiktoken(o200k_base);
 
-      // Factory options matching the library's expected interface
       const factoryOptions = {
         transformerJSConfig: {
           device: 'auto' as const,
@@ -62,18 +80,10 @@ export class LLMLingua2Provider implements TokenReductionProvider {
         logger: (msg: unknown) => console.log(`[TokenReduction:LLMLingua2] ${msg}`),
       };
 
-      let result;
-      if (this.modelType === 'xlm-roberta') {
-        result = await LLMLingua2.WithXLMRoBERTa(this.modelName, {
-          ...factoryOptions,
-          modelSpecificOptions: { use_external_data_format: true },
-        });
-      } else {
-        result = await LLMLingua2.WithBERTMultilingual(this.modelName, {
-          ...factoryOptions,
-          modelSpecificOptions: { subfolder: '' },
-        });
-      }
+      const result = await LLMLingua2.WithBERTMultilingual(MODEL_NAME, {
+        ...factoryOptions,
+        modelSpecificOptions: { subfolder: '' },
+      });
 
       this.promptCompressor = result.promptCompressor;
       this.initialized = true;
@@ -84,19 +94,22 @@ export class LLMLingua2Provider implements TokenReductionProvider {
     }
   }
 
-  async compress(text: string, rate: number, options?: CompressOptions): Promise<CompressionResult> {
+  async compress(text: string, level: CompressionLevel): Promise<CompressionResult> {
     if (!this.initialized || !this.promptCompressor) {
       throw new Error('LLMLingua2 provider not initialized. Call init() first.');
     }
 
-    // Skip compression for very short texts (not worth the overhead)
-    if (text.length < 100) {
+    const preset = LEVEL_PRESETS[level];
+    const estimatedTokens = this.estimateTokens(text);
+
+    // Skip compression when below the activation threshold for this level
+    if (estimatedTokens < preset.activationThreshold) {
       return {
         compressedText: text,
         originalLength: text.length,
         compressedLength: text.length,
-        originalTokenCount: this.estimateTokens(text),
-        compressedTokenCount: this.estimateTokens(text),
+        originalTokenCount: estimatedTokens,
+        compressedTokenCount: estimatedTokens,
         tokenSavingsPercent: 0,
         compressionTimeMs: 0,
         provider: 'llmlingua2',
@@ -104,7 +117,6 @@ export class LLMLingua2Provider implements TokenReductionProvider {
     }
 
     const startTime = Date.now();
-    const originalTokenCount = this.estimateTokens(text);
 
     try {
       const compressor = this.promptCompressor as {
@@ -112,24 +124,24 @@ export class LLMLingua2Provider implements TokenReductionProvider {
       };
 
       const compressedText = await compressor.compress_prompt(text, {
-        rate,
-        force_tokens: options?.forceTokens || ['\n', '?', '.', '!', ','],
-        force_reserve_digit: options?.forceReserveDigit ?? true,
-        drop_consecutive: options?.dropConsecutive ?? true,
+        rate: preset.rate,
+        force_tokens: FORCE_TOKENS,
+        force_reserve_digit: true,
+        drop_consecutive: true,
       });
 
       const compressionTimeMs = Date.now() - startTime;
       const compressedTokenCount = this.estimateTokens(compressedText);
-      const tokensSaved = originalTokenCount - compressedTokenCount;
-      const tokenSavingsPercent = originalTokenCount > 0
-        ? Math.round((tokensSaved / originalTokenCount) * 10000) / 100
+      const tokensSaved = estimatedTokens - compressedTokenCount;
+      const tokenSavingsPercent = estimatedTokens > 0
+        ? Math.round((tokensSaved / estimatedTokens) * 10000) / 100
         : 0;
 
       return {
         compressedText,
         originalLength: text.length,
         compressedLength: compressedText.length,
-        originalTokenCount,
+        originalTokenCount: estimatedTokens,
         compressedTokenCount,
         tokenSavingsPercent,
         compressionTimeMs,
@@ -142,8 +154,8 @@ export class LLMLingua2Provider implements TokenReductionProvider {
         compressedText: text,
         originalLength: text.length,
         compressedLength: text.length,
-        originalTokenCount,
-        compressedTokenCount: originalTokenCount,
+        originalTokenCount: estimatedTokens,
+        compressedTokenCount: estimatedTokens,
         tokenSavingsPercent: 0,
         compressionTimeMs: Date.now() - startTime,
         provider: 'llmlingua2',
@@ -159,8 +171,8 @@ export class LLMLingua2Provider implements TokenReductionProvider {
 
   /**
    * Rough token estimate (~4 chars per token for English).
-   * This is used for stats display only; the actual compression
-   * is model-driven and doesn't depend on this estimate.
+   * Used for activation-threshold checks and stats display only;
+   * the actual compression is model-driven.
    */
   private estimateTokens(text: string): number {
     return Math.ceil(text.length / 4);

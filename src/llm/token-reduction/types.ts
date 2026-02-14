@@ -12,21 +12,24 @@
 
 export type TokenReductionProviderType = 'llmlingua2';
 
+/**
+ * Provider-agnostic compression level.
+ *
+ * Each provider maps these levels to its own set of thresholds, rates,
+ * and options.  Users pick a level; the provider picks the knobs.
+ *
+ * - default:    light compression, safe for most prompts
+ * - aggressive: heavy compression, best for very large prompts
+ */
+export type CompressionLevel = 'default' | 'aggressive';
+
 export interface TokenReductionConfig {
   /** Whether token reduction is enabled */
   enabled: boolean;
   /** Which provider to use */
   provider: TokenReductionProviderType;
-  /** Target compression rate (0.0-1.0). e.g. 0.5 = keep 50% of tokens */
-  rate: number;
-  /** Model to use for the provider (provider-specific) */
-  model?: string;
-  /** Tokens that should never be removed */
-  forceTokens?: string[];
-  /** Whether to force-preserve digits */
-  forceReserveDigit?: boolean;
-  /** Whether to drop consecutive duplicate tokens */
-  dropConsecutive?: boolean;
+  /** Provider-agnostic compression level */
+  compressionLevel: CompressionLevel;
 }
 
 // ============================================================
@@ -62,17 +65,11 @@ export interface TokenReductionProvider {
   /** Initialize the provider (load models, etc.) */
   init(): Promise<void>;
 
-  /** Compress a text prompt */
-  compress(text: string, rate: number, options?: CompressOptions): Promise<CompressionResult>;
+  /** Compress a text prompt at the given compression level */
+  compress(text: string, level: CompressionLevel): Promise<CompressionResult>;
 
   /** Shut down the provider (unload models, etc.) */
   shutdown(): Promise<void>;
-}
-
-export interface CompressOptions {
-  forceTokens?: string[];
-  forceReserveDigit?: boolean;
-  dropConsecutive?: boolean;
 }
 
 // ============================================================

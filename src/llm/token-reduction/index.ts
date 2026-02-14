@@ -6,7 +6,7 @@ export type {
   TokenReductionConfig,
   TokenReductionProvider,
   TokenReductionProviderType,
+  CompressionLevel,
   CompressionResult,
-  CompressOptions,
   TokenReductionStats,
 } from './types.js';

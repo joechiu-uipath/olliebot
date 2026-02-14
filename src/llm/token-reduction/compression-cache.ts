@@ -13,7 +13,7 @@
  */
 
 import { createHash } from 'crypto';
-import type { CompressionResult, TokenReductionProviderType } from './types.js';
+import type { CompressionResult, TokenReductionProviderType, CompressionLevel } from './types.js';
 
 export interface CacheEntry {
   key: string;
@@ -40,11 +40,11 @@ export class CompressionCache {
 
   /**
    * Build a deterministic cache key from input parameters.
-   * Uses SHA-256 of (provider + rate + text) to keep keys short.
+   * Uses SHA-256 of (provider + level + text) to keep keys short.
    */
-  static buildKey(text: string, rate: number, provider: TokenReductionProviderType): string {
+  static buildKey(text: string, level: CompressionLevel, provider: TokenReductionProviderType): string {
     const hash = createHash('sha256');
-    hash.update(`${provider}:${rate}:${text}`);
+    hash.update(`${provider}:${level}:${text}`);
     return hash.digest('hex');
   }
 

@@ -381,7 +381,7 @@ export const LogsSidebarContent = memo(function LogsSidebarContent({ logsMode })
               <span className="logs-tr-toggle-label">Fast LLM</span>
             </label>
             <div className="logs-tr-info">
-              {trSettings.provider} / {trSettings.model} / rate: {trSettings.rate}
+              {trSettings.provider} / {trSettings.compressionLevel}
             </div>
           </div>
         )}

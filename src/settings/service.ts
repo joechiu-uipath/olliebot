@@ -6,6 +6,7 @@
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { dirname, join, resolve } from 'path';
+import type { CompressionLevel } from '../llm/token-reduction/types.js';
 
 export interface TokenReductionSettings {
   /** Enable token reduction for the main LLM */
@@ -14,10 +15,8 @@ export interface TokenReductionSettings {
   enabledForFast: boolean;
   /** Which provider to use (e.g. 'llmlingua2') */
   provider: string;
-  /** Compression rate (0.0-1.0), e.g. 0.5 = keep 50% of tokens */
-  rate: number;
-  /** Model for the provider (e.g. 'bert-multilingual', 'xlm-roberta') */
-  model: string;
+  /** Provider-agnostic compression level */
+  compressionLevel: CompressionLevel;
 }
 
 export interface UserSettings {
@@ -36,8 +35,7 @@ const DEFAULT_SETTINGS: UserSettings = {
     enabledForMain: false,
     enabledForFast: false,
     provider: 'llmlingua2',
-    rate: 0.5,
-    model: 'bert-multilingual',
+    compressionLevel: 'default',
   },
 };
 
