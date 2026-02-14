@@ -70,7 +70,7 @@ export type {
   StrategyType,
   FusionMethod,
   StrategyFactoryOptions,
-  PreprocessedChunk,
+  PreprocessedChunkMap,
 } from './strategies/index.js';
 
 // Result fusion

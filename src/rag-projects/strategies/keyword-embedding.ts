@@ -6,16 +6,18 @@
  * rather than full prose, improving recall for queries that use different wording
  * than the source text.
  *
- * During indexing, prefers pre-computed keywords from ChunkPreprocessor (shared
- * single LLM call) to avoid redundant input token costs. Falls back to its own
- * LLM call only if no preprocessed data is available.
+ * Participates in shared LLM preprocessing by contributing a KEYWORDS directive
+ * and extracting its result from the combined response. Falls back to a standalone
+ * LLM call if no preprocessed data is available.
  */
 
 import type { DocumentChunk, SummarizationProvider } from '../types.js';
-import type { PreprocessedChunk } from './chunk-preprocessor.js';
-import type { RetrievalStrategy } from './types.js';
+import type { RetrievalStrategy, PreprocessedChunkMap } from './types.js';
 
-const KEYWORD_EXTRACTION_PROMPT =
+/** Label used in the combined prompt and response. Must be unique across strategies. */
+const LABEL = 'KEYWORDS';
+
+const STANDALONE_PROMPT =
   'Extract 10-20 important keywords and key phrases from this text. ' +
   'Return ONLY a comma-separated list of keywords, nothing else. ' +
   'Focus on: specific terms, named entities, technical concepts, and core topics.';
@@ -36,17 +38,39 @@ export class KeywordEmbeddingStrategy implements RetrievalStrategy {
     this.summarizationProvider = summarizationProvider;
   }
 
-  async prepareChunkText(chunk: DocumentChunk, preprocessed?: PreprocessedChunk): Promise<string> {
-    // Use pre-computed keywords from shared LLM call when available
-    if (preprocessed) {
-      return preprocessed.keywords;
-    }
+  // ─── Shared LLM preprocessing contribution ─────────────────────
 
-    // Fallback: standalone LLM call (only when preprocessor is not wired in)
+  getPreprocessingDirective(): string {
+    return (
+      `${LABEL}: Extract 10-20 important keywords and key phrases. ` +
+      'Focus on specific terms, named entities, technical concepts, and core topics. ' +
+      `Output format: "${LABEL}: keyword1, keyword2, keyword3, ..."`
+    );
+  }
+
+  extractPreprocessedResult(rawResponse: string): string | null {
+    for (const line of rawResponse.split('\n')) {
+      const trimmed = line.trim();
+      if (trimmed.toUpperCase().startsWith(`${LABEL}:`)) {
+        const value = trimmed.slice(`${LABEL}:`.length).trim();
+        if (value) return value;
+      }
+    }
+    return null;
+  }
+
+  // ─── Core strategy methods ─────────────────────────────────────
+
+  async prepareChunkText(chunk: DocumentChunk, preprocessed?: PreprocessedChunkMap): Promise<string> {
+    // Use result from shared LLM call when available
+    const cached = preprocessed?.get(this.id);
+    if (cached) return cached;
+
+    // Fallback: standalone LLM call
     try {
       const keywords = await this.summarizationProvider.summarize(
         chunk.text,
-        KEYWORD_EXTRACTION_PROMPT
+        STANDALONE_PROMPT
       );
       return keywords.trim();
     } catch (error) {
@@ -56,7 +80,6 @@ export class KeywordEmbeddingStrategy implements RetrievalStrategy {
   }
 
   async prepareQueryText(query: string): Promise<string> {
-    // For short queries (likely already keyword-like), use as-is
     if (query.split(/\s+/).length <= 5) {
       return query;
     }

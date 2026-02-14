@@ -7,7 +7,6 @@
  */
 
 import type { DocumentChunk, SummarizationProvider } from '../types.js';
-import type { PreprocessedChunk } from './chunk-preprocessor.js';
 
 /**
  * Built-in strategy identifiers.
@@ -32,11 +31,22 @@ export interface StrategyConfig {
 export type FusionMethod = 'rrf' | 'weighted_score';
 
 /**
+ * Map of strategy ID → extracted text from a shared LLM preprocessing call.
+ * Built by ChunkPreprocessor after collecting directives from all contributing
+ * strategies and making a single LLM call.
+ */
+export type PreprocessedChunkMap = Map<string, string>;
+
+/**
  * A retrieval strategy that controls how chunks are preprocessed for embedding
  * and how queries are transformed before search.
  *
  * All strategies share the same embedding provider - the differentiation is
  * in the text transformation, not the embedding model.
+ *
+ * Strategies that need LLM preprocessing should also implement the optional
+ * preprocessing methods (getPreprocessingDirective / extractPreprocessedResult)
+ * so the ChunkPreprocessor can batch their work into a single LLM call.
  */
 export interface RetrievalStrategy {
   /** Unique identifier for this strategy (used as table suffix) */
@@ -49,21 +59,44 @@ export interface RetrievalStrategy {
   /**
    * Transform a chunk's text before embedding for indexing.
    *
-   * When `preprocessed` is provided, the strategy should use the already-computed
-   * data (keywords/summary from a single shared LLM call) instead of making its
-   * own LLM call. This avoids sending the same input tokens multiple times.
+   * When `preprocessed` is provided, the strategy should look up its own result
+   * by its `id` from the map. This data was produced by a single shared LLM call
+   * that included this strategy's directive alongside other strategies' directives.
    *
    * @param chunk - The document chunk
-   * @param preprocessed - Pre-computed keywords/summary from ChunkPreprocessor (if available)
+   * @param preprocessed - Map of strategyId → extracted text from shared LLM call
    * @returns The text to be embedded and stored alongside the original chunk text.
    */
-  prepareChunkText(chunk: DocumentChunk, preprocessed?: PreprocessedChunk): Promise<string>;
+  prepareChunkText(chunk: DocumentChunk, preprocessed?: PreprocessedChunkMap): Promise<string>;
 
   /**
    * Transform a query string before embedding for search.
    * @returns The text to be embedded for the vector search.
    */
   prepareQueryText(query: string): Promise<string>;
+
+  /**
+   * Return the prompt directive this strategy wants included in the shared
+   * LLM preprocessing call. The preprocessor will concatenate directives from
+   * all contributing strategies into a single prompt.
+   *
+   * The strategy is responsible for defining a clear, parseable output format
+   * (e.g., a labeled section) that it can later find in the combined response.
+   * Strategies can break each other if their formats collide, so each must
+   * choose a distinctive label.
+   *
+   * Return undefined if this strategy does not need LLM preprocessing.
+   */
+  getPreprocessingDirective?(): string;
+
+  /**
+   * Extract this strategy's result from the raw combined LLM response.
+   * The response contains interleaved output from all contributing strategies.
+   * The strategy must locate and parse its own section.
+   *
+   * @returns The extracted text for this strategy, or null if extraction failed.
+   */
+  extractPreprocessedResult?(rawResponse: string): string | null;
 }
 
 /**

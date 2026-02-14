@@ -116,9 +116,8 @@ export function getAvailableStrategies(): Array<{ type: StrategyType; name: stri
 }
 
 // Re-exports
-export type { RetrievalStrategy, StrategyConfig, StrategyType, FusionMethod, StrategyFactoryOptions } from './types.js';
+export type { RetrievalStrategy, StrategyConfig, StrategyType, FusionMethod, StrategyFactoryOptions, PreprocessedChunkMap } from './types.js';
 export { DirectEmbeddingStrategy } from './direct-embedding.js';
 export { KeywordEmbeddingStrategy } from './keyword-embedding.js';
 export { SummaryEmbeddingStrategy } from './summary-embedding.js';
 export { ChunkPreprocessor } from './chunk-preprocessor.js';
-export type { PreprocessedChunk } from './chunk-preprocessor.js';
