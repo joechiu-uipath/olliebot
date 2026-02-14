@@ -39,13 +39,13 @@ archetypes, and a tool-based collection model that agents can execute autonomous
 | `count` | Non-negative integer | Open bugs: 7 | Same as numeric |
 | `duration` | Seconds (stored), display converts | P95 latency: 0.230s | Same as numeric |
 | `boolean` | `true` / `false` | CI pipeline green: true | `= true` (pass) or `= false` (fail) |
-| `rating` | 1–N point scale (configurable) | Code quality: 4/5 | `>=` threshold |
+| `rating` | 1–N point scale (configurable, decimal values allowed e.g. 4.5) | Code quality: 4.5/5 | `>=` threshold |
 | `nps` | -100 to +100 (Net Promoter Score) | NPS: 42 | `>=` threshold |
 
 All types are stored as `REAL` in `pillar_metric_history.value`:
 - `boolean`: stored as `1.0` (true) or `0.0` (false)
 - `nps`: stored as the raw score (-100 to +100)
-- `rating`: stored as the numeric rating value
+- `rating`: stored as the numeric rating value (supports decimals, e.g. 4.5 stars)
 
 ### 2.2 Target Specification
 
@@ -70,6 +70,7 @@ interface MetricTarget {
 | Cache hit > 80% | `{ "operator": ">", "value": 80, "warningThreshold": 60, "desiredDirection": "up" }` |
 | Zero stale APIs | `{ "operator": "=", "value": 0, "desiredDirection": "down" }` |
 | CI green | `{ "operator": "=", "value": 1 }` (boolean = 1.0 for true) |
+| CSAT >= 4.5 (rating) | `{ "operator": ">=", "value": 4.5, "warningThreshold": 3.5, "desiredDirection": "up" }` |
 | NPS > 40 | `{ "operator": ">", "value": 40, "warningThreshold": 20, "desiredDirection": "up" }` |
 
 ### 2.3 Metric Status (Computed)
@@ -279,7 +280,7 @@ to validate the schema covers all common patterns.
 | 10 | Trial-to-Paid Conversion Rate | `percentage` | % | `> 15` | tool (billing API) |
 | 11 | Feature Adoption Rate | `percentage` | % | `> 40` | tool (analytics API) |
 | 12 | Time to Value (TTV) | `duration` | days | `< 7` | tool (event tracking) |
-| 13 | Customer Satisfaction (CSAT) | `rating` | 1-5 | `>= 4` | manual (survey) |
+| 13 | Customer Satisfaction (CSAT) | `rating` | 1-5 | `>= 4.5` | manual (survey) |
 | 14 | Support Ticket Volume | `count` | tickets/week | `< 50` | tool (helpdesk API) |
 | 15 | Support Resolution Time | `duration` | hours | `< 24` | tool (helpdesk API) |
 
