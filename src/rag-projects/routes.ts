@@ -12,6 +12,7 @@ import type { RAGProjectService } from './service.js';
 import { MAX_FILE_UPLOAD_SIZE_BYTES, RAG_DEFAULT_TOP_K } from '../constants.js';
 import { getAvailableStrategies } from './strategies/index.js';
 import type { FusionMethod } from './strategies/types.js';
+import type { RerankerMethod } from './reranker.js';
 
 // Supported file extensions for upload
 const SUPPORTED_UPLOAD_EXTENSIONS = new Set(['.pdf', '.txt', '.md', '.json', '.csv', '.html']);
@@ -124,7 +125,7 @@ export function createRAGProjectRoutes(ragService: RAGProjectService): Router {
   router.post('/projects/:id/query', async (req: Request, res: Response) => {
     try {
       const projectId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
-      const { query, topK, minScore, contentType, fusionMethod } = req.body;
+      const { query, topK, minScore, contentType, fusionMethod, reranker } = req.body;
 
       if (!query || typeof query !== 'string') {
         res.status(400).json({ error: 'Query is required' });
@@ -137,6 +138,7 @@ export function createRAGProjectRoutes(ragService: RAGProjectService): Router {
         minScore: typeof minScore === 'number' ? minScore : 0,
         contentType: contentType || 'all',
         ...(fusionMethod && { fusionMethod: fusionMethod as FusionMethod }),
+        ...(reranker && { reranker: reranker as RerankerMethod }),
       });
 
       res.json(response);
@@ -166,6 +168,10 @@ export function createRAGProjectRoutes(ragService: RAGProjectService): Router {
       fusionMethods: [
         { id: 'rrf', name: 'Reciprocal Rank Fusion', description: 'Rank-based fusion that is robust to score scale differences between strategies.' },
         { id: 'weighted_score', name: 'Weighted Score', description: 'Combines raw similarity scores using configured weights per strategy.' },
+      ],
+      rerankers: [
+        { id: 'none', name: 'None', description: 'No re-ranking. Use fusion output directly.' },
+        { id: 'llm', name: 'LLM Re-ranker', description: 'LLM judges each chunk\'s relevance to the query from text. Applied after fusion.' },
       ],
     });
   });

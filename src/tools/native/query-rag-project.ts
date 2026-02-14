@@ -9,6 +9,7 @@
 import type { NativeTool, NativeToolResult } from './types.js';
 import type { RAGProjectService } from '../../rag-projects/service.js';
 import type { FusionMethod } from '../../rag-projects/strategies/types.js';
+import type { RerankerMethod } from '../../rag-projects/reranker.js';
 
 export class QueryRAGProjectTool implements NativeTool {
   readonly name = 'query_rag_project';
@@ -42,6 +43,14 @@ export class QueryRAGProjectTool implements NativeTool {
           '"weighted_score" uses weighted score averaging. ' +
           'Only applies when the project has multiple strategies configured.',
       },
+      reranker: {
+        type: 'string',
+        enum: ['none', 'llm'],
+        description:
+          'Override the post-fusion re-ranking method. ' +
+          '"none" skips re-ranking. ' +
+          '"llm" uses an LLM to judge each chunk\'s relevance to the query directly from text.',
+      },
     },
     required: ['projectId', 'query'],
   };
@@ -58,6 +67,7 @@ export class QueryRAGProjectTool implements NativeTool {
     const topK = Math.min(Math.max(Number(params.topK) || 5, 1), 20);
     const minScore = Math.min(Math.max(Number(params.minScore) || 0, 0), 1);
     const fusionMethod = params.fusionMethod as FusionMethod | undefined;
+    const reranker = params.reranker as RerankerMethod | undefined;
 
     if (!projectId.trim()) {
       return {
@@ -79,6 +89,7 @@ export class QueryRAGProjectTool implements NativeTool {
         topK,
         minScore,
         ...(fusionMethod && { fusionMethod }),
+        ...(reranker && { reranker }),
       });
 
       if (response.results.length === 0) {
@@ -92,6 +103,7 @@ export class QueryRAGProjectTool implements NativeTool {
             queryTimeMs: response.queryTimeMs,
             ...(response.strategiesUsed && { strategiesUsed: response.strategiesUsed }),
             ...(response.fusionMethod && { fusionMethod: response.fusionMethod }),
+            ...(response.reranker && { reranker: response.reranker }),
             message: 'No relevant documents found for this query.',
           },
         };
@@ -116,6 +128,7 @@ export class QueryRAGProjectTool implements NativeTool {
           queryTimeMs: response.queryTimeMs,
           ...(response.strategiesUsed && { strategiesUsed: response.strategiesUsed }),
           ...(response.fusionMethod && { fusionMethod: response.fusionMethod }),
+          ...(response.reranker && { reranker: response.reranker }),
         },
       };
     } catch (error) {
