@@ -59,7 +59,7 @@ export class ErrorBoundary extends Component {
             <button 
               onClick={() => {
                 this.setState({ hasError: false, error: null });
-                this.props.onReset?.();
+                this.props.onReset();
               }}
               style={{
                 marginTop: '10px',
