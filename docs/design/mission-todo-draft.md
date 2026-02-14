@@ -100,8 +100,8 @@ interface MissionTodo {
 
   // --- Lifecycle ---
   status: 'backlog' | 'pending' | 'in_progress' | 'completed' | 'cancelled';
-  priority: 'critical' | 'high' | 'medium' | 'low';
-  assignedAgent: string | null;     // Agent type: 'researcher', 'coder', 'pillar-owner', etc.
+  priority: 'critical' | 'high' | 'medium' | 'low';  // Reserved: not used in v1
+  assignedAgent: string | null;     // Reserved: not used in v1 (always pillar-owner)
 
   // --- Execution ---
   conversationId: string | null;    // Execution chat (created when work begins)
@@ -111,7 +111,6 @@ interface MissionTodo {
   createdAt: string;
   startedAt: string | null;         // When status → in_progress
   completedAt: string | null;       // When status → completed
-  deadline: string | null;          // Escalation trigger if overdue
 }
 ```
 
@@ -166,8 +165,8 @@ Add these new fields to the existing tool:
   justification: string,       // NEW: why this, why now
   completionCriteria: string,  // NEW: measurable "done" definition
   deadline: string | null,     // NEW: ISO 8601 date or null
-  priority: 'critical' | 'high' | 'medium' | 'low',
-  assignedAgent: string | null,
+  priority: 'critical' | 'high' | 'medium' | 'low',  // reserved: not used in v1
+  assignedAgent: string | null,  // reserved: not used in v1 (always pillar-owner)
   targetStatus: 'pending' | 'backlog',  // NEW: default 'pending'
 }
 ```
@@ -448,8 +447,6 @@ I'm creating a TODO to investigate.
   completionCriteria: "Deliver a list of the top 3 plugins by time contribution,
     with percentage of total build time. Include recommendation for each: keep, replace,
     or configure differently."
-  priority: "high"
-  assignedAgent: "researcher"
   deadline: "2026-02-21"
   targetStatus: "pending"
 ```
@@ -522,8 +519,6 @@ Mission Lead reviews the TODO conversation:
   completionCriteria: "Run esbuild-loader on the codebase, compare build times,
     identify any compatibility issues. Report: build time delta, test pass rate,
     and list of breaking changes (if any)."
-  priority: "high"
-  assignedAgent: "coder"
 ```
 
 ---
