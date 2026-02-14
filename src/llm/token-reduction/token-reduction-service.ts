@@ -19,6 +19,7 @@ import type {
 } from './types.js';
 import { LLMLingua2Provider } from './llmlingua2-provider.js';
 import { CompressionCache } from './compression-cache.js';
+import { getDb } from '../../db/index.js';
 
 export class TokenReductionService {
   private provider: TokenReductionProvider | null = null;
@@ -34,7 +35,8 @@ export class TokenReductionService {
   }
 
   /**
-   * Initialize the service: create and init the configured provider.
+   * Initialize the service: create and init the configured provider,
+   * set up the cache DB table, and load cached entries.
    */
   async init(): Promise<void> {
     if (!this.config.enabled) {
@@ -46,6 +48,9 @@ export class TokenReductionService {
     await this.provider.init();
     this.initialized = true;
     console.log(`[TokenReduction] Service initialized (provider: ${this.config.provider}, level: ${this.config.compressionLevel})`);
+
+    // Set up cache persistence
+    this.initCachePersistence();
   }
 
   /**
@@ -133,13 +138,6 @@ export class TokenReductionService {
   }
 
   /**
-   * Get the internal compression cache (for wiring up DB persistence).
-   */
-  getCache(): CompressionCache {
-    return this.cache;
-  }
-
-  /**
    * Get cache hit/miss stats.
    */
   getCacheStats(): { hits: number; misses: number; size: number } {
@@ -185,6 +183,69 @@ export class TokenReductionService {
       this.provider = null;
     }
     this.initialized = false;
+  }
+
+  // ============================================================
+  // Cache DB persistence
+  // ============================================================
+
+  /**
+   * Ensure the cache table exists, wire up persistence callbacks,
+   * and load any existing entries from DB.
+   */
+  private initCachePersistence(): void {
+    try {
+      const db = getDb();
+
+      // Create table if missing
+      db.rawRun(`
+        CREATE TABLE IF NOT EXISTS token_reduction_cache (
+          key TEXT PRIMARY KEY,
+          inputTextPreview TEXT,
+          resultJson TEXT NOT NULL,
+          createdAt TEXT NOT NULL
+        )
+      `);
+      db.rawRun(
+        'CREATE INDEX IF NOT EXISTS idx_token_reduction_cache_created ON token_reduction_cache(createdAt ASC)'
+      );
+
+      // Wire callbacks so the in-memory LRU cache persists to DB
+      this.cache.setPersistence(
+        (entry) => {
+          try {
+            getDb().rawRun(
+              `INSERT OR REPLACE INTO token_reduction_cache (key, inputTextPreview, resultJson, createdAt)
+               VALUES (?, ?, ?, ?)`,
+              [entry.key, entry.inputText, JSON.stringify(entry.result), entry.createdAt]
+            );
+          } catch { /* non-fatal */ }
+        },
+        (key) => {
+          try {
+            getDb().rawRun('DELETE FROM token_reduction_cache WHERE key = ?', [key]);
+          } catch { /* non-fatal */ }
+        }
+      );
+
+      // Load cached entries from DB (non-blocking)
+      const rows = db.rawQuery(
+        'SELECT key, inputTextPreview, resultJson, createdAt FROM token_reduction_cache ORDER BY createdAt ASC'
+      ) as Array<{ key: string; inputTextPreview: string; resultJson: string; createdAt: string }>;
+
+      if (rows.length > 0) {
+        const entries = rows.map(row => ({
+          key: row.key,
+          inputText: row.inputTextPreview,
+          result: JSON.parse(row.resultJson),
+          createdAt: row.createdAt,
+        }));
+        this.cache.loadEntries(entries);
+        console.log(`[TokenReduction] Cache: loaded ${entries.length} entries from DB`);
+      }
+    } catch (err) {
+      console.warn('[TokenReduction] Failed to init cache persistence (non-fatal):', err);
+    }
   }
 
   /**
