@@ -127,21 +127,52 @@ export const MissionChat = memo(function MissionChat({
         <div
           className="mission-chat-resize-handle"
           onMouseDown={handleResizeStart}
+          role="slider"
+          aria-label="Resize chat panel"
+          aria-orientation="vertical"
+          aria-valuemin={MIN_PANEL_HEIGHT}
+          aria-valuemax={MAX_PANEL_HEIGHT}
+          aria-valuenow={panelHeight}
           title="Drag to resize"
+          tabIndex={0}
+          onKeyDown={(e) => {
+            if (e.key === 'ArrowUp') {
+              e.preventDefault();
+              setPanelHeight(prev => Math.min(MAX_PANEL_HEIGHT, prev + 20));
+            } else if (e.key === 'ArrowDown') {
+              e.preventDefault();
+              setPanelHeight(prev => Math.max(MIN_PANEL_HEIGHT, prev - 20));
+            }
+          }}
         />
       )}
-      <div className="mission-chat-header" onClick={handleToggle}>
+      <button
+        className="mission-chat-header"
+        onClick={handleToggle}
+        aria-expanded={expanded}
+        aria-label={`${expanded ? 'Collapse' : 'Expand'} ${contextLabel}`}
+        type="button"
+      >
+      <button
+        className="mission-chat-header"
+        onClick={handleToggle}
+        aria-expanded={expanded}
+        aria-label={`${expanded ? 'Collapse' : 'Expand'} ${contextLabel}`}
+        type="button"
+      >
         <span className="mission-chat-header-label">
           {contextLabel}
-          {isStreaming && expanded && <span className="mission-chat-streaming-dot" />}
+          {isStreaming && expanded && <span className="mission-chat-streaming-dot" aria-label="Agent is typing" />}
         </span>
         <span className="mission-chat-header-actions">
           {!expanded && newMessageCount > 0 && (
-            <span className="mission-chat-badge">{newMessageCount}</span>
+            <span className="mission-chat-badge" aria-label={`${newMessageCount} new messages`}>
+              {newMessageCount}
+            </span>
           )}
-          <span className="mission-chat-chevron">{expanded ? '▾' : '▸'}</span>
+          <span className="mission-chat-chevron" aria-hidden="true">{expanded ? '▾' : '▸'}</span>
         </span>
-      </div>
+      </button>
 
       {expanded && (
         <div className="mission-chat-body">
