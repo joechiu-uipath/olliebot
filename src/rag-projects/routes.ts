@@ -10,6 +10,8 @@ import { copyFile, unlink } from 'fs/promises';
 import { join, extname, basename } from 'path';
 import type { RAGProjectService } from './service.js';
 import { MAX_FILE_UPLOAD_SIZE_BYTES, RAG_DEFAULT_TOP_K } from '../constants.js';
+import { getAvailableStrategies } from './strategies/index.js';
+import type { FusionMethod } from './strategies/types.js';
 
 // Supported file extensions for upload
 const SUPPORTED_UPLOAD_EXTENSIONS = new Set(['.pdf', '.txt', '.md', '.json', '.csv', '.html']);
@@ -122,7 +124,7 @@ export function createRAGProjectRoutes(ragService: RAGProjectService): Router {
   router.post('/projects/:id/query', async (req: Request, res: Response) => {
     try {
       const projectId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
-      const { query, topK, minScore, contentType } = req.body;
+      const { query, topK, minScore, contentType, fusionMethod } = req.body;
 
       if (!query || typeof query !== 'string') {
         res.status(400).json({ error: 'Query is required' });
@@ -134,6 +136,7 @@ export function createRAGProjectRoutes(ragService: RAGProjectService): Router {
         topK: typeof topK === 'number' ? topK : RAG_DEFAULT_TOP_K,
         minScore: typeof minScore === 'number' ? minScore : 0,
         contentType: contentType || 'all',
+        ...(fusionMethod && { fusionMethod: fusionMethod as FusionMethod }),
       });
 
       res.json(response);
@@ -150,6 +153,20 @@ export function createRAGProjectRoutes(ragService: RAGProjectService): Router {
   router.get('/supported-extensions', (_req: Request, res: Response) => {
     res.json({
       extensions: ragService.getSupportedExtensions(),
+    });
+  });
+
+  /**
+   * GET /api/rag/strategies
+   * Get list of available retrieval strategies and their descriptions.
+   */
+  router.get('/strategies', (_req: Request, res: Response) => {
+    res.json({
+      strategies: getAvailableStrategies(),
+      fusionMethods: [
+        { id: 'rrf', name: 'Reciprocal Rank Fusion', description: 'Rank-based fusion that is robust to score scale differences between strategies.' },
+        { id: 'weighted_score', name: 'Weighted Score', description: 'Combines raw similarity scores using configured weights per strategy.' },
+      ],
     });
   });
 

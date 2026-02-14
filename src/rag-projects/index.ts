@@ -50,3 +50,27 @@ export {
   AzureOpenAIEmbeddingProvider,
   VoyageEmbeddingProvider,
 } from './embedding-providers.js';
+
+// Multi-strategy RAG
+export {
+  createStrategy,
+  createStrategiesFromConfig,
+  getAvailableStrategies,
+  DEFAULT_STRATEGIES,
+  MULTI_STRATEGY_PRESET,
+  DirectEmbeddingStrategy,
+  KeywordEmbeddingStrategy,
+  SummaryEmbeddingStrategy,
+} from './strategies/index.js';
+
+export type {
+  RetrievalStrategy,
+  StrategyConfig,
+  StrategyType,
+  FusionMethod,
+  StrategyFactoryOptions,
+} from './strategies/index.js';
+
+// Result fusion
+export { fuseResults } from './fusion.js';
+export type { StrategySearchResult, FusedSearchResult } from './fusion.js';
