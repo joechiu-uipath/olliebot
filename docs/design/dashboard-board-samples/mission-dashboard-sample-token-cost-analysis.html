@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Token Cost Analysis — Budget &amp; Spend Intelligence | OllieBot</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.6.0/dist/echarts.min.js"></script>
+<style>
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  :root{
+    --bg:#0f1117;--card:#1a1d27;--border:#2a2d37;
+    --text:#e0e0e0;--muted:#8b8fa3;
+    --indigo:#6366f1;--cyan:#22d3ee;--emerald:#10b981;--amber:#f59e0b;--rose:#f43f5e;
+  }
+  html{font-size:14px}
+  body{background:var(--bg);color:var(--text);font-family:'Segoe UI',system-ui,-apple-system,sans-serif;line-height:1.55;padding:24px;min-height:100vh}
+
+  /* ── Header ── */
+  .header{max-width:1440px;margin:0 auto 28px}
+  .header h1{font-size:1.65rem;font-weight:700;letter-spacing:-.3px;color:#fff}
+  .header h1 span{color:var(--indigo)}
+  .header .meta{display:flex;gap:18px;align-items:center;margin-top:6px;flex-wrap:wrap}
+  .header .meta .timestamp{font-size:.82rem;color:var(--muted)}
+  .header .synopsis{margin-top:10px;font-size:.92rem;color:var(--muted);max-width:820px;line-height:1.6}
+
+  /* ── Collapsible Panel ── */
+  .collapsible{max-width:1440px;margin:0 auto 24px}
+  .collapsible-toggle{background:var(--card);border:1px solid var(--border);border-radius:8px;padding:12px 18px;color:var(--text);font-size:.88rem;cursor:pointer;width:100%;text-align:left;display:flex;justify-content:space-between;align-items:center;transition:background .2s}
+  .collapsible-toggle:hover{background:#222531}
+  .collapsible-toggle .arrow{transition:transform .25s;font-size:.75rem;color:var(--muted)}
+  .collapsible-toggle.open .arrow{transform:rotate(180deg)}
+  .collapsible-body{overflow:hidden;max-height:0;transition:max-height .35s ease}
+  .collapsible-body.open{max-height:600px}
+  .collapsible-content{background:var(--card);border:1px solid var(--border);border-top:none;border-radius:0 0 8px 8px;padding:16px 20px;font-size:.84rem;color:var(--muted);line-height:1.75}
+  .collapsible-content ul{margin:6px 0 0 18px}
+  .collapsible-content li{margin-bottom:4px}
+  .collapsible-content kbd{background:#2a2d37;border:1px solid #3a3d47;border-radius:4px;padding:1px 6px;font-family:inherit;font-size:.8rem;color:var(--cyan)}
+
+  /* ── KPI Row ── */
+  .kpi-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:16px;max-width:1440px;margin:0 auto 28px}
+  .kpi{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:20px 22px;position:relative;overflow:hidden;transition:transform .18s,box-shadow .18s}
+  .kpi:hover{transform:translateY(-2px);box-shadow:0 6px 24px rgba(0,0,0,.35)}
+  .kpi .label{font-size:.78rem;color:var(--muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:8px}
+  .kpi .value{font-size:1.6rem;font-weight:700;color:#fff}
+  .kpi .sub{font-size:.78rem;margin-top:6px}
+  .kpi .accent-bar{position:absolute;top:0;left:0;width:100%;height:3px}
+  .kpi .icon{position:absolute;top:16px;right:18px;font-size:1.35rem;opacity:.45}
+
+  /* ── Chart Grid ── */
+  .grid{display:grid;gap:20px;max-width:1440px;margin:0 auto 28px}
+  .grid-2{grid-template-columns:repeat(auto-fit,minmax(480px,1fr))}
+  .grid-3{grid-template-columns:repeat(auto-fit,minmax(380px,1fr))}
+  .chart-card{background:var(--card);border:1px solid var(--border);border-radius:10px;padding:20px;display:flex;flex-direction:column}
+  .chart-card h2{font-size:.95rem;font-weight:600;color:var(--text);margin-bottom:4px}
+  .chart-card .chart-sub{font-size:.78rem;color:var(--muted);margin-bottom:14px}
+  .chart-card .chart-wrap{flex:1;min-height:340px}
+  .chart-card.full{grid-column:1/-1}
+
+  /* ── Responsive ── */
+  @media(max-width:1024px){
+    body{padding:14px}
+    .grid-2,.grid-3{grid-template-columns:1fr}
+    .kpi-row{grid-template-columns:repeat(auto-fit,minmax(180px,1fr))}
+    .chart-card .chart-wrap{min-height:300px}
+  }
+  @media(max-width:600px){
+    .header h1{font-size:1.2rem}
+    .kpi .value{font-size:1.25rem}
+  }
+</style>
+</head>
+<body>
+
+<!-- ════════════════ HEADER ════════════════ -->
+<header class="header">
+  <h1><span>Token Cost Analysis</span> — Budget &amp; Spend Intelligence</h1>
+  <div class="meta">
+    <span class="timestamp" id="ts"></span>
+  </div>
+  <p class="synopsis">Detailed breakdown of token consumption and associated costs across agents, models, and workloads.</p>
+</header>
+
+<!-- ════════════════ INTERACTIVITY INSTRUCTIONS ════════════════ -->
+<div class="collapsible">
+  <button class="collapsible-toggle" id="instrToggle" aria-expanded="false">
+    <span>Interactivity Guide &amp; Dashboard Controls</span>
+    <span class="arrow">&#9660;</span>
+  </button>
+  <div class="collapsible-body" id="instrBody">
+    <div class="collapsible-content">
+      <ul>
+        <li><strong>Hover</strong> any chart element to view detailed tooltips with cost and token breakdowns.</li>
+        <li>Use the <strong>data zoom slider</strong> on the daily cost chart to narrow the date range.</li>
+        <li><strong>Click legend items</strong> to toggle individual agents or categories on/off.</li>
+        <li>In the <strong>Treemap</strong>, click an agent block to drill down into its workload types. Click the breadcrumb or right-click to zoom back out.</li>
+        <li>The <strong>Waterfall chart</strong> shows running cost accumulation; hover each bar for step-level detail.</li>
+        <li>Press <kbd>Esc</kbd> or click outside any tooltip to dismiss it.</li>
+        <li>All charts are <strong>responsive</strong> and will resize with the browser window.</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════ KPI CARDS ════════════════ -->
+<div class="kpi-row">
+  <div class="kpi">
+    <div class="accent-bar" style="background:var(--indigo)"></div>
+    <div class="icon">&#x1D5E3;</div>
+    <div class="label">Total Tokens</div>
+    <div class="value">2.4M</div>
+    <div class="sub" style="color:var(--muted)">Across 24 missions &middot; 14-day window</div>
+  </div>
+  <div class="kpi">
+    <div class="accent-bar" style="background:var(--cyan)"></div>
+    <div class="icon">$</div>
+    <div class="label">Total Cost</div>
+    <div class="value" style="color:var(--emerald)">$47.23</div>
+    <div class="sub" style="color:var(--emerald)">23.6% of $200 budget &mdash; under budget</div>
+  </div>
+  <div class="kpi">
+    <div class="accent-bar" style="background:var(--emerald)"></div>
+    <div class="icon">&#x2300;</div>
+    <div class="label">Avg Cost / Mission</div>
+    <div class="value">$1.92</div>
+    <div class="sub" style="color:var(--muted)">Median $1.64 &middot; P95 $4.10</div>
+  </div>
+  <div class="kpi">
+    <div class="accent-bar" style="background:var(--rose)"></div>
+    <div class="icon">&#x2691;</div>
+    <div class="label">Most Expensive Agent</div>
+    <div class="value" style="font-size:1.2rem">Coder Agent</div>
+    <div class="sub" style="color:var(--rose)">$18.40 &mdash; 39% of total spend</div>
+  </div>
+  <div class="kpi">
+    <div class="accent-bar" style="background:var(--amber)"></div>
+    <div class="icon">&#x1F4B0;</div>
+    <div class="label">Budget Remaining</div>
+    <div class="value" style="color:var(--emerald)">$152.77</div>
+    <div class="sub" style="color:var(--emerald)">of $200.00 &mdash; 76.4% remaining</div>
+  </div>
+</div>
+
+<!-- ════════════════ CHART ROW 1: Stacked Bar (full width) ════════════════ -->
+<div class="grid grid-2">
+  <div class="chart-card full">
+    <h2>Daily Token Cost by Agent (14 Days)</h2>
+    <p class="chart-sub">Stacked cost contribution per agent per day. Use the slider to narrow the date window.</p>
+    <div class="chart-wrap" id="chartDailyStack"></div>
+  </div>
+</div>
+
+<!-- ════════════════ CHART ROW 2: Treemap + Waterfall ════════════════ -->
+<div class="grid grid-2">
+  <div class="chart-card">
+    <h2>Token Distribution by Agent &rarr; Workload</h2>
+    <p class="chart-sub">Two-level treemap. Size = token count. Click an agent to drill into workload types.</p>
+    <div class="chart-wrap" id="chartTreemap"></div>
+  </div>
+  <div class="chart-card">
+    <h2>Cost Buildup: Last Mission</h2>
+    <p class="chart-sub">Waterfall showing how each processing step contributed to the total mission cost.</p>
+    <div class="chart-wrap" id="chartWaterfall"></div>
+  </div>
+</div>
+
+<!-- ════════════════ CHART ROW 3: Horizontal Bar + Pie ════════════════ -->
+<div class="grid grid-2">
+  <div class="chart-card">
+    <h2>Cost per 1K Tokens by Model</h2>
+    <p class="chart-sub">Input vs output pricing comparison across deployed models.</p>
+    <div class="chart-wrap" id="chartModelCost"></div>
+  </div>
+  <div class="chart-card">
+    <h2>Cost Distribution: Input vs Output vs Cache</h2>
+    <p class="chart-sub">Breakdown of total spend by token type.</p>
+    <div class="chart-wrap" id="chartPie"></div>
+  </div>
+</div>
+
+<script>
+/* ── Utilities ── */
+document.getElementById('ts').textContent = 'Generated ' + new Date().toLocaleString('en-US',{weekday:'long',year:'numeric',month:'long',day:'numeric',hour:'2-digit',minute:'2-digit'});
+
+(function(){
+  var toggle = document.getElementById('instrToggle');
+  var body   = document.getElementById('instrBody');
+  toggle.addEventListener('click',function(){
+    var open = body.classList.toggle('open');
+    toggle.classList.toggle('open',open);
+    toggle.setAttribute('aria-expanded',open);
+  });
+})();
+
+/* ── Palette ── */
+var C = {indigo:'#6366f1',cyan:'#22d3ee',emerald:'#10b981',amber:'#f59e0b',rose:'#f43f5e'};
+var agentColors = {Supervisor:C.indigo,MissionLead:C.cyan,Coder:C.rose,Researcher:C.amber,Reviewer:C.emerald};
+var agents = ['Supervisor','MissionLead','Coder','Researcher','Reviewer'];
+
+/* ── Shared tooltip / text styles ── */
+var ttBase = {backgroundColor:'rgba(20,22,30,.92)',borderColor:'#2a2d37',textStyle:{color:'#e0e0e0',fontSize:12}};
+var axisLabel = {color:'#8b8fa3',fontSize:11};
+var axisLine  = {lineStyle:{color:'#2a2d37'}};
+var splitLine = {lineStyle:{color:'#2a2d37',type:'dashed'}};
+
+/* Helper: init chart */
+function init(id){
+  var el=document.getElementById(id);
+  var c=echarts.init(el,null,{renderer:'canvas'});
+  window.addEventListener('resize',function(){c.resize()});
+  return c;
+}
+
+/* ══════════════════════════════════════════
+   1. STACKED BAR — Daily Token Cost by Agent
+   ══════════════════════════════════════════ */
+(function(){
+  var chart = init('chartDailyStack');
+  var days = [];
+  var d = new Date(); d.setDate(d.getDate()-13);
+  for(var i=0;i<14;i++){
+    days.push((d.getMonth()+1)+'/'+d.getDate());
+    d.setDate(d.getDate()+1);
+  }
+
+  var raw = {
+    Supervisor: [0.32,0.28,0.41,0.35,0.30,0.38,0.45,0.29,0.33,0.40,0.36,0.31,0.42,0.37],
+    MissionLead:[0.18,0.22,0.15,0.20,0.25,0.19,0.21,0.17,0.23,0.16,0.24,0.20,0.18,0.22],
+    Coder:      [1.45,1.12,1.68,1.33,0.95,1.52,1.78,1.20,1.40,1.60,1.25,1.55,1.70,1.38],
+    Researcher: [0.55,0.42,0.70,0.48,0.65,0.58,0.72,0.40,0.62,0.50,0.68,0.45,0.60,0.52],
+    Reviewer:   [0.25,0.18,0.30,0.22,0.20,0.28,0.35,0.15,0.27,0.32,0.24,0.19,0.31,0.26]
+  };
+
+  var series = agents.map(function(a){
+    return {
+      name:a, type:'bar', stack:'cost', barMaxWidth:36,
+      emphasis:{focus:'series'},
+      itemStyle:{color:agentColors[a],borderRadius:i===agents.length-1?[3,3,0,0]:0},
+      data:raw[a]
+    };
+  });
+
+  chart.setOption({
+    tooltip:Object.assign({trigger:'axis',axisPointer:{type:'shadow'}},ttBase,{
+      formatter:function(p){
+        var s='<b>'+p[0].axisValue+'</b><br/>';
+        var t=0;
+        p.forEach(function(x){s+=x.marker+' '+x.seriesName+': <b>$'+x.value.toFixed(2)+'</b><br/>';t+=x.value;});
+        s+='<br/>Total: <b>$'+t.toFixed(2)+'</b>';
+        return s;
+      }
+    }),
+    legend:{data:agents,textStyle:{color:'#8b8fa3',fontSize:11},top:4,itemGap:18},
+    grid:{left:56,right:24,top:48,bottom:72},
+    xAxis:{type:'category',data:days,axisLabel:axisLabel,axisLine:axisLine,axisTick:{show:false}},
+    yAxis:{type:'value',name:'Cost ($)',nameTextStyle:{color:'#8b8fa3',fontSize:11},axisLabel:Object.assign({},axisLabel,{formatter:'${value}'}),splitLine:splitLine,axisLine:{show:false}},
+    dataZoom:[{type:'slider',height:22,bottom:10,borderColor:'#2a2d37',backgroundColor:'#1a1d27',fillerColor:'rgba(99,102,241,.18)',handleStyle:{color:'#6366f1'},textStyle:{color:'#8b8fa3'},dataBackground:{lineStyle:{color:'#2a2d37'},areaStyle:{color:'#1a1d27'}}},{type:'inside'}],
+    series:series,
+    animationDuration:900,animationEasing:'cubicOut'
+  });
+})();
+
+/* ══════════════════════════════════════════
+   2. TREEMAP — Token Distribution
+   ══════════════════════════════════════════ */
+(function(){
+  var chart = init('chartTreemap');
+  var data = [
+    {name:'Coder',value:980000,itemStyle:{color:C.rose},children:[
+      {name:'Main',value:720000,itemStyle:{color:'#f43f5e'}},
+      {name:'Fast',value:195000,itemStyle:{color:'#fb7185'}},
+      {name:'Embedding',value:65000,itemStyle:{color:'#fda4af'}}
+    ]},
+    {name:'Researcher',value:560000,itemStyle:{color:C.amber},children:[
+      {name:'Main',value:340000,itemStyle:{color:'#f59e0b'}},
+      {name:'Fast',value:155000,itemStyle:{color:'#fbbf24'}},
+      {name:'Embedding',value:65000,itemStyle:{color:'#fcd34d'}}
+    ]},
+    {name:'Supervisor',value:420000,itemStyle:{color:C.indigo},children:[
+      {name:'Main',value:290000,itemStyle:{color:'#6366f1'}},
+      {name:'Fast',value:98000,itemStyle:{color:'#818cf8'}},
+      {name:'Embedding',value:32000,itemStyle:{color:'#a5b4fc'}}
+    ]},
+    {name:'Reviewer',value:260000,itemStyle:{color:C.emerald},children:[
+      {name:'Main',value:170000,itemStyle:{color:'#10b981'}},
+      {name:'Fast',value:65000,itemStyle:{color:'#34d399'}},
+      {name:'Embedding',value:25000,itemStyle:{color:'#6ee7b7'}}
+    ]},
+    {name:'MissionLead',value:180000,itemStyle:{color:C.cyan},children:[
+      {name:'Main',value:115000,itemStyle:{color:'#22d3ee'}},
+      {name:'Fast',value:48000,itemStyle:{color:'#67e8f9'}},
+      {name:'Embedding',value:17000,itemStyle:{color:'#a5f3fc'}}
+    ]}
+  ];
+
+  chart.setOption({
+    tooltip:Object.assign({},ttBase,{
+      formatter:function(p){
+        var pct=((p.value/2400000)*100).toFixed(1);
+        return '<b>'+p.name+'</b><br/>Tokens: <b>'+(p.value>=1e6?(p.value/1e6).toFixed(2)+'M':(p.value/1e3).toFixed(1)+'K')+'</b><br/>Share: <b>'+pct+'%</b>';
+      }
+    }),
+    series:[{
+      type:'treemap',
+      roam:false,
+      width:'100%',height:'90%',top:10,
+      nodeClick:'zoomToNode',
+      breadcrumb:{
+        top:4,left:4,
+        itemStyle:{color:'#2a2d37',borderColor:'#3a3d47',textStyle:{color:'#e0e0e0'}},
+        emphasis:{itemStyle:{color:'#3a3d47'}}
+      },
+      levels:[
+        {itemStyle:{borderColor:'#0f1117',borderWidth:3,gapWidth:3},upperLabel:{show:true,height:28,color:'#fff',fontSize:12,fontWeight:600,backgroundColor:'transparent'}},
+        {itemStyle:{borderColor:'#1a1d27',borderWidth:2,gapWidth:2},upperLabel:{show:false}}
+      ],
+      label:{show:true,formatter:function(p){return p.name+'\n'+(p.value>=1e6?(p.value/1e6).toFixed(1)+'M':(p.value/1e3).toFixed(0)+'K');},fontSize:11,color:'#fff',lineHeight:16},
+      data:data,
+      animationDuration:800,animationEasing:'cubicOut'
+    }]
+  });
+})();
+
+/* ══════════════════════════════════════════
+   3. WATERFALL — Cost Buildup: Last Mission
+   ══════════════════════════════════════════ */
+(function(){
+  var chart = init('chartWaterfall');
+  var steps = [
+    {name:'Intake & Parse',cost:0.08},
+    {name:'Context Retrieval',cost:0.15},
+    {name:'Supervisor Plan',cost:0.42},
+    {name:'Researcher Deep-Dive',cost:1.24},
+    {name:'Coder Generation',cost:4.87},
+    {name:'Review Pass 1',cost:0.68},
+    {name:'Coder Revision',cost:2.35},
+    {name:'Final Review',cost:0.52}
+  ];
+
+  var categories = steps.map(function(s){return s.name;});
+  categories.push('Total');
+
+  /* Build invisible base, visible bar, and running total */
+  var base=[], visible=[], totalLine=[], running=0;
+  steps.forEach(function(s){
+    base.push(running);
+    visible.push(s.cost);
+    running += s.cost;
+    totalLine.push(running);
+  });
+  /* Total bar */
+  base.push(0);
+  visible.push(running);
+  totalLine.push(running);
+
+  var totalCost = running;
+
+  chart.setOption({
+    tooltip:Object.assign({trigger:'axis',axisPointer:{type:'shadow'}},ttBase,{
+      formatter:function(p){
+        var idx=p[0].dataIndex;
+        if(idx===steps.length){
+          return '<b>Total Mission Cost</b><br/>$'+totalCost.toFixed(2);
+        }
+        var s=steps[idx];
+        return '<b>'+s.name+'</b><br/>Step cost: <b>$'+s.cost.toFixed(2)+'</b><br/>Running total: <b>$'+totalLine[idx].toFixed(2)+'</b>';
+      }
+    }),
+    grid:{left:60,right:40,top:30,bottom:40},
+    xAxis:{type:'category',data:categories,axisLabel:Object.assign({},axisLabel,{rotate:28,fontSize:10}),axisLine:axisLine,axisTick:{show:false}},
+    yAxis:{type:'value',name:'Cost ($)',nameTextStyle:{color:'#8b8fa3',fontSize:11},axisLabel:Object.assign({},axisLabel,{formatter:'${value}'}),splitLine:splitLine,axisLine:{show:false}},
+    series:[
+      {name:'base',type:'bar',stack:'w',barMaxWidth:34,
+       itemStyle:{color:'transparent'},
+       emphasis:{itemStyle:{color:'transparent'}},
+       data:base,
+       tooltip:{show:false}
+      },
+      {name:'Cost',type:'bar',stack:'w',barMaxWidth:34,
+       itemStyle:{
+         color:function(p){return p.dataIndex===steps.length?C.indigo:C.emerald;},
+         borderRadius:[3,3,0,0]
+       },
+       label:{show:true,position:'top',color:'#e0e0e0',fontSize:10,formatter:function(p){return '$'+p.value.toFixed(2);}},
+       data:visible
+      },
+      {name:'Running Total',type:'line',symbol:'circle',symbolSize:6,
+       lineStyle:{color:C.cyan,width:2,type:'dashed'},
+       itemStyle:{color:C.cyan},
+       label:{show:false},
+       data:totalLine,
+       z:10
+      }
+    ],
+    animationDuration:1000,animationEasing:'cubicOut'
+  });
+})();
+
+/* ══════════════════════════════════════════
+   4. HORIZONTAL BAR — Cost per 1K Tokens by Model
+   ══════════════════════════════════════════ */
+(function(){
+  var chart = init('chartModelCost');
+  var models = ['gpt-4o-mini','claude-haiku-4-5','gpt-4o','claude-sonnet-4-5','claude-opus-4-6'];
+  var input  = [0.15, 0.80, 2.50, 3.00, 15.00];
+  var output = [0.60, 4.00, 10.00, 15.00, 75.00];
+
+  chart.setOption({
+    tooltip:Object.assign({trigger:'axis',axisPointer:{type:'shadow'}},ttBase,{
+      formatter:function(p){
+        return '<b>'+p[0].axisValue+'</b><br/>'+p[0].marker+' Input: <b>$'+p[0].value.toFixed(2)+' / 1K</b><br/>'+p[1].marker+' Output: <b>$'+p[1].value.toFixed(2)+' / 1K</b>';
+      }
+    }),
+    legend:{data:['Input','Output'],textStyle:{color:'#8b8fa3',fontSize:11},top:2},
+    grid:{left:140,right:30,top:38,bottom:24},
+    yAxis:{type:'category',data:models,axisLabel:Object.assign({},axisLabel,{fontSize:11}),axisLine:axisLine,axisTick:{show:false}},
+    xAxis:{type:'log',name:'$ / 1K tokens (log)',nameTextStyle:{color:'#8b8fa3',fontSize:10},axisLabel:Object.assign({},axisLabel,{formatter:function(v){return '$'+v;}}),splitLine:splitLine,axisLine:{show:false}},
+    series:[
+      {name:'Input',type:'bar',barGap:'20%',barMaxWidth:18,
+       itemStyle:{color:C.indigo,borderRadius:[0,3,3,0]},
+       data:input},
+      {name:'Output',type:'bar',barMaxWidth:18,
+       itemStyle:{color:C.cyan,borderRadius:[0,3,3,0]},
+       data:output}
+    ],
+    animationDuration:800,animationEasing:'cubicOut'
+  });
+})();
+
+/* ══════════════════════════════════════════
+   5. PIE — Cost Distribution: Input vs Output vs Cache
+   ══════════════════════════════════════════ */
+(function(){
+  var chart = init('chartPie');
+  chart.setOption({
+    tooltip:Object.assign({trigger:'item'},ttBase,{
+      formatter:function(p){return p.marker+' <b>'+p.name+'</b><br/>$'+p.value.toFixed(2)+' ('+p.percent.toFixed(1)+'%)';}
+    }),
+    legend:{orient:'vertical',right:20,top:'center',textStyle:{color:'#8b8fa3',fontSize:12},itemGap:14},
+    series:[{
+      type:'pie',
+      radius:['42%','72%'],
+      center:['40%','52%'],
+      avoidLabelOverlap:true,
+      padAngle:2,
+      itemStyle:{borderRadius:6,borderColor:'#1a1d27',borderWidth:2},
+      label:{show:true,color:'#e0e0e0',fontSize:12,formatter:'{b}\n${c}',lineHeight:18},
+      labelLine:{lineStyle:{color:'#3a3d47'}},
+      emphasis:{
+        label:{fontSize:14,fontWeight:700},
+        itemStyle:{shadowBlur:12,shadowColor:'rgba(0,0,0,.4)'}
+      },
+      data:[
+        {value:22.85,name:'Input Tokens',itemStyle:{color:C.indigo}},
+        {value:18.62,name:'Output Tokens',itemStyle:{color:C.cyan}},
+        {value:5.76,name:'Cache Read/Write',itemStyle:{color:C.emerald}}
+      ],
+      animationType:'scale',animationDuration:1000,animationEasing:'elasticOut'
+    }]
+  });
+})();
+</script>
+</body>
+</html>

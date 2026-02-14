@@ -30,6 +30,9 @@ For supervisor agent - available types:
 
 NOTE: deep-research-lead and coding-lead require explicit user #commands and cannot be auto-delegated by supervisor.
 
+For mission-lead agent (additional types):
+- pillar-owner: For managing a specific mission pillar (metrics, strategies, TODOs)
+
 For deep-research-lead agent:
 - research-worker: For parallel subtopic exploration
 
@@ -42,7 +45,7 @@ For coding-lead agent:
     properties: {
       type: {
         type: 'string',
-        enum: ['researcher', 'coder', 'writer', 'planner', 'research-worker', 'research-reviewer', 'coding-planner', 'coding-worker', 'coding-fixer', 'custom'],
+        enum: ['researcher', 'coder', 'writer', 'planner', 'pillar-owner', 'research-worker', 'research-reviewer', 'coding-planner', 'coding-worker', 'coding-fixer', 'custom'],
         description: 'The type of specialist agent to spawn. Which types are available depends on the calling agent.',
       },
       mission: {
@@ -74,7 +77,7 @@ For coding-lead agent:
 
     // All valid agent types - the registry will validate who can delegate to whom
     const allValidTypes = [
-      'researcher', 'coder', 'writer', 'planner', 'custom',
+      'researcher', 'coder', 'writer', 'planner', 'pillar-owner', 'custom',
       'research-worker', 'research-reviewer',
       'coding-planner', 'coding-worker', 'coding-fixer',
     ];

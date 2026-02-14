@@ -45,6 +45,8 @@ const mockLLMService = {
   generateStream: vi.fn(),
   generateWithToolsStream: vi.fn(),
   generate: vi.fn(),
+  // runWithContext executes the callback immediately (for tests)
+  runWithContext: vi.fn((ctx, fn) => fn()),
 };
 
 // Mock channel

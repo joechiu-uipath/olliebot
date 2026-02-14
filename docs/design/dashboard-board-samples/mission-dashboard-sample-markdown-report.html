@@ -1,0 +1,860 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Markdown Report Dashboard — OllieBot Agent System</title>
+<script src="https://cdn.jsdelivr.net/npm/marked@15.0.7/lib/marked.umd.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.6.0/dist/echarts.min.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0f1117;
+    --card: #1a1d27;
+    --border: #2a2d37;
+    --text-primary: #e0e0e0;
+    --text-secondary: #8b8fa3;
+    --indigo: #6366f1;
+    --cyan: #22d3ee;
+    --emerald: #10b981;
+    --amber: #f59e0b;
+    --red: #ef4444;
+    --code-bg: #0d1117;
+  }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text-primary);
+    line-height: 1.6;
+    min-height: 100vh;
+    padding: 0;
+  }
+
+  /* ---------- Title bar ---------- */
+  .title-bar {
+    background: linear-gradient(135deg, #1a1d27 0%, #12141c 100%);
+    border-bottom: 1px solid var(--border);
+    padding: 24px 32px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 12px;
+  }
+  .title-bar h1 {
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: -0.3px;
+    color: var(--text-primary);
+    flex: 1 1 100%;
+  }
+  .title-bar h1 span.accent { color: var(--indigo); }
+  .title-bar .meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 24px;
+    width: 100%;
+    align-items: center;
+  }
+  .title-bar .timestamp {
+    font-size: 13px;
+    color: var(--text-secondary);
+    background: rgba(99,102,241,0.1);
+    border: 1px solid rgba(99,102,241,0.25);
+    border-radius: 6px;
+    padding: 4px 12px;
+  }
+  .title-bar .synopsis {
+    font-size: 13px;
+    color: var(--text-secondary);
+    flex: 1;
+  }
+
+  /* ---------- Info panel ---------- */
+  .info-panel {
+    margin: 16px 32px 0;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: rgba(99,102,241,0.06);
+    overflow: hidden;
+    transition: max-height 0.3s ease;
+  }
+  .info-toggle {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 16px;
+    background: none;
+    border: none;
+    color: var(--indigo);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    text-align: left;
+  }
+  .info-toggle:hover { background: rgba(99,102,241,0.08); }
+  .info-toggle .arrow { transition: transform 0.3s ease; display: inline-block; }
+  .info-toggle .arrow.open { transform: rotate(90deg); }
+  .info-body {
+    padding: 0 16px 14px;
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.7;
+    display: none;
+  }
+  .info-body.open { display: block; }
+
+  /* ---------- Layout: TOC sidebar + content ---------- */
+  .layout-wrapper {
+    display: flex;
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 24px 32px 60px;
+    gap: 32px;
+  }
+
+  /* ---------- Table of Contents sidebar ---------- */
+  .toc-sidebar {
+    position: sticky;
+    top: 24px;
+    align-self: flex-start;
+    width: 220px;
+    min-width: 220px;
+    max-height: calc(100vh - 48px);
+    overflow-y: auto;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+  }
+  .toc-sidebar::-webkit-scrollbar { width: 4px; }
+  .toc-sidebar::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+  .toc-sidebar h3 {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: var(--text-secondary);
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+  }
+  .toc-sidebar ul {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+  .toc-sidebar li { margin-bottom: 2px; }
+  .toc-sidebar a {
+    display: block;
+    font-size: 12.5px;
+    color: var(--text-secondary);
+    text-decoration: none;
+    padding: 5px 10px;
+    border-radius: 5px;
+    border-left: 2px solid transparent;
+    transition: all 0.15s ease;
+    line-height: 1.4;
+  }
+  .toc-sidebar a:hover {
+    color: var(--text-primary);
+    background: rgba(99,102,241,0.08);
+    border-left-color: var(--indigo);
+  }
+  .toc-sidebar a.active {
+    color: var(--indigo);
+    background: rgba(99,102,241,0.1);
+    border-left-color: var(--indigo);
+    font-weight: 600;
+  }
+  .toc-sidebar li.toc-h3 a {
+    padding-left: 22px;
+    font-size: 12px;
+  }
+
+  /* TOC toggle for mobile */
+  .toc-mobile-toggle {
+    display: none;
+    position: fixed;
+    bottom: 24px;
+    left: 24px;
+    z-index: 100;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    background: var(--indigo);
+    color: #fff;
+    border: none;
+    font-size: 18px;
+    cursor: pointer;
+    box-shadow: 0 4px 16px rgba(99,102,241,0.4);
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* ---------- Report content area ---------- */
+  .report-content {
+    flex: 1;
+    min-width: 0;
+    max-width: 900px;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 40px 48px;
+  }
+
+  /* ---------- Markdown rendered styles ---------- */
+  .report-content h1 {
+    font-size: 28px;
+    font-weight: 800;
+    color: var(--text-primary);
+    border-bottom: 2px solid var(--indigo);
+    padding-bottom: 14px;
+    margin-bottom: 24px;
+    letter-spacing: -0.4px;
+    line-height: 1.3;
+  }
+  .report-content h2 {
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--cyan);
+    border-bottom: 1px solid var(--border);
+    padding-bottom: 10px;
+    margin-top: 40px;
+    margin-bottom: 18px;
+    letter-spacing: -0.2px;
+  }
+  .report-content h3 {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--emerald);
+    margin-top: 28px;
+    margin-bottom: 12px;
+  }
+  .report-content p {
+    margin-bottom: 14px;
+    color: var(--text-primary);
+    font-size: 14.5px;
+    line-height: 1.75;
+  }
+  .report-content strong {
+    color: #f0f0f0;
+    font-weight: 600;
+  }
+  .report-content em {
+    font-style: italic;
+    color: var(--text-secondary);
+  }
+  .report-content a {
+    color: var(--indigo);
+    text-decoration: none;
+    border-bottom: 1px solid rgba(99,102,241,0.3);
+    transition: border-color 0.2s;
+  }
+  .report-content a:hover {
+    border-bottom-color: var(--indigo);
+  }
+
+  /* Tables */
+  .report-content table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 16px 0 24px;
+    font-size: 13.5px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .report-content thead th {
+    background: rgba(99,102,241,0.12);
+    color: var(--text-primary);
+    font-weight: 600;
+    text-align: left;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    font-size: 12.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+  .report-content tbody td {
+    padding: 9px 14px;
+    border-bottom: 1px solid rgba(42,45,55,0.5);
+    color: var(--text-primary);
+  }
+  .report-content tbody tr:nth-child(even) {
+    background: rgba(255,255,255,0.02);
+  }
+  .report-content tbody tr:hover {
+    background: rgba(99,102,241,0.06);
+  }
+
+  /* Code */
+  .report-content code {
+    background: var(--code-bg);
+    color: var(--cyan);
+    padding: 2px 7px;
+    border-radius: 4px;
+    font-size: 13px;
+    font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace;
+    border: 1px solid rgba(42,45,55,0.6);
+  }
+  .report-content pre {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 18px 20px;
+    overflow-x: auto;
+    margin: 16px 0 24px;
+  }
+  .report-content pre code {
+    background: none;
+    border: none;
+    padding: 0;
+    color: var(--text-primary);
+    font-size: 13px;
+    line-height: 1.6;
+  }
+
+  /* Blockquote */
+  .report-content blockquote {
+    border-left: 3px solid var(--indigo);
+    background: rgba(99,102,241,0.06);
+    padding: 14px 20px;
+    margin: 16px 0 24px;
+    border-radius: 0 8px 8px 0;
+  }
+  .report-content blockquote p {
+    margin-bottom: 0;
+    color: var(--text-secondary);
+    font-size: 13.5px;
+  }
+
+  /* Lists */
+  .report-content ul, .report-content ol {
+    padding-left: 24px;
+    margin-bottom: 16px;
+  }
+  .report-content li {
+    margin-bottom: 8px;
+    font-size: 14.5px;
+    line-height: 1.7;
+    color: var(--text-primary);
+  }
+  .report-content li::marker {
+    color: var(--text-secondary);
+  }
+
+  /* Horizontal rule */
+  .report-content hr {
+    border: none;
+    border-top: 1px solid var(--border);
+    margin: 32px 0;
+  }
+
+  /* ---------- Chart containers ---------- */
+  .chart-embed {
+    width: 100%;
+    height: 340px;
+    margin: 20px 0 28px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: rgba(15,17,23,0.5);
+  }
+
+  /* ---------- Responsive ---------- */
+  @media (max-width: 900px) {
+    .toc-sidebar {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 260px;
+      height: 100vh;
+      max-height: 100vh;
+      border-radius: 0;
+      z-index: 99;
+      border-right: 1px solid var(--border);
+      box-shadow: 4px 0 24px rgba(0,0,0,0.5);
+    }
+    .toc-sidebar.mobile-open {
+      display: block;
+    }
+    .toc-mobile-toggle {
+      display: flex;
+    }
+    .layout-wrapper {
+      padding: 16px;
+    }
+    .report-content {
+      padding: 24px 20px;
+    }
+    .info-panel {
+      margin: 12px 16px 0;
+    }
+    .title-bar {
+      padding: 18px 16px;
+    }
+  }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: #3a3d47; }
+
+  /* Smooth scrolling */
+  html { scroll-behavior: smooth; }
+</style>
+</head>
+<body>
+
+<!-- Title bar -->
+<div class="title-bar">
+  <h1><span class="accent">Mission Execution Report</span> — Markdown Rendered</h1>
+  <div class="meta">
+    <span class="timestamp">2026-02-13 14:32:08 UTC</span>
+    <span class="synopsis">A narrative mission report rendered from markdown, demonstrating mixed rich text and embedded interactive charts.</span>
+  </div>
+</div>
+
+<!-- Info panel -->
+<div class="info-panel">
+  <button class="info-toggle" onclick="toggleInfo(this)">
+    <span class="arrow">&#9654;</span> Interactivity Guide
+  </button>
+  <div class="info-body">
+    This report is rendered from markdown using <strong>marked.js</strong>. Charts are embedded within the narrative.
+    Scroll to read the full report. Hover charts for details.<br><br>
+    <strong>Features demonstrated:</strong> Headings, tables, blockquotes, code blocks, bold/italic text, ordered &amp; unordered lists, horizontal rules, and inline chart embedding &mdash; all parsed from a single markdown template literal by <code>marked.parse()</code>.
+    A table of contents is auto-generated from the rendered headings and displayed in the sidebar.
+  </div>
+</div>
+
+<!-- Mobile TOC toggle -->
+<button class="toc-mobile-toggle" onclick="toggleMobileToc()" title="Table of Contents">&#9776;</button>
+
+<!-- Layout -->
+<div class="layout-wrapper">
+  <!-- TOC sidebar (populated by JS) -->
+  <nav class="toc-sidebar" id="toc-sidebar">
+    <h3>Table of Contents</h3>
+    <ul id="toc-list"></ul>
+  </nav>
+
+  <!-- Report content (populated by marked.js) -->
+  <article class="report-content" id="report-content"></article>
+</div>
+
+<script>
+// ============================================================
+// Markdown source — the entire report as a template literal
+// ============================================================
+const markdownSource = `# Mission Execution Report: OAuth2 Implementation
+
+**Mission ID:** MSN-2026-0213-0047
+**Status:** ✅ Completed
+**Duration:** 23 minutes, 47 seconds
+**Date:** February 13, 2026
+
+---
+
+## Executive Summary
+
+The mission to implement OAuth2 authentication flow was completed successfully across all target services. The **MissionLead** agent coordinated a team of four specialized agents — Researcher, Coder, Reviewer, and Tester — to deliver a fully functional OAuth2 client implementation with PKCE support, refresh token rotation, and secure token storage. The implementation follows *RFC 6749* and *RFC 7636* specifications and integrates seamlessly with the existing Express.js middleware stack.
+
+Overall, the mission consumed **127,450 tokens** across 34 LLM calls, resulting in a total cost of **$0.47** — well under the $1.00 budget ceiling. The \`claude-sonnet-4-20250514\` model was used for all coding and review steps, while \`claude-haiku\` handled the initial research phase. Token efficiency was notably high during the code generation phase, where the Coder agent produced *487 lines of production code* in just 6 LLM round-trips.
+
+The final implementation passed all 24 unit tests and 8 integration tests with a **100% pass rate**. The Reviewer agent identified two potential security issues during the review phase — an insufficient token entropy check and a missing CSRF state parameter validation — both of which were resolved before the final commit. No manual intervention was required at any point during execution.
+
+## Key Metrics
+
+| Metric | Value | Target | Status |
+|--------|-------|--------|--------|
+| LLM Calls | 34 | <50 | ✅ |
+| Total Tokens | 127,450 | <200,000 | ✅ |
+| Input Tokens | 98,200 | — | — |
+| Output Tokens | 29,250 | — | — |
+| Total Cost | $0.47 | <$1.00 | ✅ |
+| Files Modified | 8 | — | — |
+| Files Created | 3 | — | — |
+| Lines Added | 487 | — | — |
+| Lines Removed | 12 | — | — |
+| Test Pass Rate | 100% | 100% | ✅ |
+| Mission Duration | 23m 47s | <45m | ✅ |
+
+## Agent Activity Breakdown
+
+<div id="chart-agent-breakdown" class="chart-embed"></div>
+
+The **Coder** agent handled the majority of the workload, consuming 52% of the total tokens across 14 LLM calls. This is expected for an implementation-heavy mission. The **Researcher** agent was the most token-efficient, completing its phase in just 4 calls using the lighter \`claude-haiku\` model at a fraction of the cost. The **Reviewer** agent, while using only 18% of tokens, was critical in catching the two security issues noted above. The **MissionLead** orchestrated task delegation and consumed the least tokens overall, primarily for planning and status checks.
+
+### Token Distribution by Agent
+
+- **Coder** — 66,274 tokens (52%) across 14 calls — \`claude-sonnet-4-20250514\`
+- **Reviewer** — 22,941 tokens (18%) across 8 calls — \`claude-sonnet-4-20250514\`
+- **Researcher** — 21,677 tokens (17%) across 4 calls — \`claude-haiku\`
+- **MissionLead** — 10,196 tokens (8%) across 5 calls — \`claude-sonnet-4-20250514\`
+- **Tester** — 6,362 tokens (5%) across 3 calls — \`claude-sonnet-4-20250514\`
+
+## Token Usage Analysis
+
+<div id="chart-token-usage" class="chart-embed"></div>
+
+Token consumption peaked during the **code generation phase** (steps 4–8), where the Coder agent was producing the OAuth2 client, middleware, and route handlers. A secondary peak occurred during the **review phase** (steps 9–10) as the Reviewer agent analyzed the full codebase diff. The research phase was deliberately kept lightweight by using the Haiku model, contributing to the mission's cost efficiency. The testing phase at the end shows a modest spike as the Tester agent generated and executed the test suite.
+
+### Cost Breakdown by Phase
+
+| Phase | Tokens | Cost | % of Total |
+|-------|--------|------|------------|
+| Research | 21,677 | $0.03 | 6.4% |
+| Planning | 10,196 | $0.04 | 8.5% |
+| Implementation | 66,274 | $0.27 | 57.4% |
+| Review | 22,941 | $0.09 | 19.1% |
+| Testing | 6,362 | $0.04 | 8.5% |
+
+## Step-by-Step Execution Log
+
+1. **Research Phase — OAuth2 Specification Analysis** — The Researcher agent analyzed the OAuth2 and PKCE specifications from RFC 6749 and RFC 7636, producing a concise summary of required endpoints, grant types, and security considerations. *Duration: 1m 12s*
+2. **Research Phase — Existing Codebase Scan** — The Researcher scanned the current authentication module to identify integration points and existing session management patterns. *Duration: 0m 48s*
+3. **Architecture Design — Implementation Plan** — The MissionLead drafted a detailed implementation plan covering file structure, module boundaries, and the sequence of code changes. The plan specified 8 files to modify and 3 new files to create. *Duration: 1m 34s*
+4. **Implementation — OAuth2 Client Core** — The Coder agent created \`src/auth/oauth2.ts\` with the core OAuth2 client class, including authorization URL generation, token exchange, and PKCE challenge/verifier utilities. *Duration: 3m 22s*
+5. **Implementation — Token Storage Service** — The Coder implemented \`src/auth/tokenStore.ts\` for secure token storage with AES-256-GCM encryption at rest and automatic refresh token rotation. *Duration: 2m 15s*
+6. **Implementation — Authentication Middleware** — The Coder updated \`src/auth/middleware.ts\` to integrate OAuth2 token validation, adding bearer token extraction and JWT verification. *Duration: 2m 41s*
+7. **Implementation — Route Handlers** — The Coder created OAuth2 callback and login route handlers in \`src/routes/auth.ts\`, wiring up the full authorization code flow. *Duration: 2m 08s*
+8. **Implementation — Configuration & Types** — The Coder updated configuration schemas and TypeScript interfaces to support OAuth2 provider settings. *Duration: 1m 47s*
+9. **Code Review — Security Audit** — The Reviewer agent performed a full security-focused review of the diff. Identified **Issue #1:** insufficient entropy in PKCE verifier generation (using 32 bytes instead of recommended 43). *Duration: 2m 56s*
+10. **Code Review — Fix Verification** — After the Coder patched Issue #1, the Reviewer identified **Issue #2:** missing CSRF state parameter validation in the callback handler. Both issues were resolved and re-verified. *Duration: 1m 33s*
+11. **Testing — Unit Test Generation** — The Tester agent generated 24 unit tests covering the OAuth2 client, token store, and middleware modules using Jest. *Duration: 1m 52s*
+12. **Testing — Integration Test Execution** — The Tester ran 8 integration tests simulating the full OAuth2 flow with a mock authorization server. All tests passed on the first run. *Duration: 1m 19s*
+
+## Findings & Recommendations
+
+- The mission completed **under budget** at 47% of allocated tokens and 53% of the time ceiling
+- Consider using \`claude-haiku\` for research steps to reduce cost — this mission saved approximately **$0.12** by using Haiku for the research phase
+- The review phase identified **2 security issues** caught before merge, validating the multi-agent review workflow
+- Token consumption could be further optimized by caching the specification documents for reuse across missions
+- The \`claude-sonnet-4-20250514\` model demonstrated strong performance for both code generation and code review tasks
+- PKCE implementation should be extracted into a shared utility for reuse by future OAuth-related missions
+
+> **Note:** This report was auto-generated from trace data snapshot v1.0.3. All metrics are derived from the mission execution log and LLM usage telemetry. Token counts are exact values reported by the API; cost calculations use the pricing schedule effective 2026-02-01.
+
+## Appendix: Code Changes
+
+### Files Modified
+
+- \`src/auth/middleware.ts\` — Updated authentication middleware to support OAuth2 bearer token extraction, JWT verification, and session hydration from access tokens
+- \`src/auth/session.ts\` — Extended session interface to include OAuth2 token metadata and refresh token expiry timestamps
+- \`src/config/auth.ts\` — Added OAuth2 provider configuration schema with support for multiple identity providers
+- \`src/config/index.ts\` — Registered OAuth2 configuration module in the main configuration registry
+- \`src/routes/index.ts\` — Added OAuth2 auth routes to the Express router mount table
+- \`src/types/auth.ts\` — Extended authentication type definitions with OAuth2-specific interfaces and enums
+- \`src/utils/crypto.ts\` — Added PKCE challenge generation and token encryption utility functions
+- \`package.json\` — Added \`jose\` (v5.2.0) dependency for JWT handling
+
+### Files Created
+
+- \`src/auth/oauth2.ts\` — Core OAuth2 client implementation (Authorization Code + PKCE flow)
+- \`src/auth/tokenStore.ts\` — Encrypted token storage service with automatic refresh rotation
+- \`src/routes/auth.ts\` — OAuth2 login initiation and callback route handlers
+
+### Sample: OAuth2 Client Constructor
+
+\`\`\`typescript
+export class OAuth2Client {
+  private config: OAuth2Config;
+  private tokenStore: TokenStore;
+
+  constructor(config: OAuth2Config) {
+    this.config = config;
+    this.tokenStore = new TokenStore(config.encryptionKey);
+  }
+
+  async getAuthorizationUrl(state: string): Promise<string> {
+    const { verifier, challenge } = generatePKCEPair();
+    await this.tokenStore.storeVerifier(state, verifier);
+    const params = new URLSearchParams({
+      response_type: 'code',
+      client_id: this.config.clientId,
+      redirect_uri: this.config.redirectUri,
+      scope: this.config.scopes.join(' '),
+      state,
+      code_challenge: challenge,
+      code_challenge_method: 'S256',
+    });
+    return \`\${this.config.authorizationEndpoint}?\${params}\`;
+  }
+}
+\`\`\`
+
+---
+
+*End of report. Generated by OllieBot Mission Reporting System v1.0.3.*
+`;
+
+// ============================================================
+// Render markdown with marked.js
+// ============================================================
+const reportEl = document.getElementById('report-content');
+reportEl.innerHTML = marked.parse(markdownSource);
+
+// ============================================================
+// Auto-generate Table of Contents from rendered headings
+// ============================================================
+function buildTOC() {
+  const headings = reportEl.querySelectorAll('h2, h3');
+  const tocList = document.getElementById('toc-list');
+  tocList.innerHTML = '';
+
+  headings.forEach((heading, i) => {
+    const id = 'section-' + i;
+    heading.id = id;
+
+    const li = document.createElement('li');
+    li.className = heading.tagName === 'H3' ? 'toc-h3' : 'toc-h2';
+
+    const a = document.createElement('a');
+    a.href = '#' + id;
+    a.textContent = heading.textContent;
+    a.dataset.target = id;
+
+    li.appendChild(a);
+    tocList.appendChild(li);
+  });
+}
+buildTOC();
+
+// Highlight active TOC link on scroll
+function updateActiveTOC() {
+  const links = document.querySelectorAll('#toc-list a');
+  const scrollY = window.scrollY + 80;
+
+  let activeId = '';
+  links.forEach(link => {
+    const section = document.getElementById(link.dataset.target);
+    if (section && section.offsetTop <= scrollY) {
+      activeId = link.dataset.target;
+    }
+  });
+
+  links.forEach(link => {
+    link.classList.toggle('active', link.dataset.target === activeId);
+  });
+}
+window.addEventListener('scroll', updateActiveTOC, { passive: true });
+updateActiveTOC();
+
+// ============================================================
+// Replace chart placeholders with ECharts instances
+// ============================================================
+
+// --- Agent Breakdown: Donut Chart ---
+const agentChartEl = document.getElementById('chart-agent-breakdown');
+if (agentChartEl) {
+  const agentChart = echarts.init(agentChartEl);
+  const agentOption = {
+    backgroundColor: 'transparent',
+    tooltip: {
+      trigger: 'item',
+      backgroundColor: '#1a1d27',
+      borderColor: '#2a2d37',
+      textStyle: { color: '#e0e0e0', fontSize: 13 },
+      formatter: '{b}<br/>Tokens: {c} ({d}%)'
+    },
+    legend: {
+      orient: 'vertical',
+      right: 24,
+      top: 'center',
+      textStyle: { color: '#8b8fa3', fontSize: 12 },
+      itemWidth: 12,
+      itemHeight: 12,
+      itemGap: 14
+    },
+    series: [{
+      name: 'Agent Tokens',
+      type: 'pie',
+      radius: ['45%', '72%'],
+      center: ['35%', '50%'],
+      avoidLabelOverlap: false,
+      itemStyle: {
+        borderRadius: 6,
+        borderColor: '#1a1d27',
+        borderWidth: 3
+      },
+      label: {
+        show: false,
+        position: 'center'
+      },
+      emphasis: {
+        label: {
+          show: true,
+          fontSize: 16,
+          fontWeight: 'bold',
+          color: '#e0e0e0',
+          formatter: '{b}\n{d}%'
+        }
+      },
+      labelLine: { show: false },
+      data: [
+        { value: 66274, name: 'Coder',       itemStyle: { color: '#6366f1' } },
+        { value: 22941, name: 'Reviewer',     itemStyle: { color: '#22d3ee' } },
+        { value: 21677, name: 'Researcher',   itemStyle: { color: '#10b981' } },
+        { value: 10196, name: 'MissionLead',  itemStyle: { color: '#f59e0b' } },
+        { value: 6362,  name: 'Tester',       itemStyle: { color: '#a78bfa' } }
+      ]
+    }]
+  };
+  agentChart.setOption(agentOption);
+  window.addEventListener('resize', () => agentChart.resize());
+}
+
+// --- Token Usage: Area Chart over mission time ---
+const tokenChartEl = document.getElementById('chart-token-usage');
+if (tokenChartEl) {
+  const tokenChart = echarts.init(tokenChartEl);
+
+  const steps = [
+    'Start', 'Research 1', 'Research 2', 'Planning',
+    'Impl: Core', 'Impl: Store', 'Impl: MW', 'Impl: Routes', 'Impl: Config',
+    'Review 1', 'Review 2', 'Test: Unit', 'Test: Integ'
+  ];
+  const inputTokens  = [0, 4800, 4200, 7800, 14200, 10100, 12600, 9800, 8200, 12400, 6800, 4500, 2800];
+  const outputTokens = [0, 1400, 1100, 2400, 4800,  3200,  3900,  3600, 2700, 3200,  1600, 1200, 1150];
+
+  // Cumulative cost
+  const cumulativeCost = [];
+  let runningCost = 0;
+  for (let i = 0; i < steps.length; i++) {
+    // Approximate pricing: input $3/M, output $15/M for sonnet; haiku cheaper
+    const isHaiku = i === 1 || i === 2;
+    const inputRate = isHaiku ? 0.25 : 3.0;
+    const outputRate = isHaiku ? 1.25 : 15.0;
+    runningCost += (inputTokens[i] * inputRate + outputTokens[i] * outputRate) / 1_000_000;
+    cumulativeCost.push(parseFloat(runningCost.toFixed(3)));
+  }
+
+  const tokenOption = {
+    backgroundColor: 'transparent',
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: '#1a1d27',
+      borderColor: '#2a2d37',
+      textStyle: { color: '#e0e0e0', fontSize: 12 },
+      axisPointer: { type: 'cross', crossStyle: { color: '#3a3d47' } },
+      formatter: function(params) {
+        let tip = '<strong>' + params[0].axisValue + '</strong><br/>';
+        params.forEach(p => {
+          const dot = '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + p.color + ';margin-right:6px;"></span>';
+          const val = p.seriesName === 'Cumulative Cost' ? '$' + p.value : p.value.toLocaleString();
+          tip += dot + p.seriesName + ': ' + val + '<br/>';
+        });
+        return tip;
+      }
+    },
+    legend: {
+      top: 8,
+      textStyle: { color: '#8b8fa3', fontSize: 11 },
+      itemWidth: 14,
+      itemHeight: 8,
+      itemGap: 20
+    },
+    grid: {
+      left: 60,
+      right: 60,
+      top: 44,
+      bottom: 48
+    },
+    xAxis: {
+      type: 'category',
+      data: steps,
+      axisLabel: { color: '#8b8fa3', fontSize: 10, rotate: 30 },
+      axisLine: { lineStyle: { color: '#2a2d37' } },
+      axisTick: { show: false }
+    },
+    yAxis: [
+      {
+        type: 'value',
+        name: 'Tokens',
+        nameTextStyle: { color: '#8b8fa3', fontSize: 11 },
+        axisLabel: { color: '#8b8fa3', fontSize: 11, formatter: v => (v / 1000) + 'k' },
+        splitLine: { lineStyle: { color: '#2a2d37', type: 'dashed' } },
+        axisLine: { show: false }
+      },
+      {
+        type: 'value',
+        name: 'Cost ($)',
+        nameTextStyle: { color: '#8b8fa3', fontSize: 11 },
+        axisLabel: { color: '#8b8fa3', fontSize: 11, formatter: v => '$' + v.toFixed(2) },
+        splitLine: { show: false },
+        axisLine: { show: false }
+      }
+    ],
+    series: [
+      {
+        name: 'Input Tokens',
+        type: 'bar',
+        stack: 'tokens',
+        data: inputTokens,
+        itemStyle: { color: 'rgba(99,102,241,0.7)', borderRadius: [0, 0, 0, 0] },
+        emphasis: { itemStyle: { color: '#6366f1' } }
+      },
+      {
+        name: 'Output Tokens',
+        type: 'bar',
+        stack: 'tokens',
+        data: outputTokens,
+        itemStyle: { color: 'rgba(34,211,238,0.7)', borderRadius: [3, 3, 0, 0] },
+        emphasis: { itemStyle: { color: '#22d3ee' } }
+      },
+      {
+        name: 'Cumulative Cost',
+        type: 'line',
+        yAxisIndex: 1,
+        data: cumulativeCost,
+        smooth: true,
+        symbol: 'circle',
+        symbolSize: 6,
+        lineStyle: { color: '#10b981', width: 2 },
+        itemStyle: { color: '#10b981' },
+        areaStyle: {
+          color: {
+            type: 'linear',
+            x: 0, y: 0, x2: 0, y2: 1,
+            colorStops: [
+              { offset: 0, color: 'rgba(16,185,129,0.25)' },
+              { offset: 1, color: 'rgba(16,185,129,0.02)' }
+            ]
+          }
+        }
+      }
+    ]
+  };
+  tokenChart.setOption(tokenOption);
+  window.addEventListener('resize', () => tokenChart.resize());
+}
+
+// ============================================================
+// UI helpers
+// ============================================================
+function toggleInfo(btn) {
+  const body = btn.nextElementSibling;
+  const arrow = btn.querySelector('.arrow');
+  body.classList.toggle('open');
+  arrow.classList.toggle('open');
+}
+
+function toggleMobileToc() {
+  const sidebar = document.getElementById('toc-sidebar');
+  sidebar.classList.toggle('mobile-open');
+}
+
+// Close mobile TOC when clicking a link
+document.querySelectorAll('#toc-list a').forEach(a => {
+  a.addEventListener('click', () => {
+    document.getElementById('toc-sidebar').classList.remove('mobile-open');
+  });
+});
+</script>
+</body>
+</html>

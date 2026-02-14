@@ -1,0 +1,751 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cost Breakdown — Hierarchical Drill-Down Analysis</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.6.0/dist/echarts.min.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: #0f1117;
+    color: #e0e0e0;
+    font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, sans-serif;
+    line-height: 1.6;
+    min-height: 100vh;
+    padding: 24px 32px 48px;
+  }
+
+  .header { margin-bottom: 28px; }
+  .header h1 {
+    font-size: 26px;
+    font-weight: 700;
+    color: #e0e0e0;
+    margin-bottom: 6px;
+  }
+  .header .timestamp {
+    font-size: 13px;
+    color: #8b8fa3;
+    margin-bottom: 10px;
+  }
+  .header .synopsis {
+    font-size: 14px;
+    color: #8b8fa3;
+    max-width: 900px;
+    line-height: 1.55;
+  }
+
+  .instructions-bar {
+    background: linear-gradient(135deg, rgba(99,102,241,0.12), rgba(34,211,238,0.08));
+    border: 1px solid rgba(99,102,241,0.25);
+    border-radius: 8px;
+    padding: 12px 20px;
+    margin-bottom: 24px;
+    font-size: 13px;
+    color: #a78bfa;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .instructions-bar .icon {
+    font-size: 18px;
+    flex-shrink: 0;
+  }
+
+  .kpi-row {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+
+  .kpi-card {
+    background: #1a1d27;
+    border: 1px solid #2a2d37;
+    border-radius: 10px;
+    padding: 20px 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .kpi-card .kpi-label {
+    font-size: 12px;
+    color: #8b8fa3;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    font-weight: 600;
+  }
+  .kpi-card .kpi-value {
+    font-size: 30px;
+    font-weight: 700;
+    line-height: 1.15;
+  }
+  .kpi-card .kpi-sub {
+    font-size: 12px;
+    color: #8b8fa3;
+  }
+  .kpi-card:nth-child(1) .kpi-value { color: #6366f1; }
+  .kpi-card:nth-child(2) .kpi-value { color: #22d3ee; }
+  .kpi-card:nth-child(3) .kpi-value { color: #f59e0b; }
+
+  .card {
+    background: #1a1d27;
+    border: 1px solid #2a2d37;
+    border-radius: 10px;
+    padding: 20px;
+    margin-bottom: 20px;
+  }
+  .card-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: #e0e0e0;
+    margin-bottom: 14px;
+  }
+  .card-subtitle {
+    font-size: 12px;
+    color: #8b8fa3;
+    margin-top: -10px;
+    margin-bottom: 14px;
+  }
+
+  .two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+    margin-bottom: 20px;
+  }
+
+  .chart-container { width: 100%; }
+
+  /* Drill bar button */
+  .drill-back-btn {
+    background: rgba(99,102,241,0.15);
+    border: 1px solid rgba(99,102,241,0.3);
+    color: #a78bfa;
+    padding: 5px 14px;
+    border-radius: 6px;
+    font-size: 12px;
+    cursor: pointer;
+    display: none;
+    margin-bottom: 10px;
+    transition: background 0.2s;
+  }
+  .drill-back-btn:hover {
+    background: rgba(99,102,241,0.28);
+  }
+
+  /* Table styles */
+  .table-wrapper { overflow-x: auto; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  table thead th {
+    background: #12141c;
+    color: #8b8fa3;
+    font-weight: 600;
+    text-transform: uppercase;
+    font-size: 11px;
+    letter-spacing: 0.5px;
+    padding: 10px 14px;
+    text-align: left;
+    border-bottom: 1px solid #2a2d37;
+    cursor: pointer;
+    user-select: none;
+    position: relative;
+    white-space: nowrap;
+  }
+  table thead th:hover { color: #e0e0e0; }
+  table thead th .sort-arrow {
+    margin-left: 4px;
+    font-size: 10px;
+    color: #6366f1;
+  }
+  table tbody tr { border-bottom: 1px solid #1e2130; }
+  table tbody tr:nth-child(even) { background: rgba(255,255,255,0.015); }
+  table tbody tr:nth-child(odd) { background: transparent; }
+  table tbody tr:hover { background: rgba(99,102,241,0.06); }
+  table tbody td {
+    padding: 9px 14px;
+    color: #e0e0e0;
+    white-space: nowrap;
+  }
+  .rank-gold {
+    color: #f59e0b !important;
+    font-weight: 700;
+  }
+  .rank-gold td { color: #f59e0b !important; }
+  td.cost-col { font-weight: 600; color: #f43f5e; }
+  td.tokens-col { color: #22d3ee; }
+
+  @media (max-width: 900px) {
+    .kpi-row { grid-template-columns: 1fr; }
+    .two-col { grid-template-columns: 1fr; }
+    body { padding: 16px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<div class="header">
+  <h1>Cost Breakdown — Hierarchical Drill-Down Analysis</h1>
+  <div class="timestamp" id="timestamp"></div>
+  <div class="synopsis">Multi-level cost analysis with interactive drill-down from department to team to project to individual mission costs. Explore spending patterns across categories, agents, and models through treemap, sunburst, and bar-chart drill-down visualizations.</div>
+</div>
+
+<!-- INTERACTIVITY INSTRUCTIONS -->
+<div class="instructions-bar">
+  <span class="icon">&#9432;</span>
+  <span>Click treemap/sunburst segments to drill down into sub-categories. Click breadcrumb to navigate back up. Hover for cost details. Right-click treemap or use breadcrumb to go back.</span>
+</div>
+
+<!-- KPI CARDS -->
+<div class="kpi-row">
+  <div class="kpi-card">
+    <span class="kpi-label">Total Monthly Cost</span>
+    <span class="kpi-value">$1,247.83</span>
+    <span class="kpi-sub">+8.3% vs last month</span>
+  </div>
+  <div class="kpi-card">
+    <span class="kpi-label">Cost per Mission</span>
+    <span class="kpi-value">$5.12</span>
+    <span class="kpi-sub">Avg across 244 missions</span>
+  </div>
+  <div class="kpi-card">
+    <span class="kpi-label">Most Expensive Category</span>
+    <span class="kpi-value" style="font-size:24px;">Code Generation</span>
+    <span class="kpi-sub">$423 — 33.9% of total</span>
+  </div>
+</div>
+
+<!-- TREEMAP (full width) -->
+<div class="card">
+  <div class="card-title">Cost by Category &rarr; Agent &rarr; Model</div>
+  <div class="card-subtitle">Click a segment to drill down. Use breadcrumb at top or right-click to navigate back.</div>
+  <div id="treemap-chart" class="chart-container" style="height:400px;"></div>
+</div>
+
+<!-- SUNBURST + DRILL BAR (two column) -->
+<div class="two-col">
+  <div class="card">
+    <div class="card-title">Cost Distribution Sunburst</div>
+    <div class="card-subtitle">Inner ring = Category, Middle = Agent, Outer = Model. Click to zoom.</div>
+    <div id="sunburst-chart" class="chart-container" style="height:420px;"></div>
+  </div>
+  <div class="card">
+    <div class="card-title">Cost by Department</div>
+    <div class="card-subtitle">Click a department bar to drill into its teams.</div>
+    <button class="drill-back-btn" id="bar-back-btn" onclick="barDrillBack()">&#8592; Back to All Departments</button>
+    <div id="bar-drill-chart" class="chart-container" style="height:380px;"></div>
+  </div>
+</div>
+
+<!-- STACKED HORIZONTAL BAR (full width) -->
+<div class="card">
+  <div class="card-title">Cost Composition per Mission Type</div>
+  <div class="card-subtitle">Stacked by cost component: LLM Input Tokens, LLM Output Tokens, Tool Execution, Overhead.</div>
+  <div id="stacked-bar-chart" class="chart-container" style="height:320px;"></div>
+</div>
+
+<!-- TABLE -->
+<div class="card">
+  <div class="card-title">Top 20 Costliest Missions</div>
+  <div class="table-wrapper">
+    <table id="missions-table">
+      <thead>
+        <tr>
+          <th data-col="rank">Rank <span class="sort-arrow"></span></th>
+          <th data-col="mission">Mission <span class="sort-arrow"></span></th>
+          <th data-col="type">Type <span class="sort-arrow"></span></th>
+          <th data-col="agent">Agent <span class="sort-arrow"></span></th>
+          <th data-col="duration">Duration <span class="sort-arrow"></span></th>
+          <th data-col="tokens">Tokens <span class="sort-arrow"></span></th>
+          <th data-col="cost">Cost <span class="sort-arrow"></span></th>
+        </tr>
+      </thead>
+      <tbody id="missions-tbody"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+// ── Timestamp ──
+document.getElementById('timestamp').textContent =
+  'Generated ' + new Date().toLocaleString('en-US', {
+    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+    hour: '2-digit', minute: '2-digit', second: '2-digit'
+  });
+
+// ── Color palette ──
+const ACCENT = {
+  purple: '#6366f1', cyan: '#22d3ee', green: '#10b981',
+  amber: '#f59e0b', rose: '#f43f5e', lavender: '#a78bfa'
+};
+const CAT_COLORS = {
+  'Code Generation': '#6366f1',
+  'Research':        '#22d3ee',
+  'Bug Fix':         '#f43f5e',
+  'Documentation':   '#10b981',
+  'Testing':         '#f59e0b'
+};
+
+// ── Hierarchical data ──
+function buildTreeData() {
+  return [
+    { name: 'Code Generation', value: 423, itemStyle: { color: '#6366f1' }, children: [
+      { name: 'Coder', value: 245, children: [
+        { name: 'claude-opus-4-6', value: 142 },
+        { name: 'claude-sonnet-4-5', value: 68 },
+        { name: 'claude-haiku-4-5', value: 35 }
+      ]},
+      { name: 'MissionLead', value: 108, children: [
+        { name: 'claude-opus-4-6', value: 62 },
+        { name: 'claude-sonnet-4-5', value: 31 },
+        { name: 'claude-haiku-4-5', value: 15 }
+      ]},
+      { name: 'Reviewer', value: 70, children: [
+        { name: 'claude-sonnet-4-5', value: 42 },
+        { name: 'claude-haiku-4-5', value: 28 }
+      ]}
+    ]},
+    { name: 'Research', value: 312, itemStyle: { color: '#22d3ee' }, children: [
+      { name: 'Researcher', value: 198, children: [
+        { name: 'claude-opus-4-6', value: 118 },
+        { name: 'claude-sonnet-4-5', value: 54 },
+        { name: 'claude-haiku-4-5', value: 26 }
+      ]},
+      { name: 'Coder', value: 72, children: [
+        { name: 'claude-sonnet-4-5', value: 48 },
+        { name: 'claude-haiku-4-5', value: 24 }
+      ]},
+      { name: 'MissionLead', value: 42, children: [
+        { name: 'claude-sonnet-4-5', value: 28 },
+        { name: 'claude-haiku-4-5', value: 14 }
+      ]}
+    ]},
+    { name: 'Bug Fix', value: 246, itemStyle: { color: '#f43f5e' }, children: [
+      { name: 'Coder', value: 156, children: [
+        { name: 'claude-opus-4-6', value: 88 },
+        { name: 'claude-sonnet-4-5', value: 45 },
+        { name: 'claude-haiku-4-5', value: 23 }
+      ]},
+      { name: 'Reviewer', value: 58, children: [
+        { name: 'claude-sonnet-4-5', value: 36 },
+        { name: 'claude-haiku-4-5', value: 22 }
+      ]},
+      { name: 'MissionLead', value: 32, children: [
+        { name: 'claude-opus-4-6', value: 18 },
+        { name: 'claude-haiku-4-5', value: 14 }
+      ]}
+    ]},
+    { name: 'Documentation', value: 148, itemStyle: { color: '#10b981' }, children: [
+      { name: 'Researcher', value: 72, children: [
+        { name: 'claude-sonnet-4-5', value: 48 },
+        { name: 'claude-haiku-4-5', value: 24 }
+      ]},
+      { name: 'Coder', value: 46, children: [
+        { name: 'claude-sonnet-4-5', value: 30 },
+        { name: 'claude-haiku-4-5', value: 16 }
+      ]},
+      { name: 'MissionLead', value: 30, children: [
+        { name: 'claude-haiku-4-5', value: 30 }
+      ]}
+    ]},
+    { name: 'Testing', value: 118.83, itemStyle: { color: '#f59e0b' }, children: [
+      { name: 'Coder', value: 62, children: [
+        { name: 'claude-sonnet-4-5', value: 38 },
+        { name: 'claude-haiku-4-5', value: 24 }
+      ]},
+      { name: 'Reviewer', value: 36.83, children: [
+        { name: 'claude-sonnet-4-5', value: 22.83 },
+        { name: 'claude-haiku-4-5', value: 14 }
+      ]},
+      { name: 'MissionLead', value: 20, children: [
+        { name: 'claude-haiku-4-5', value: 20 }
+      ]}
+    ]}
+  ];
+}
+
+// Propagate category color down into children
+function colorizeChildren(nodes, parentColor) {
+  nodes.forEach(function(n) {
+    if (parentColor && !n.itemStyle) n.itemStyle = { color: parentColor };
+    else if (parentColor && n.itemStyle && !n.itemStyle.color) n.itemStyle.color = parentColor;
+    var c = (n.itemStyle && n.itemStyle.color) ? n.itemStyle.color : parentColor;
+    if (n.children) colorizeChildren(n.children, c);
+  });
+}
+
+var treeData = buildTreeData();
+colorizeChildren(treeData, null);
+
+// ─────────────────────────────────────────────
+// 1. TREEMAP
+// ─────────────────────────────────────────────
+var treemapChart = echarts.init(document.getElementById('treemap-chart'));
+treemapChart.setOption({
+  tooltip: {
+    backgroundColor: '#1a1d27',
+    borderColor: '#2a2d37',
+    textStyle: { color: '#e0e0e0', fontSize: 12 },
+    formatter: function(info) {
+      var val = info.value;
+      var path = info.treePathInfo.map(function(n){ return n.name; }).filter(Boolean).join(' > ');
+      return '<div style="font-weight:600;margin-bottom:4px">' + path + '</div>' +
+             '<div>Cost: <span style="color:#f59e0b;font-weight:700">$' + val.toFixed(2) + '</span></div>';
+    }
+  },
+  series: [{
+    type: 'treemap',
+    roam: false,
+    nodeClick: 'zoomToNode',
+    breadcrumb: {
+      show: true,
+      top: 4,
+      left: 6,
+      itemStyle: { color: '#1a1d27', borderColor: '#2a2d37', textStyle: { color: '#8b8fa3' } },
+      emphasis: { itemStyle: { color: '#2a2d37' } }
+    },
+    label: {
+      show: true,
+      formatter: function(p) { return p.name + '\n$' + p.value.toFixed(0); },
+      fontSize: 12,
+      color: '#e0e0e0'
+    },
+    upperLabel: { show: true, height: 24, color: '#e0e0e0', fontSize: 11, fontWeight: 600 },
+    itemStyle: { borderColor: '#0f1117', borderWidth: 2, gapWidth: 2 },
+    levels: [
+      { itemStyle: { borderColor: '#0f1117', borderWidth: 4, gapWidth: 4 },
+        upperLabel: { show: false } },
+      { itemStyle: { borderColor: '#0f1117', borderWidth: 2, gapWidth: 2 },
+        colorMappingBy: 'value', upperLabel: { show: true } },
+      { itemStyle: { borderColor: '#0f1117', borderWidth: 1, gapWidth: 1 },
+        colorSaturation: [0.35, 0.6] }
+    ],
+    data: JSON.parse(JSON.stringify(treeData))
+  }]
+});
+
+// ─────────────────────────────────────────────
+// 2. SUNBURST
+// ─────────────────────────────────────────────
+function buildSunburstData() {
+  var cats = buildTreeData();
+  cats.forEach(function(cat) {
+    var base = cat.itemStyle.color;
+    cat.itemStyle = { color: base };
+    if (cat.children) cat.children.forEach(function(agent, ai) {
+      agent.itemStyle = { color: adjustBrightness(base, -15 + ai * 12) };
+      if (agent.children) agent.children.forEach(function(model, mi) {
+        model.itemStyle = { color: adjustBrightness(base, -30 + mi * 18) };
+      });
+    });
+  });
+  return cats;
+}
+
+function adjustBrightness(hex, pct) {
+  var r = parseInt(hex.slice(1,3),16), g = parseInt(hex.slice(3,5),16), b = parseInt(hex.slice(5,7),16);
+  r = Math.min(255, Math.max(0, r + Math.round(r * pct / 100)));
+  g = Math.min(255, Math.max(0, g + Math.round(g * pct / 100)));
+  b = Math.min(255, Math.max(0, b + Math.round(b * pct / 100)));
+  return '#' + [r,g,b].map(function(v){ return v.toString(16).padStart(2,'0'); }).join('');
+}
+
+var sunburstChart = echarts.init(document.getElementById('sunburst-chart'));
+sunburstChart.setOption({
+  tooltip: {
+    backgroundColor: '#1a1d27',
+    borderColor: '#2a2d37',
+    textStyle: { color: '#e0e0e0', fontSize: 12 },
+    formatter: function(p) {
+      var path = p.treePathInfo.map(function(n){ return n.name; }).filter(Boolean).join(' > ');
+      return '<div style="font-weight:600;margin-bottom:4px">' + path + '</div>' +
+             '<div>Cost: <span style="color:#f59e0b;font-weight:700">$' + (p.value || 0).toFixed(2) + '</span></div>';
+    }
+  },
+  series: [{
+    type: 'sunburst',
+    data: buildSunburstData(),
+    radius: ['12%', '92%'],
+    nodeClick: 'rootToNode',
+    sort: 'desc',
+    emphasis: { focus: 'ancestor' },
+    label: {
+      rotate: 'radial',
+      fontSize: 10,
+      color: '#e0e0e0',
+      formatter: function(p) {
+        return p.name.length > 12 ? p.name.slice(0,11) + '..' : p.name;
+      }
+    },
+    levels: [
+      {},
+      { r0: '12%', r: '38%', label: { fontSize: 11, fontWeight: 600 },
+        itemStyle: { borderWidth: 2, borderColor: '#0f1117' } },
+      { r0: '38%', r: '65%', label: { fontSize: 10 },
+        itemStyle: { borderWidth: 1.5, borderColor: '#0f1117' } },
+      { r0: '65%', r: '92%', label: { fontSize: 9, align: 'right' },
+        itemStyle: { borderWidth: 1, borderColor: '#0f1117' } }
+    ]
+  }]
+});
+
+// ─────────────────────────────────────────────
+// 3. BAR DRILL-DOWN
+// ─────────────────────────────────────────────
+var barDrillChart = echarts.init(document.getElementById('bar-drill-chart'));
+var barDrillLevel = 'all';
+var barDrillDept = '';
+
+var deptData = {
+  categories: ['Engineering', 'Product', 'Operations'],
+  values: [820, 285, 142.83],
+  colors: ['#6366f1', '#22d3ee', '#10b981']
+};
+var teamData = {
+  'Engineering': {
+    categories: ['Frontend Team', 'Backend Team', 'Platform Team'],
+    values: [340, 280, 200],
+    colors: ['#818cf8', '#6366f1', '#4f46e5']
+  },
+  'Product': {
+    categories: ['Design Team', 'PM Team', 'Analytics Team'],
+    values: [125, 95, 65],
+    colors: ['#67e8f9', '#22d3ee', '#06b6d4']
+  },
+  'Operations': {
+    categories: ['DevOps Team', 'Security Team'],
+    values: [88.83, 54],
+    colors: ['#34d399', '#10b981']
+  }
+};
+
+function renderBarDrill(data, title) {
+  barDrillChart.setOption({
+    tooltip: {
+      backgroundColor: '#1a1d27', borderColor: '#2a2d37',
+      textStyle: { color: '#e0e0e0', fontSize: 12 },
+      formatter: function(p) {
+        return '<b>' + p.name + '</b><br/>Cost: <span style="color:#f59e0b;font-weight:700">$' + p.value.toFixed(2) + '</span>';
+      }
+    },
+    grid: { left: 100, right: 40, top: 30, bottom: 30 },
+    xAxis: {
+      type: 'value',
+      axisLabel: { color: '#8b8fa3', formatter: '${value}' },
+      splitLine: { lineStyle: { color: '#1e2130' } },
+      axisLine: { show: false }
+    },
+    yAxis: {
+      type: 'category',
+      data: data.categories,
+      axisLabel: { color: '#e0e0e0', fontSize: 12 },
+      axisLine: { lineStyle: { color: '#2a2d37' } },
+      axisTick: { show: false }
+    },
+    series: [{
+      type: 'bar',
+      data: data.values.map(function(v, i) {
+        return { value: v, itemStyle: { color: data.colors[i], borderRadius: [0, 4, 4, 0] } };
+      }),
+      barWidth: 32,
+      label: {
+        show: true, position: 'right', color: '#e0e0e0', fontSize: 12, fontWeight: 600,
+        formatter: function(p) { return '$' + p.value.toFixed(0); }
+      },
+      animationDuration: 600,
+      animationEasing: 'cubicOut'
+    }],
+    animationDuration: 600,
+    animationEasing: 'cubicOut'
+  }, true);
+}
+
+renderBarDrill(deptData);
+
+barDrillChart.on('click', function(params) {
+  if (barDrillLevel === 'all') {
+    var dept = params.name;
+    if (teamData[dept]) {
+      barDrillLevel = 'team';
+      barDrillDept = dept;
+      document.getElementById('bar-back-btn').style.display = 'inline-block';
+      renderBarDrill(teamData[dept], dept + ' Teams');
+    }
+  }
+});
+
+function barDrillBack() {
+  barDrillLevel = 'all';
+  barDrillDept = '';
+  document.getElementById('bar-back-btn').style.display = 'none';
+  renderBarDrill(deptData);
+}
+
+// ─────────────────────────────────────────────
+// 4. STACKED HORIZONTAL BAR
+// ─────────────────────────────────────────────
+var stackedChart = echarts.init(document.getElementById('stacked-bar-chart'));
+
+var missionTypes = ['Code Generation', 'Research', 'Bug Fix', 'Documentation', 'Testing'];
+var costComponents = [
+  { name: 'LLM Input Tokens',  color: '#6366f1', data: [112, 98, 72, 42, 28] },
+  { name: 'LLM Output Tokens', color: '#22d3ee', data: [185, 126, 104, 62, 48] },
+  { name: 'Tool Execution',    color: '#10b981', data: [96, 64, 52, 30, 32] },
+  { name: 'Overhead',          color: '#f59e0b', data: [30, 24, 18, 14, 10.83] }
+];
+
+stackedChart.setOption({
+  tooltip: {
+    trigger: 'axis', axisPointer: { type: 'shadow' },
+    backgroundColor: '#1a1d27', borderColor: '#2a2d37',
+    textStyle: { color: '#e0e0e0', fontSize: 12 },
+    formatter: function(params) {
+      var total = 0;
+      var rows = params.map(function(p) {
+        total += p.value;
+        return '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' +
+               p.color + ';margin-right:6px"></span>' + p.seriesName + ': <b>$' + p.value.toFixed(2) + '</b>';
+      }).join('<br/>');
+      return '<b>' + params[0].name + '</b><br/>' + rows +
+             '<br/><div style="border-top:1px solid #2a2d37;margin-top:4px;padding-top:4px;font-weight:700">Total: $' + total.toFixed(2) + '</div>';
+    }
+  },
+  legend: {
+    data: costComponents.map(function(c){ return c.name; }),
+    textStyle: { color: '#8b8fa3', fontSize: 11 },
+    top: 0, left: 'center'
+  },
+  grid: { left: 120, right: 40, top: 36, bottom: 16 },
+  xAxis: {
+    type: 'value',
+    axisLabel: { color: '#8b8fa3', formatter: '${value}' },
+    splitLine: { lineStyle: { color: '#1e2130' } },
+    axisLine: { show: false }
+  },
+  yAxis: {
+    type: 'category',
+    data: missionTypes,
+    axisLabel: { color: '#e0e0e0', fontSize: 12 },
+    axisLine: { lineStyle: { color: '#2a2d37' } },
+    axisTick: { show: false }
+  },
+  series: costComponents.map(function(comp) {
+    return {
+      name: comp.name, type: 'bar', stack: 'total',
+      data: comp.data,
+      itemStyle: { color: comp.color },
+      barWidth: 26,
+      emphasis: { focus: 'series' }
+    };
+  })
+});
+
+// ─────────────────────────────────────────────
+// 5. TABLE — Top 20 Costliest Missions
+// ─────────────────────────────────────────────
+var missions = [
+  { rank: 1,  mission: 'Refactor Auth Module v3',          type: 'Code Generation', agent: 'Coder',       duration: '42m 18s', tokens: 184320, cost: 28.47 },
+  { rank: 2,  mission: 'Migrate DB Schema to v12',         type: 'Code Generation', agent: 'Coder',       duration: '38m 05s', tokens: 167840, cost: 25.92 },
+  { rank: 3,  mission: 'Research: LLM Eval Frameworks',    type: 'Research',        agent: 'Researcher',  duration: '35m 42s', tokens: 158200, cost: 23.15 },
+  { rank: 4,  mission: 'Fix Memory Leak in Worker Pool',   type: 'Bug Fix',         agent: 'Coder',       duration: '31m 27s', tokens: 142600, cost: 21.38 },
+  { rank: 5,  mission: 'Implement WebSocket Gateway',      type: 'Code Generation', agent: 'Coder',       duration: '29m 54s', tokens: 136450, cost: 19.87 },
+  { rank: 6,  mission: 'API Rate Limiter Redesign',        type: 'Code Generation', agent: 'MissionLead', duration: '28m 11s', tokens: 128700, cost: 18.64 },
+  { rank: 7,  mission: 'Research: Vector DB Comparison',   type: 'Research',        agent: 'Researcher',  duration: '27m 33s', tokens: 124300, cost: 17.42 },
+  { rank: 8,  mission: 'Debug Flaky E2E Test Suite',       type: 'Bug Fix',         agent: 'Coder',       duration: '26m 08s', tokens: 118950, cost: 16.21 },
+  { rank: 9,  mission: 'Build CLI Scaffold Tool',          type: 'Code Generation', agent: 'Coder',       duration: '24m 46s', tokens: 112400, cost: 15.53 },
+  { rank: 10, mission: 'Research: OAuth2 PKCE Patterns',   type: 'Research',        agent: 'Researcher',  duration: '23m 20s', tokens: 106800, cost: 14.88 },
+  { rank: 11, mission: 'Fix CORS Preflight Handling',      type: 'Bug Fix',         agent: 'Reviewer',    duration: '22m 05s', tokens: 98400,  cost: 13.76 },
+  { rank: 12, mission: 'Write API Reference Docs',         type: 'Documentation',   agent: 'Researcher',  duration: '21m 38s', tokens: 94700,  cost: 12.94 },
+  { rank: 13, mission: 'Optimize SQL Query Planner',       type: 'Bug Fix',         agent: 'Coder',       duration: '20m 14s', tokens: 91200,  cost: 12.15 },
+  { rank: 14, mission: 'Add Integration Test Coverage',    type: 'Testing',         agent: 'Coder',       duration: '19m 47s', tokens: 87600,  cost: 11.42 },
+  { rank: 15, mission: 'Build Config Validation Layer',    type: 'Code Generation', agent: 'Coder',       duration: '18m 52s', tokens: 83400,  cost: 10.88 },
+  { rank: 16, mission: 'Research: gRPC vs REST Tradeoffs', type: 'Research',        agent: 'Researcher',  duration: '17m 29s', tokens: 79800,  cost: 10.35 },
+  { rank: 17, mission: 'Fix Timezone Serialization Bug',   type: 'Bug Fix',         agent: 'Coder',       duration: '16m 41s', tokens: 74200,  cost: 9.67  },
+  { rank: 18, mission: 'Generate Changelog from Commits',  type: 'Documentation',   agent: 'MissionLead', duration: '15m 18s', tokens: 68500,  cost: 8.94  },
+  { rank: 19, mission: 'E2E Smoke Test Automation',        type: 'Testing',         agent: 'Reviewer',    duration: '14m 56s', tokens: 64300,  cost: 8.23  },
+  { rank: 20, mission: 'Update Dependency Security Audit', type: 'Documentation',   agent: 'Researcher',  duration: '13m 42s', tokens: 59800,  cost: 7.52  }
+];
+
+var sortState = { col: 'rank', dir: 'asc' };
+
+function renderTable(data) {
+  var tbody = document.getElementById('missions-tbody');
+  tbody.innerHTML = data.map(function(m) {
+    var isGold = m.rank === 1;
+    return '<tr class="' + (isGold ? 'rank-gold' : '') + '">' +
+      '<td>' + m.rank + '</td>' +
+      '<td>' + m.mission + '</td>' +
+      '<td>' + m.type + '</td>' +
+      '<td>' + m.agent + '</td>' +
+      '<td>' + m.duration + '</td>' +
+      '<td class="tokens-col">' + m.tokens.toLocaleString() + '</td>' +
+      '<td class="cost-col">$' + m.cost.toFixed(2) + '</td>' +
+    '</tr>';
+  }).join('');
+}
+
+function sortTable(col) {
+  if (sortState.col === col) {
+    sortState.dir = sortState.dir === 'asc' ? 'desc' : 'asc';
+  } else {
+    sortState.col = col;
+    sortState.dir = col === 'cost' || col === 'tokens' ? 'desc' : 'asc';
+  }
+  missions.sort(function(a, b) {
+    var va = a[col], vb = b[col];
+    if (typeof va === 'string') va = va.toLowerCase();
+    if (typeof vb === 'string') vb = vb.toLowerCase();
+    if (col === 'duration') {
+      va = parseDuration(a.duration);
+      vb = parseDuration(b.duration);
+    }
+    if (va < vb) return sortState.dir === 'asc' ? -1 : 1;
+    if (va > vb) return sortState.dir === 'asc' ? 1 : -1;
+    return 0;
+  });
+  renderTable(missions);
+  updateSortArrows();
+}
+
+function parseDuration(d) {
+  var p = d.match(/(\d+)m\s*(\d+)s/);
+  return p ? parseInt(p[1]) * 60 + parseInt(p[2]) : 0;
+}
+
+function updateSortArrows() {
+  document.querySelectorAll('#missions-table thead th').forEach(function(th) {
+    var arrow = th.querySelector('.sort-arrow');
+    var col = th.getAttribute('data-col');
+    if (col === sortState.col) {
+      arrow.textContent = sortState.dir === 'asc' ? ' \u25B2' : ' \u25BC';
+    } else {
+      arrow.textContent = '';
+    }
+  });
+}
+
+document.querySelectorAll('#missions-table thead th').forEach(function(th) {
+  th.addEventListener('click', function() {
+    sortTable(th.getAttribute('data-col'));
+  });
+});
+
+renderTable(missions);
+updateSortArrows();
+
+// ── Resize handler ──
+window.addEventListener('resize', function() {
+  treemapChart.resize();
+  sunburstChart.resize();
+  barDrillChart.resize();
+  stackedChart.resize();
+});
+</script>
+</body>
+</html>

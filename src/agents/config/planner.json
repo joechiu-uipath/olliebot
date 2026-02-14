@@ -1,0 +1,15 @@
+{
+  "type": "planner",
+  "identity": {
+    "name": "Planner Agent",
+    "emoji": "📋",
+    "role": "specialist",
+    "description": "Specializes in planning, organizing, and task breakdown"
+  },
+  "canAccessTools": [
+    "web_search",
+    "web_scrape",
+    "wikipedia_search",
+    "mcp.*"
+  ]
+}

@@ -1,0 +1,830 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LLM Latency Profiler — Response Time Analysis</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.6.0/dist/echarts.min.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #0f1117;
+    --card: #1a1d27;
+    --border: #2a2d37;
+    --text: #e0e0e0;
+    --muted: #8b8fa3;
+    --indigo: #6366f1;
+    --cyan: #22d3ee;
+    --green: #10b981;
+    --amber: #f59e0b;
+    --rose: #f43f5e;
+  }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    line-height: 1.5;
+    padding: 24px;
+    min-height: 100vh;
+  }
+
+  /* Header */
+  .header { margin-bottom: 28px; }
+  .header h1 {
+    font-size: 1.65rem;
+    font-weight: 700;
+    color: var(--text);
+    letter-spacing: -0.02em;
+    margin-bottom: 6px;
+  }
+  .header h1 span { color: var(--indigo); }
+  .header-meta {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+  }
+  .timestamp {
+    font-size: 0.8rem;
+    color: var(--muted);
+    background: rgba(99,102,241,0.1);
+    padding: 3px 10px;
+    border-radius: 4px;
+    border: 1px solid rgba(99,102,241,0.2);
+  }
+  .synopsis {
+    font-size: 0.88rem;
+    color: var(--muted);
+    max-width: 860px;
+    line-height: 1.55;
+  }
+
+  /* Interactivity instructions */
+  .instructions {
+    background: rgba(99,102,241,0.07);
+    border: 1px solid rgba(99,102,241,0.18);
+    border-radius: 8px;
+    padding: 12px 18px;
+    margin-bottom: 24px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .instructions-label {
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--indigo);
+    white-space: nowrap;
+  }
+  .instructions-text {
+    font-size: 0.82rem;
+    color: var(--muted);
+  }
+  .instructions-text strong { color: var(--text); font-weight: 500; }
+
+  /* KPI row */
+  .kpi-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+  .kpi-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px 22px;
+    position: relative;
+    overflow: hidden;
+    transition: transform 0.18s, box-shadow 0.18s;
+  }
+  .kpi-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+  }
+  .kpi-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    border-radius: 10px 10px 0 0;
+  }
+  .kpi-card.green::before { background: var(--green); }
+  .kpi-card.amber::before { background: var(--amber); }
+  .kpi-card.rose::before  { background: var(--rose); }
+  .kpi-label {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--muted);
+    margin-bottom: 8px;
+    font-weight: 500;
+  }
+  .kpi-value {
+    font-size: 2rem;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+  }
+  .kpi-card.green .kpi-value { color: var(--green); }
+  .kpi-card.amber .kpi-value { color: var(--amber); }
+  .kpi-card.rose  .kpi-value { color: var(--rose); }
+  .kpi-sub {
+    font-size: 0.75rem;
+    color: var(--muted);
+    margin-top: 4px;
+  }
+
+  /* Chart cards */
+  .chart-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+    margin-bottom: 20px;
+  }
+  .chart-title {
+    font-size: 0.92rem;
+    font-weight: 600;
+    color: var(--text);
+    margin-bottom: 4px;
+  }
+  .chart-subtitle {
+    font-size: 0.76rem;
+    color: var(--muted);
+    margin-bottom: 14px;
+  }
+
+  /* Grid layouts */
+  .row-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+  }
+  @media (max-width: 960px) {
+    .row-2 { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<!-- Header -->
+<div class="header">
+  <h1>LLM Latency Profiler <span>&mdash;</span> Response Time Analysis</h1>
+  <div class="header-meta">
+    <span class="timestamp">Generated 2026-02-13 14:32:07 UTC</span>
+    <span class="timestamp" style="background:rgba(16,185,129,0.1);border-color:rgba(16,185,129,0.2);color:#10b981;">Live &bull; 24h window</span>
+  </div>
+  <p class="synopsis">Deep analysis of LLM API response times across models, workloads, and time periods to identify bottlenecks.</p>
+</div>
+
+<!-- Interactivity instructions -->
+<div class="instructions">
+  <span class="instructions-label">Interactivity</span>
+  <span class="instructions-text">
+    <strong>Brush select</strong> on scatter plot to zoom. <strong>Hover</strong> for percentile details. <strong>Click</strong> box plot whiskers for outliers.
+  </span>
+</div>
+
+<!-- KPI Cards -->
+<div class="kpi-row">
+  <div class="kpi-card green">
+    <div class="kpi-label">P50 Latency</div>
+    <div class="kpi-value">0.8s</div>
+    <div class="kpi-sub">Median response time</div>
+  </div>
+  <div class="kpi-card amber">
+    <div class="kpi-label">P95 Latency</div>
+    <div class="kpi-value">3.2s</div>
+    <div class="kpi-sub">95th percentile</div>
+  </div>
+  <div class="kpi-card rose">
+    <div class="kpi-label">P99 Latency</div>
+    <div class="kpi-value">8.1s</div>
+    <div class="kpi-sub">99th percentile</div>
+  </div>
+  <div class="kpi-card green">
+    <div class="kpi-label">Timeout Rate</div>
+    <div class="kpi-value">0.3%</div>
+    <div class="kpi-sub">Requests exceeding 30s</div>
+  </div>
+</div>
+
+<!-- Scatter plot (full width) -->
+<div class="chart-card">
+  <div class="chart-title">Individual LLM Call Latency vs Token Count</div>
+  <div class="chart-subtitle">Each dot represents a single API call. Size = output tokens. Color = workload type. Brush select to zoom a region.</div>
+  <div id="chart-scatter" style="width:100%;height:520px;"></div>
+</div>
+
+<!-- Box plot + Histogram row -->
+<div class="row-2">
+  <div class="chart-card">
+    <div class="chart-title">Latency Distribution by Model</div>
+    <div class="chart-subtitle">Box plots showing median, Q1/Q3, whiskers, and outliers for each model.</div>
+    <div id="chart-box" style="width:100%;height:440px;"></div>
+  </div>
+  <div class="chart-card">
+    <div class="chart-title">Response Time Distribution</div>
+    <div class="chart-subtitle">Histogram of response times with cumulative percentage overlay.</div>
+    <div id="chart-histogram" style="width:100%;height:440px;"></div>
+  </div>
+</div>
+
+<!-- Line chart with bands (full width) -->
+<div class="chart-card">
+  <div class="chart-title">Latency Over Time (24h)</div>
+  <div class="chart-subtitle">P50, P95, and P99 lines with shaded bands. Use the slider below to zoom into specific time ranges.</div>
+  <div id="chart-timeline" style="width:100%;height:440px;"></div>
+</div>
+
+<!-- Heatmap (full width) -->
+<div class="chart-card">
+  <div class="chart-title">Latency by Hour &times; Day of Week</div>
+  <div class="chart-subtitle">Average response time heatmap. Blue = fast, Red = slow.</div>
+  <div id="chart-heatmap" style="width:100%;height:380px;"></div>
+</div>
+
+<script>
+// ─── Utility: seeded pseudo-random for reproducible data ───
+function seededRandom(seed) {
+  let s = seed;
+  return function() {
+    s = (s * 16807 + 0) % 2147483647;
+    return (s - 1) / 2147483646;
+  };
+}
+const rand = seededRandom(42);
+function gaussian(mean, std) {
+  let u = 0, v = 0;
+  while (u === 0) u = rand();
+  while (v === 0) v = rand();
+  return mean + std * Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
+}
+
+// ─── Color constants ───
+const INDIGO = '#6366f1';
+const CYAN   = '#22d3ee';
+const GREEN  = '#10b981';
+const AMBER  = '#f59e0b';
+const ROSE   = '#f43f5e';
+const MUTED  = '#8b8fa3';
+const CARD   = '#1a1d27';
+const BORDER = '#2a2d37';
+
+// ─── Chart defaults ───
+const axisCommon = {
+  axisLine:  { lineStyle: { color: BORDER } },
+  axisTick:  { lineStyle: { color: BORDER } },
+  axisLabel: { color: MUTED, fontSize: 11 },
+  splitLine: { lineStyle: { color: 'rgba(42,45,55,0.6)', type: 'dashed' } },
+  nameTextStyle: { color: MUTED, fontSize: 11 }
+};
+
+// ═══════════════════════════════════════════════════════════
+// 1. SCATTER PLOT — Latency vs Token Count
+// ═══════════════════════════════════════════════════════════
+(function() {
+  const chart = echarts.init(document.getElementById('chart-scatter'));
+  const workloads = [
+    { name: 'Main (Opus/Sonnet)', color: INDIGO, tokenBase: 2200, tokenStd: 1800, latBase: 2.0, latStd: 1.4, outputRatio: 0.35 },
+    { name: 'Fast (Haiku/Mini)',  color: CYAN,   tokenBase: 600,  tokenStd: 400,  latBase: 0.5, latStd: 0.3, outputRatio: 0.4 },
+    { name: 'Embedding',          color: GREEN,  tokenBase: 400,  tokenStd: 300,  latBase: 0.15,latStd: 0.08, outputRatio: 0.05 }
+  ];
+  const series = [];
+  const allX = [], allY = [];
+
+  workloads.forEach(w => {
+    const data = [];
+    const count = w.name.startsWith('Main') ? 90 : w.name.startsWith('Fast') ? 70 : 40;
+    for (let i = 0; i < count; i++) {
+      const totalTokens = Math.max(50, Math.round(gaussian(w.tokenBase, w.tokenStd)));
+      const outputTokens = Math.max(10, Math.round(totalTokens * w.outputRatio * (0.6 + rand() * 0.8)));
+      let latency = Math.max(0.05, gaussian(w.latBase, w.latStd) + totalTokens * 0.0003);
+      // occasional spikes
+      if (rand() < 0.04) latency *= (2.5 + rand() * 3);
+      latency = Math.round(latency * 1000) / 1000;
+      data.push([totalTokens, latency, outputTokens]);
+      allX.push(totalTokens);
+      allY.push(latency);
+    }
+    series.push({
+      name: w.name,
+      type: 'scatter',
+      data: data,
+      symbolSize: function(val) { return Math.max(5, Math.min(28, val[2] / 30)); },
+      itemStyle: { color: w.color, opacity: 0.72 },
+      emphasis: { itemStyle: { opacity: 1, borderColor: '#fff', borderWidth: 1.5 } }
+    });
+  });
+
+  // Regression line (simple linear over all points)
+  const n = allX.length;
+  const sumX = allX.reduce((a,b) => a+b, 0);
+  const sumY = allY.reduce((a,b) => a+b, 0);
+  const sumXY = allX.reduce((a, x, i) => a + x * allY[i], 0);
+  const sumX2 = allX.reduce((a, x) => a + x * x, 0);
+  const slope = (n * sumXY - sumX * sumY) / (n * sumX2 - sumX * sumX);
+  const intercept = (sumY - slope * sumX) / n;
+  const xMin = Math.min(...allX);
+  const xMax = Math.max(...allX);
+  series.push({
+    name: 'Trend',
+    type: 'line',
+    data: [[xMin, Math.round((slope * xMin + intercept)*1000)/1000],
+           [xMax, Math.round((slope * xMax + intercept)*1000)/1000]],
+    lineStyle: { color: AMBER, width: 2, type: 'dashed' },
+    symbol: 'none',
+    tooltip: { show: false },
+    z: 0
+  });
+
+  chart.setOption({
+    tooltip: {
+      trigger: 'item',
+      backgroundColor: '#1e2130',
+      borderColor: BORDER,
+      textStyle: { color: '#e0e0e0', fontSize: 12 },
+      formatter: function(p) {
+        if (p.seriesName === 'Trend') return '';
+        return '<b>' + p.seriesName + '</b><br/>'
+          + 'Total tokens: ' + p.data[0] + '<br/>'
+          + 'Latency: ' + p.data[1] + 's<br/>'
+          + 'Output tokens: ' + p.data[2];
+      }
+    },
+    legend: {
+      data: ['Main (Opus/Sonnet)', 'Fast (Haiku/Mini)', 'Embedding', 'Trend'],
+      top: 4, right: 10,
+      textStyle: { color: MUTED, fontSize: 11 },
+      itemWidth: 12, itemHeight: 12
+    },
+    brush: {
+      toolbox: ['rect', 'polygon', 'clear'],
+      xAxisIndex: 0,
+      brushStyle: { borderWidth: 1, color: 'rgba(99,102,241,0.12)', borderColor: INDIGO }
+    },
+    toolbox: {
+      feature: {
+        dataZoom: { yAxisIndex: 'none', iconStyle: { borderColor: MUTED } },
+        restore: { iconStyle: { borderColor: MUTED } }
+      },
+      right: 30, top: 2,
+      iconStyle: { borderColor: MUTED }
+    },
+    grid: { left: 60, right: 40, top: 50, bottom: 50 },
+    xAxis: Object.assign({}, axisCommon, {
+      name: 'Total Tokens (input + output)',
+      nameLocation: 'center',
+      nameGap: 32
+    }),
+    yAxis: Object.assign({}, axisCommon, {
+      name: 'Response Time (s)',
+      nameLocation: 'center',
+      nameGap: 42
+    }),
+    series: series,
+    animationDuration: 1200,
+    animationEasing: 'cubicOut'
+  });
+
+  chart.on('brush', function(params) {});
+  window.addEventListener('resize', function() { chart.resize(); });
+})();
+
+// ═══════════════════════════════════════════════════════════
+// 2. BOX PLOT — Latency Distribution by Model
+// ═══════════════════════════════════════════════════════════
+(function() {
+  const chart = echarts.init(document.getElementById('chart-box'));
+  const models = [
+    { name: 'claude-opus-4-6',   median: 2.8, q1: 1.9, q3: 4.1, low: 0.9, high: 7.2, outliers: [9.3, 11.1, 14.5], color: INDIGO },
+    { name: 'claude-sonnet-4-5', median: 1.4, q1: 0.9, q3: 2.1, low: 0.4, high: 3.8, outliers: [5.2, 6.8], color: '#818cf8' },
+    { name: 'claude-haiku-4-5',  median: 0.35, q1: 0.22, q3: 0.55, low: 0.08, high: 1.0, outliers: [1.4, 1.8], color: CYAN },
+    { name: 'gpt-4o',            median: 1.8, q1: 1.2, q3: 2.9, low: 0.5, high: 5.1, outliers: [6.9, 8.2], color: GREEN },
+    { name: 'gpt-4o-mini',       median: 0.42, q1: 0.28, q3: 0.65, low: 0.1, high: 1.2, outliers: [1.7, 2.1], color: AMBER }
+  ];
+
+  const boxData = models.map(m => [m.low, m.q1, m.median, m.q3, m.high]);
+  const outlierData = [];
+  models.forEach(function(m, i) {
+    m.outliers.forEach(function(v) {
+      outlierData.push([i, v]);
+    });
+  });
+
+  chart.setOption({
+    tooltip: {
+      trigger: 'item',
+      backgroundColor: '#1e2130',
+      borderColor: BORDER,
+      textStyle: { color: '#e0e0e0', fontSize: 12 },
+      formatter: function(p) {
+        if (p.seriesType === 'boxplot') {
+          var d = p.data;
+          return '<b>' + models[p.dataIndex].name + '</b><br/>'
+            + 'Max: ' + d[5] + 's<br/>'
+            + 'Q3: ' + d[4] + 's<br/>'
+            + 'Median: ' + d[3] + 's<br/>'
+            + 'Q1: ' + d[2] + 's<br/>'
+            + 'Min: ' + d[1] + 's';
+        }
+        return 'Outlier: ' + p.data[1] + 's';
+      }
+    },
+    grid: { left: 56, right: 24, top: 16, bottom: 60 },
+    xAxis: Object.assign({}, axisCommon, {
+      type: 'category',
+      data: models.map(m => m.name),
+      axisLabel: { color: MUTED, fontSize: 10, rotate: 15 }
+    }),
+    yAxis: Object.assign({}, axisCommon, {
+      name: 'Latency (s)',
+      nameLocation: 'center',
+      nameGap: 38
+    }),
+    series: [
+      {
+        name: 'Latency',
+        type: 'boxplot',
+        data: boxData,
+        itemStyle: {
+          borderWidth: 1.5
+        },
+        encode: { tooltip: [1, 2, 3, 4, 5] },
+        colorBy: 'data',
+        color: models.map(m => m.color)
+      },
+      {
+        name: 'Outliers',
+        type: 'scatter',
+        data: outlierData,
+        symbolSize: 7,
+        itemStyle: { color: ROSE, opacity: 0.85 },
+        emphasis: { itemStyle: { borderColor: '#fff', borderWidth: 1 } }
+      }
+    ],
+    animationDuration: 1000
+  });
+
+  // Color each box individually
+  chart.setOption({
+    series: [{
+      name: 'Latency',
+      type: 'boxplot',
+      data: boxData.map(function(d, i) {
+        return {
+          value: d,
+          itemStyle: { color: 'rgba(' + hexToRgb(models[i].color) + ',0.2)', borderColor: models[i].color }
+        };
+      })
+    }]
+  });
+
+  function hexToRgb(hex) {
+    var r = parseInt(hex.slice(1,3),16);
+    var g = parseInt(hex.slice(3,5),16);
+    var b = parseInt(hex.slice(5,7),16);
+    return r+','+g+','+b;
+  }
+
+  window.addEventListener('resize', function() { chart.resize(); });
+})();
+
+// ═══════════════════════════════════════════════════════════
+// 3. HISTOGRAM — Response Time Distribution
+// ═══════════════════════════════════════════════════════════
+(function() {
+  const chart = echarts.init(document.getElementById('chart-histogram'));
+  const bins      = ['0–0.5s', '0.5–1s', '1–2s', '2–3s', '3–5s', '5–10s', '10s+'];
+  const counts    = [1420, 2180, 1560, 680, 410, 195, 55];
+  const total     = counts.reduce((a,b) => a+b, 0);
+  const binColors = ['#10b981','#22d3ee','#6366f1','#f59e0b','#f59e0b','#f43f5e','#f43f5e'];
+
+  let cum = 0;
+  const cumPct = counts.map(c => { cum += c; return Math.round(cum / total * 1000) / 10; });
+
+  chart.setOption({
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: '#1e2130',
+      borderColor: BORDER,
+      textStyle: { color: '#e0e0e0', fontSize: 12 },
+      formatter: function(ps) {
+        let s = '<b>' + ps[0].name + '</b><br/>';
+        ps.forEach(function(p) {
+          if (p.seriesName === 'Count') s += 'Count: ' + p.value.toLocaleString() + '<br/>';
+          if (p.seriesName === 'Cumulative %') s += 'Cumulative: ' + p.value + '%<br/>';
+        });
+        return s;
+      }
+    },
+    grid: { left: 56, right: 56, top: 20, bottom: 40 },
+    xAxis: Object.assign({}, axisCommon, {
+      type: 'category',
+      data: bins
+    }),
+    yAxis: [
+      Object.assign({}, axisCommon, {
+        type: 'value',
+        name: 'Count',
+        nameLocation: 'center',
+        nameGap: 40
+      }),
+      Object.assign({}, axisCommon, {
+        type: 'value',
+        name: 'Cumulative %',
+        nameLocation: 'center',
+        nameGap: 40,
+        min: 0, max: 100,
+        axisLabel: { formatter: '{value}%', color: MUTED, fontSize: 11 }
+      })
+    ],
+    series: [
+      {
+        name: 'Count',
+        type: 'bar',
+        data: counts.map(function(c, i) {
+          return { value: c, itemStyle: { color: binColors[i] } };
+        }),
+        barWidth: '55%',
+        itemStyle: { borderRadius: [4,4,0,0] },
+        animationDuration: 1200
+      },
+      {
+        name: 'Cumulative %',
+        type: 'line',
+        yAxisIndex: 1,
+        data: cumPct,
+        smooth: true,
+        symbol: 'circle',
+        symbolSize: 6,
+        lineStyle: { color: AMBER, width: 2 },
+        itemStyle: { color: AMBER },
+        animationDuration: 1500
+      }
+    ]
+  });
+
+  window.addEventListener('resize', function() { chart.resize(); });
+})();
+
+// ═══════════════════════════════════════════════════════════
+// 4. LINE CHART WITH BANDS — Latency Over Time (24h)
+// ═══════════════════════════════════════════════════════════
+(function() {
+  const chart = echarts.init(document.getElementById('chart-timeline'));
+  const hours = [];
+  const p50 = [], p95 = [], p99 = [];
+
+  for (let h = 0; h < 24; h++) {
+    const hh = String(h).padStart(2, '0') + ':00';
+    hours.push(hh);
+
+    // Simulate diurnal pattern: higher latency during business hours (9-17)
+    const isPeak = (h >= 9 && h <= 17);
+    const isNight = (h >= 0 && h <= 5);
+    const baseFactor = isNight ? 0.6 : isPeak ? 1.3 : 0.85;
+
+    const p50v = Math.round((0.6 * baseFactor + gaussian(0, 0.08)) * 1000) / 1000;
+    const p95v = Math.round((2.8 * baseFactor + gaussian(0, 0.4)) * 1000) / 1000;
+    const p99v = Math.round((6.5 * baseFactor + gaussian(0, 1.0)) * 1000) / 1000;
+
+    p50.push(Math.max(0.2, p50v));
+    p95.push(Math.max(0.8, p95v));
+    p99.push(Math.max(2.0, p99v));
+  }
+
+  chart.setOption({
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: '#1e2130',
+      borderColor: BORDER,
+      textStyle: { color: '#e0e0e0', fontSize: 12 },
+      formatter: function(ps) {
+        let s = '<b>' + ps[0].axisValue + '</b><br/>';
+        ps.forEach(function(p) {
+          if (p.seriesName && p.seriesName !== 'P50-P95 Band' && p.seriesName !== 'P95-P99 Band') {
+            s += '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:'
+              + p.color + ';margin-right:6px;"></span>'
+              + p.seriesName + ': ' + p.value + 's<br/>';
+          }
+        });
+        return s;
+      }
+    },
+    legend: {
+      data: ['P50', 'P95', 'P99'],
+      top: 4, right: 10,
+      textStyle: { color: MUTED, fontSize: 11 },
+      itemWidth: 16, itemHeight: 3
+    },
+    grid: { left: 56, right: 30, top: 42, bottom: 80 },
+    xAxis: Object.assign({}, axisCommon, {
+      type: 'category',
+      data: hours,
+      boundaryGap: false
+    }),
+    yAxis: Object.assign({}, axisCommon, {
+      name: 'Latency (s)',
+      nameLocation: 'center',
+      nameGap: 40
+    }),
+    dataZoom: [
+      {
+        type: 'slider',
+        start: 0, end: 100,
+        height: 24,
+        bottom: 10,
+        borderColor: BORDER,
+        backgroundColor: 'rgba(26,29,39,0.8)',
+        fillerColor: 'rgba(99,102,241,0.15)',
+        handleStyle: { color: INDIGO },
+        textStyle: { color: MUTED, fontSize: 10 },
+        dataBackground: {
+          lineStyle: { color: INDIGO, opacity: 0.3 },
+          areaStyle: { color: INDIGO, opacity: 0.08 }
+        }
+      }
+    ],
+    series: [
+      // P95-P99 band (behind)
+      {
+        name: 'P95-P99 Band',
+        type: 'line',
+        data: p99,
+        lineStyle: { opacity: 0 },
+        areaStyle: { color: 'rgba(244,63,94,0.10)' },
+        stack: 'band99',
+        symbol: 'none',
+        silent: true,
+        z: 1
+      },
+      {
+        name: 'P95-P99 Band',
+        type: 'line',
+        data: p95.map(function(v, i) { return p99[i] - v; }),
+        lineStyle: { opacity: 0 },
+        areaStyle: { opacity: 0 },
+        stack: 'band99',
+        symbol: 'none',
+        silent: true,
+        z: 1
+      },
+      // P50-P95 band
+      {
+        name: 'P50-P95 Band',
+        type: 'line',
+        data: p95,
+        lineStyle: { opacity: 0 },
+        areaStyle: { color: 'rgba(99,102,241,0.12)' },
+        stack: 'band95',
+        symbol: 'none',
+        silent: true,
+        z: 2
+      },
+      {
+        name: 'P50-P95 Band',
+        type: 'line',
+        data: p50.map(function(v, i) { return p95[i] - v; }),
+        lineStyle: { opacity: 0 },
+        areaStyle: { opacity: 0 },
+        stack: 'band95',
+        symbol: 'none',
+        silent: true,
+        z: 2
+      },
+      // Actual lines
+      {
+        name: 'P99',
+        type: 'line',
+        data: p99,
+        smooth: 0.3,
+        symbol: 'circle',
+        symbolSize: 4,
+        lineStyle: { color: ROSE, width: 2 },
+        itemStyle: { color: ROSE },
+        z: 10
+      },
+      {
+        name: 'P95',
+        type: 'line',
+        data: p95,
+        smooth: 0.3,
+        symbol: 'circle',
+        symbolSize: 4,
+        lineStyle: { color: INDIGO, width: 2 },
+        itemStyle: { color: INDIGO },
+        z: 10
+      },
+      {
+        name: 'P50',
+        type: 'line',
+        data: p50,
+        smooth: 0.3,
+        symbol: 'circle',
+        symbolSize: 4,
+        lineStyle: { color: GREEN, width: 2.5 },
+        itemStyle: { color: GREEN },
+        z: 10
+      }
+    ],
+    animationDuration: 1500,
+    animationEasing: 'cubicOut'
+  });
+
+  window.addEventListener('resize', function() { chart.resize(); });
+})();
+
+// ═══════════════════════════════════════════════════════════
+// 5. HEATMAP — Latency by Hour x Day of Week
+// ═══════════════════════════════════════════════════════════
+(function() {
+  const chart = echarts.init(document.getElementById('chart-heatmap'));
+  const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  const hoursLabels = [];
+  for (let h = 0; h < 24; h++) hoursLabels.push(String(h).padStart(2,'0') + ':00');
+
+  const data = [];
+  for (let d = 0; d < 7; d++) {
+    for (let h = 0; h < 24; h++) {
+      const isWeekend = d >= 5;
+      const isPeak = h >= 9 && h <= 17;
+      const isNight = h >= 0 && h <= 5;
+      let base = 0.9;
+      if (isPeak && !isWeekend) base = 2.2 + rand() * 1.2;
+      else if (isPeak && isWeekend) base = 1.1 + rand() * 0.5;
+      else if (isNight) base = 0.4 + rand() * 0.3;
+      else base = 0.8 + rand() * 0.6;
+      // Thursday/Friday afternoon spikes
+      if ((d === 3 || d === 4) && h >= 14 && h <= 16) base += 0.5 + rand() * 0.8;
+      data.push([h, d, Math.round(base * 100) / 100]);
+    }
+  }
+
+  const maxVal = Math.max(...data.map(d => d[2]));
+
+  chart.setOption({
+    tooltip: {
+      backgroundColor: '#1e2130',
+      borderColor: BORDER,
+      textStyle: { color: '#e0e0e0', fontSize: 12 },
+      formatter: function(p) {
+        return '<b>' + days[p.data[1]] + ' ' + hoursLabels[p.data[0]] + '</b><br/>'
+          + 'Avg latency: ' + p.data[2] + 's';
+      }
+    },
+    grid: { left: 56, right: 80, top: 10, bottom: 40 },
+    xAxis: {
+      type: 'category',
+      data: hoursLabels,
+      axisLine:  { lineStyle: { color: BORDER } },
+      axisTick:  { lineStyle: { color: BORDER } },
+      axisLabel: { color: MUTED, fontSize: 10, interval: 1 },
+      splitArea: { show: false }
+    },
+    yAxis: {
+      type: 'category',
+      data: days,
+      axisLine:  { lineStyle: { color: BORDER } },
+      axisTick:  { show: false },
+      axisLabel: { color: MUTED, fontSize: 11 },
+      splitArea: { show: false }
+    },
+    visualMap: {
+      min: 0.3,
+      max: maxVal,
+      calculable: true,
+      orient: 'vertical',
+      right: 8,
+      top: 'center',
+      itemHeight: 200,
+      itemWidth: 12,
+      textStyle: { color: MUTED, fontSize: 10 },
+      inRange: {
+        color: ['#1e3a5f', '#22d3ee', '#6366f1', '#f59e0b', '#f43f5e']
+      },
+      formatter: function(v) { return v.toFixed(1) + 's'; }
+    },
+    series: [{
+      type: 'heatmap',
+      data: data,
+      label: { show: false },
+      emphasis: {
+        itemStyle: { shadowBlur: 8, shadowColor: 'rgba(0,0,0,0.5)' }
+      },
+      itemStyle: { borderColor: '#0f1117', borderWidth: 2, borderRadius: 3 },
+      progressive: 1000,
+      animation: true,
+      animationDuration: 1500
+    }]
+  });
+
+  window.addEventListener('resize', function() { chart.resize(); });
+})();
+</script>
+</body>
+</html>

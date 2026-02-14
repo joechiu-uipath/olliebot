@@ -235,7 +235,8 @@ If no claims can be attributed to sources, return: {"citations": []}`;
     {
       maxTokens: CITATION_LLM_MAX_TOKENS,
       temperature: 0,
-    }
+    },
+    'Citations Generator'
   );
 
   // Parse LLM response

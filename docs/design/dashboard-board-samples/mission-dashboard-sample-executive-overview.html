@@ -1,0 +1,811 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Executive Overview — OllieBot Agent System</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.6.0/dist/echarts.min.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0f1117;
+    --card: #1a1d27;
+    --border: #2a2d37;
+    --text-primary: #e0e0e0;
+    --text-secondary: #8b8fa3;
+    --indigo: #6366f1;
+    --cyan: #22d3ee;
+    --emerald: #10b981;
+    --amber: #f59e0b;
+    --red: #ef4444;
+  }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text-primary);
+    line-height: 1.5;
+    min-height: 100vh;
+    padding: 0 0 40px 0;
+  }
+
+  /* ---------- Title bar ---------- */
+  .title-bar {
+    background: linear-gradient(135deg, #1a1d27 0%, #12141c 100%);
+    border-bottom: 1px solid var(--border);
+    padding: 24px 32px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 12px;
+  }
+  .title-bar h1 {
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: -0.3px;
+    color: var(--text-primary);
+    flex: 1 1 100%;
+  }
+  .title-bar h1 span.accent { color: var(--indigo); }
+  .title-bar .meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 24px;
+    width: 100%;
+    align-items: center;
+  }
+  .title-bar .timestamp {
+    font-size: 13px;
+    color: var(--text-secondary);
+    background: rgba(99,102,241,0.1);
+    border: 1px solid rgba(99,102,241,0.25);
+    border-radius: 6px;
+    padding: 4px 12px;
+  }
+  .title-bar .synopsis {
+    font-size: 13px;
+    color: var(--text-secondary);
+    flex: 1;
+  }
+
+  /* ---------- Info panel ---------- */
+  .info-panel {
+    margin: 16px 32px 0;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: rgba(99,102,241,0.06);
+    overflow: hidden;
+    transition: max-height 0.3s ease;
+  }
+  .info-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 10px 16px;
+    background: none;
+    border: none;
+    color: var(--indigo);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    text-align: left;
+  }
+  .info-toggle .arrow {
+    display: inline-block;
+    transition: transform 0.25s ease;
+    font-size: 11px;
+  }
+  .info-toggle.open .arrow { transform: rotate(90deg); }
+  .info-body {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.3s ease, padding 0.3s ease;
+    padding: 0 16px;
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.7;
+  }
+  .info-body.open {
+    max-height: 120px;
+    padding: 0 16px 12px;
+  }
+
+  /* ---------- Layout grid ---------- */
+  .dashboard {
+    max-width: 1440px;
+    margin: 0 auto;
+    padding: 0 32px;
+  }
+  .section-title {
+    font-size: 14px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: var(--text-secondary);
+    margin: 28px 0 14px;
+    padding-left: 2px;
+  }
+  .row {
+    display: grid;
+    gap: 16px;
+  }
+  .row-4 { grid-template-columns: repeat(4, 1fr); }
+  .row-3 { grid-template-columns: repeat(3, 1fr); }
+  .row-2 { grid-template-columns: 1fr 1fr; }
+  .row-1 { grid-template-columns: 1fr; }
+
+  /* ---------- Card ---------- */
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+    position: relative;
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  }
+  .card:hover {
+    border-color: rgba(99,102,241,0.35);
+    box-shadow: 0 4px 24px rgba(0,0,0,0.25);
+  }
+  .card-header {
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: var(--text-secondary);
+    margin-bottom: 4px;
+  }
+
+  /* ---------- KPI cards ---------- */
+  .kpi-card {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+  }
+  .kpi-left { flex: 1; }
+  .kpi-value {
+    font-size: 32px;
+    font-weight: 700;
+    line-height: 1.15;
+    margin: 4px 0 6px;
+  }
+  .kpi-trend {
+    font-size: 12px;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 2px 8px;
+    border-radius: 4px;
+  }
+  .kpi-trend.up-good   { color: var(--emerald); background: rgba(16,185,129,0.12); }
+  .kpi-trend.up-bad    { color: var(--red);     background: rgba(239,68,68,0.12); }
+  .kpi-trend.down-good { color: var(--emerald); background: rgba(16,185,129,0.12); }
+  .kpi-trend.down-bad  { color: var(--red);     background: rgba(239,68,68,0.12); }
+  .kpi-sparkline { width: 110px; height: 40px; flex-shrink: 0; }
+
+  /* ---------- Chart containers ---------- */
+  .chart-box { width: 100%; }
+  .chart-box .chart { width: 100%; height: 280px; }
+  .chart-box .chart-tall { width: 100%; height: 360px; }
+  .gauge-chart { width: 100%; height: 220px; }
+
+  /* ---------- Responsive ---------- */
+  @media (max-width: 1100px) {
+    .row-4 { grid-template-columns: repeat(2, 1fr); }
+    .row-3 { grid-template-columns: 1fr 1fr; }
+    .row-2 { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 640px) {
+    .title-bar { padding: 18px 16px; }
+    .dashboard { padding: 0 16px; }
+    .info-panel { margin: 12px 16px 0; }
+    .row-4, .row-3 { grid-template-columns: 1fr; }
+    .title-bar h1 { font-size: 18px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ============ TITLE BAR ============ -->
+<div class="title-bar">
+  <h1>Executive Overview — <span class="accent">OllieBot</span> Agent System</h1>
+  <div class="meta">
+    <span class="timestamp">Feb 13, 2026 14:30 UTC</span>
+    <span class="synopsis">High-level operational health and performance metrics across all agent activities.</span>
+  </div>
+</div>
+
+<!-- ============ INFO PANEL ============ -->
+<div class="info-panel">
+  <button class="info-toggle" id="infoToggle" onclick="toggleInfo()">
+    <span class="arrow">&#9654;</span> Interactivity Guide
+  </button>
+  <div class="info-body" id="infoBody">
+    Hover charts for tooltips. Click legend items to toggle series. Use scroll zoom on area charts. Drag gauges are interactive. Use the data zoom sliders at the bottom of trend charts to focus on a time range.
+  </div>
+</div>
+
+<div class="dashboard">
+
+  <!-- ============ KPI CARDS ============ -->
+  <div class="section-title">Key Performance Indicators</div>
+  <div class="row row-4">
+    <div class="card kpi-card">
+      <div class="kpi-left">
+        <div class="card-header">Active Missions</div>
+        <div class="kpi-value" style="color:var(--indigo)">12</div>
+        <span class="kpi-trend up-good">&#9650; +3 vs yesterday</span>
+      </div>
+      <div class="kpi-sparkline" id="spark1"></div>
+    </div>
+    <div class="card kpi-card">
+      <div class="kpi-left">
+        <div class="card-header">Success Rate</div>
+        <div class="kpi-value" style="color:var(--emerald)">97.2%</div>
+        <span class="kpi-trend down-bad">&#9660; -0.3%</span>
+      </div>
+      <div class="kpi-sparkline" id="spark2"></div>
+    </div>
+    <div class="card kpi-card">
+      <div class="kpi-left">
+        <div class="card-header">Avg Response Time</div>
+        <div class="kpi-value" style="color:var(--cyan)">1.4s</div>
+        <span class="kpi-trend down-good">&#9660; -0.2s</span>
+      </div>
+      <div class="kpi-sparkline" id="spark3"></div>
+    </div>
+    <div class="card kpi-card">
+      <div class="kpi-left">
+        <div class="card-header">Total Cost Today</div>
+        <div class="kpi-value" style="color:var(--amber)">$23.47</div>
+        <span class="kpi-trend up-bad">&#9650; +$4.12</span>
+      </div>
+      <div class="kpi-sparkline" id="spark4"></div>
+    </div>
+  </div>
+
+  <!-- ============ GAUGES ============ -->
+  <div class="section-title">System Health</div>
+  <div class="row row-3">
+    <div class="card chart-box">
+      <div class="card-header">CPU Utilization</div>
+      <div class="gauge-chart" id="gaugeCPU"></div>
+    </div>
+    <div class="card chart-box">
+      <div class="card-header">Memory Usage</div>
+      <div class="gauge-chart" id="gaugeMemory"></div>
+    </div>
+    <div class="card chart-box">
+      <div class="card-header">LLM API Health</div>
+      <div class="gauge-chart" id="gaugeAPI"></div>
+    </div>
+  </div>
+
+  <!-- ============ TREND LINE CHART ============ -->
+  <div class="section-title">Mission Performance</div>
+  <div class="row row-1">
+    <div class="card chart-box">
+      <div class="card-header">Mission Volume &amp; Success Rate (30 Days)</div>
+      <div class="chart-tall" id="chartTrend"></div>
+    </div>
+  </div>
+
+  <!-- ============ DONUT + STACKED AREA ============ -->
+  <div class="section-title">Breakdown &amp; Token Usage</div>
+  <div class="row row-2">
+    <div class="card chart-box">
+      <div class="card-header">Mission Types Distribution</div>
+      <div class="chart-tall" id="chartDonut"></div>
+    </div>
+    <div class="card chart-box">
+      <div class="card-header">Token Usage Trend (7 Days)</div>
+      <div class="chart-tall" id="chartTokens"></div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+/* ========================================================================
+   DATA
+   ======================================================================== */
+
+// 7-day sparkline data
+const sparkData = {
+  missions:    [6, 7, 9, 8, 10, 9, 12],
+  successRate: [97.8, 97.6, 97.5, 97.9, 97.4, 97.5, 97.2],
+  responseTime:[1.9, 1.8, 1.7, 1.6, 1.5, 1.6, 1.4],
+  cost:        [18.20, 16.50, 19.30, 21.10, 17.80, 19.35, 23.47]
+};
+
+// 30-day trend data
+const trendDates = [];
+const trendMissions = [];
+const trendSuccessRate = [];
+(function() {
+  const base = new Date(2026, 0, 15); // Jan 15
+  const missionBase = [
+    28,32,25,30,35,22,18,33,29,31,
+    27,34,36,24,20,38,30,26,33,35,
+    29,31,37,23,19,40,32,28,34,36
+  ];
+  const successBase = [
+    96.5,97.1,96.8,97.3,97.0,96.2,95.8,97.5,96.9,97.2,
+    96.7,97.4,97.6,96.3,95.9,97.8,97.1,96.6,97.3,97.5,
+    97.0,97.2,97.7,96.4,96.0,98.0,97.3,96.8,97.5,97.2
+  ];
+  for (var i = 0; i < 30; i++) {
+    var d = new Date(base);
+    d.setDate(base.getDate() + i);
+    trendDates.push((d.getMonth()+1) + '/' + d.getDate());
+    trendMissions.push(missionBase[i]);
+    trendSuccessRate.push(successBase[i]);
+  }
+})();
+
+// Donut data
+const donutData = [
+  { name: 'Code Generation', value: 35, count: 1247 },
+  { name: 'Bug Fix',         value: 25, count: 891  },
+  { name: 'Research',        value: 20, count: 713  },
+  { name: 'Documentation',   value: 12, count: 428  },
+  { name: 'Refactoring',     value: 8,  count: 285  }
+];
+
+// Token usage 7 days
+const tokenDays = ['Feb 7','Feb 8','Feb 9','Feb 10','Feb 11','Feb 12','Feb 13'];
+const tokenInput  = [124000, 138000, 115000, 142000, 131000, 149000, 156000];
+const tokenOutput = [89000,  95000,  82000, 101000,  93000, 108000, 112000];
+const tokenCache  = [45000,  52000,  41000,  58000,  49000,  62000,  67000];
+
+/* ========================================================================
+   UTILITY
+   ======================================================================== */
+function toggleInfo() {
+  var btn = document.getElementById('infoToggle');
+  var body = document.getElementById('infoBody');
+  btn.classList.toggle('open');
+  body.classList.toggle('open');
+}
+
+/* ========================================================================
+   SPARKLINES
+   ======================================================================== */
+function makeSparkline(el, data, color) {
+  var chart = echarts.init(document.getElementById(el));
+  chart.setOption({
+    animation: true,
+    animationDuration: 800,
+    grid: { top: 4, right: 2, bottom: 4, left: 2 },
+    xAxis: { type: 'category', show: false, data: ['M','T','W','T','F','S','S'] },
+    yAxis: { type: 'value', show: false, min: function(v){ return v.min - (v.max-v.min)*0.3; } },
+    series: [{
+      type: 'line',
+      data: data,
+      smooth: true,
+      symbol: 'none',
+      lineStyle: { width: 2, color: color },
+      areaStyle: {
+        color: new echarts.graphic.LinearGradient(0,0,0,1,[
+          { offset: 0, color: color.replace(')', ',0.3)').replace('rgb','rgba') },
+          { offset: 1, color: color.replace(')', ',0.02)').replace('rgb','rgba') }
+        ])
+      }
+    }]
+  });
+  return chart;
+}
+
+var sparkCharts = [];
+sparkCharts.push(makeSparkline('spark1', sparkData.missions,    '#6366f1'));
+sparkCharts.push(makeSparkline('spark2', sparkData.successRate,  '#10b981'));
+sparkCharts.push(makeSparkline('spark3', sparkData.responseTime, '#22d3ee'));
+sparkCharts.push(makeSparkline('spark4', sparkData.cost,         '#f59e0b'));
+
+/* ========================================================================
+   GAUGE CHARTS
+   ======================================================================== */
+function makeGauge(elId, value, title) {
+  var chart = echarts.init(document.getElementById(elId));
+  chart.setOption({
+    animation: true,
+    animationDuration: 1400,
+    animationEasing: 'elasticOut',
+    series: [{
+      type: 'gauge',
+      startAngle: 210,
+      endAngle: -30,
+      radius: '90%',
+      center: ['50%', '55%'],
+      min: 0,
+      max: 100,
+      splitNumber: 10,
+      axisLine: {
+        lineStyle: {
+          width: 14,
+          color: [
+            [0.6,  '#10b981'],
+            [0.8,  '#f59e0b'],
+            [1,    '#ef4444']
+          ]
+        }
+      },
+      pointer: {
+        icon: 'path://M12.8,0.7l12,40.1H0.7L12.8,0.7z',
+        length: '55%',
+        width: 8,
+        offsetCenter: [0, '-10%'],
+        itemStyle: { color: 'auto' }
+      },
+      axisTick: {
+        length: 6,
+        lineStyle: { color: 'auto', width: 1 }
+      },
+      splitLine: {
+        length: 12,
+        lineStyle: { color: 'auto', width: 2 }
+      },
+      axisLabel: {
+        color: '#8b8fa3',
+        fontSize: 10,
+        distance: 20,
+        formatter: function(v) { return v % 20 === 0 ? v : ''; }
+      },
+      title: {
+        show: false
+      },
+      detail: {
+        fontSize: 28,
+        fontWeight: 700,
+        offsetCenter: [0, '40%'],
+        valueAnimation: true,
+        formatter: function(v) { return v + '%'; },
+        color: '#e0e0e0'
+      },
+      data: [{ value: value, name: title }]
+    }]
+  });
+  return chart;
+}
+
+var gaugeCharts = [];
+gaugeCharts.push(makeGauge('gaugeCPU', 67, 'CPU'));
+gaugeCharts.push(makeGauge('gaugeMemory', 54, 'Memory'));
+
+// API Health gauge with adjusted scale (95-100)
+(function() {
+  var chart = echarts.init(document.getElementById('gaugeAPI'));
+  chart.setOption({
+    animation: true,
+    animationDuration: 1400,
+    animationEasing: 'elasticOut',
+    series: [{
+      type: 'gauge',
+      startAngle: 210,
+      endAngle: -30,
+      radius: '90%',
+      center: ['50%', '55%'],
+      min: 95,
+      max: 100,
+      splitNumber: 5,
+      axisLine: {
+        lineStyle: {
+          width: 14,
+          color: [
+            [0.4,  '#ef4444'],
+            [0.7,  '#f59e0b'],
+            [1,    '#10b981']
+          ]
+        }
+      },
+      pointer: {
+        icon: 'path://M12.8,0.7l12,40.1H0.7L12.8,0.7z',
+        length: '55%',
+        width: 8,
+        offsetCenter: [0, '-10%'],
+        itemStyle: { color: 'auto' }
+      },
+      axisTick: {
+        length: 6,
+        lineStyle: { color: 'auto', width: 1 }
+      },
+      splitLine: {
+        length: 12,
+        lineStyle: { color: 'auto', width: 2 }
+      },
+      axisLabel: {
+        color: '#8b8fa3',
+        fontSize: 10,
+        distance: 20,
+        formatter: function(v) { return v.toFixed(0); }
+      },
+      title: { show: false },
+      detail: {
+        fontSize: 28,
+        fontWeight: 700,
+        offsetCenter: [0, '40%'],
+        valueAnimation: true,
+        formatter: function(v) { return v + '%'; },
+        color: '#e0e0e0'
+      },
+      data: [{ value: 99.8, name: 'API' }]
+    }]
+  });
+  gaugeCharts.push(chart);
+})();
+
+/* ========================================================================
+   TREND CHART — Mission Volume & Success Rate (30 days)
+   ======================================================================== */
+(function() {
+  var chart = echarts.init(document.getElementById('chartTrend'));
+  chart.setOption({
+    animation: true,
+    animationDuration: 1000,
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: 'rgba(26,29,39,0.95)',
+      borderColor: '#2a2d37',
+      textStyle: { color: '#e0e0e0', fontSize: 12 },
+      axisPointer: { type: 'cross', crossStyle: { color: '#8b8fa3' } }
+    },
+    legend: {
+      data: ['Mission Count', 'Success Rate'],
+      textStyle: { color: '#8b8fa3', fontSize: 12 },
+      top: 4,
+      right: 16
+    },
+    grid: { top: 42, right: 60, bottom: 72, left: 56 },
+    dataZoom: [{
+      type: 'slider',
+      start: 0,
+      end: 100,
+      height: 22,
+      bottom: 8,
+      borderColor: '#2a2d37',
+      backgroundColor: 'rgba(26,29,39,0.6)',
+      fillerColor: 'rgba(99,102,241,0.15)',
+      handleStyle: { color: '#6366f1' },
+      textStyle: { color: '#8b8fa3' },
+      dataBackground: {
+        lineStyle: { color: '#6366f1', opacity: 0.4 },
+        areaStyle: { color: '#6366f1', opacity: 0.08 }
+      }
+    }],
+    xAxis: {
+      type: 'category',
+      data: trendDates,
+      axisLabel: { color: '#8b8fa3', fontSize: 11 },
+      axisLine: { lineStyle: { color: '#2a2d37' } },
+      axisTick: { lineStyle: { color: '#2a2d37' } }
+    },
+    yAxis: [
+      {
+        type: 'value',
+        name: 'Missions',
+        nameTextStyle: { color: '#8b8fa3', fontSize: 11, padding: [0,40,0,0] },
+        axisLabel: { color: '#8b8fa3', fontSize: 11 },
+        splitLine: { lineStyle: { color: '#2a2d37', type: 'dashed' } },
+        axisLine: { show: false }
+      },
+      {
+        type: 'value',
+        name: 'Success %',
+        min: 94,
+        max: 100,
+        nameTextStyle: { color: '#8b8fa3', fontSize: 11, padding: [0,0,0,40] },
+        axisLabel: { color: '#8b8fa3', fontSize: 11, formatter: '{value}%' },
+        splitLine: { show: false },
+        axisLine: { show: false }
+      }
+    ],
+    series: [
+      {
+        name: 'Mission Count',
+        type: 'bar',
+        barMaxWidth: 18,
+        itemStyle: {
+          color: new echarts.graphic.LinearGradient(0,0,0,1,[
+            { offset: 0, color: '#6366f1' },
+            { offset: 1, color: 'rgba(99,102,241,0.25)' }
+          ]),
+          borderRadius: [3,3,0,0]
+        },
+        data: trendMissions
+      },
+      {
+        name: 'Success Rate',
+        type: 'line',
+        yAxisIndex: 1,
+        smooth: true,
+        symbol: 'circle',
+        symbolSize: 6,
+        lineStyle: { color: '#22d3ee', width: 2.5 },
+        itemStyle: { color: '#22d3ee', borderColor: '#1a1d27', borderWidth: 2 },
+        areaStyle: {
+          color: new echarts.graphic.LinearGradient(0,0,0,1,[
+            { offset: 0, color: 'rgba(34,211,238,0.18)' },
+            { offset: 1, color: 'rgba(34,211,238,0.01)' }
+          ])
+        },
+        data: trendSuccessRate
+      }
+    ]
+  });
+  window.addEventListener('resize', function() { chart.resize(); });
+})();
+
+/* ========================================================================
+   DONUT CHART — Mission Types Distribution
+   ======================================================================== */
+(function() {
+  var chart = echarts.init(document.getElementById('chartDonut'));
+  var colors = ['#6366f1','#22d3ee','#10b981','#f59e0b','#ef4444'];
+  var total = donutData.reduce(function(s,d){ return s+d.count; }, 0);
+
+  chart.setOption({
+    animation: true,
+    animationDuration: 1200,
+    tooltip: {
+      trigger: 'item',
+      backgroundColor: 'rgba(26,29,39,0.95)',
+      borderColor: '#2a2d37',
+      textStyle: { color: '#e0e0e0', fontSize: 12 },
+      formatter: function(p) {
+        return '<b>' + p.name + '</b><br/>' +
+               p.data.count + ' missions (' + p.percent + '%)';
+      }
+    },
+    legend: {
+      orient: 'vertical',
+      right: 16,
+      top: 'middle',
+      textStyle: { color: '#8b8fa3', fontSize: 12 },
+      icon: 'circle',
+      itemWidth: 10,
+      itemGap: 14,
+      formatter: function(name) {
+        var item = donutData.find(function(d){ return d.name === name; });
+        return name + '  ' + item.value + '%';
+      }
+    },
+    color: colors,
+    series: [{
+      type: 'pie',
+      radius: ['48%', '72%'],
+      center: ['38%', '50%'],
+      avoidLabelOverlap: true,
+      itemStyle: {
+        borderRadius: 6,
+        borderColor: '#1a1d27',
+        borderWidth: 3
+      },
+      label: {
+        show: true,
+        position: 'outside',
+        formatter: function(p) {
+          return '{name|' + p.name + '}\n{pct|' + p.percent + '%}  {cnt|' + p.data.count + '}';
+        },
+        rich: {
+          name: { fontSize: 12, color: '#e0e0e0', lineHeight: 18 },
+          pct:  { fontSize: 13, fontWeight: 700, color: '#6366f1', lineHeight: 18 },
+          cnt:  { fontSize: 11, color: '#8b8fa3', lineHeight: 18 }
+        }
+      },
+      labelLine: {
+        length: 14,
+        length2: 10,
+        lineStyle: { color: '#2a2d37', width: 1 }
+      },
+      emphasis: {
+        scaleSize: 8,
+        itemStyle: { shadowBlur: 16, shadowColor: 'rgba(99,102,241,0.3)' }
+      },
+      data: donutData
+    }]
+  });
+  window.addEventListener('resize', function() { chart.resize(); });
+})();
+
+/* ========================================================================
+   STACKED AREA CHART — Token Usage Trend (7 days)
+   ======================================================================== */
+(function() {
+  var chart = echarts.init(document.getElementById('chartTokens'));
+
+  function makeGradient(r,g,b) {
+    return new echarts.graphic.LinearGradient(0,0,0,1,[
+      { offset: 0, color: 'rgba('+r+','+g+','+b+',0.45)' },
+      { offset: 1, color: 'rgba('+r+','+g+','+b+',0.03)' }
+    ]);
+  }
+
+  function makeSeries(name, data, color, rgb) {
+    return {
+      name: name,
+      type: 'line',
+      stack: 'tokens',
+      smooth: true,
+      symbol: 'circle',
+      symbolSize: 5,
+      lineStyle: { width: 2, color: color },
+      itemStyle: { color: color, borderColor: '#1a1d27', borderWidth: 2 },
+      areaStyle: { color: makeGradient(rgb[0],rgb[1],rgb[2]) },
+      emphasis: { focus: 'series' },
+      data: data
+    };
+  }
+
+  chart.setOption({
+    animation: true,
+    animationDuration: 1000,
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: 'rgba(26,29,39,0.95)',
+      borderColor: '#2a2d37',
+      textStyle: { color: '#e0e0e0', fontSize: 12 },
+      valueFormatter: function(v) { return (v/1000).toFixed(0) + 'k tokens'; }
+    },
+    legend: {
+      data: ['Input Tokens','Output Tokens','Cache Tokens'],
+      textStyle: { color: '#8b8fa3', fontSize: 12 },
+      top: 4,
+      right: 12
+    },
+    grid: { top: 42, right: 20, bottom: 72, left: 60 },
+    dataZoom: [{
+      type: 'slider',
+      start: 0,
+      end: 100,
+      height: 22,
+      bottom: 8,
+      borderColor: '#2a2d37',
+      backgroundColor: 'rgba(26,29,39,0.6)',
+      fillerColor: 'rgba(99,102,241,0.15)',
+      handleStyle: { color: '#6366f1' },
+      textStyle: { color: '#8b8fa3' },
+      dataBackground: {
+        lineStyle: { color: '#10b981', opacity: 0.4 },
+        areaStyle: { color: '#10b981', opacity: 0.08 }
+      }
+    }],
+    xAxis: {
+      type: 'category',
+      boundaryGap: false,
+      data: tokenDays,
+      axisLabel: { color: '#8b8fa3', fontSize: 11 },
+      axisLine: { lineStyle: { color: '#2a2d37' } },
+      axisTick: { lineStyle: { color: '#2a2d37' } }
+    },
+    yAxis: {
+      type: 'value',
+      axisLabel: {
+        color: '#8b8fa3',
+        fontSize: 11,
+        formatter: function(v) { return (v/1000).toFixed(0) + 'k'; }
+      },
+      splitLine: { lineStyle: { color: '#2a2d37', type: 'dashed' } },
+      axisLine: { show: false }
+    },
+    series: [
+      makeSeries('Input Tokens',  tokenInput,  '#6366f1', [99,102,241]),
+      makeSeries('Output Tokens', tokenOutput, '#22d3ee', [34,211,238]),
+      makeSeries('Cache Tokens',  tokenCache,  '#10b981', [16,185,129])
+    ]
+  });
+  window.addEventListener('resize', function() { chart.resize(); });
+})();
+
+/* ========================================================================
+   GLOBAL RESIZE
+   ======================================================================== */
+window.addEventListener('resize', function() {
+  sparkCharts.forEach(function(c) { c.resize(); });
+  gaugeCharts.forEach(function(c) { c.resize(); });
+});
+</script>
+</body>
+</html>

@@ -108,13 +108,27 @@ const mockLLMService = {
   generateStream: vi.fn(),
   generateWithToolsStream: vi.fn(),
   quickGenerate: vi.fn().mockResolvedValue({ content: 'Generated Title' }),
-  pushContext: vi.fn(),
-  popContext: vi.fn(),
+  // runWithContext executes the callback and returns its result (handles async properly)
+  runWithContext: vi.fn(<T>(ctx: unknown, fn: () => T): T => fn()),
 };
 
 // Mock registry
 const mockRegistry = {
   loadAgentPrompt: vi.fn(() => 'System prompt'),
+  loadAgentConfig: vi.fn(() => ({
+    identity: {
+      id: 'supervisor-main',
+      name: 'OllieBot',
+      emoji: '🐙',
+      role: 'supervisor',
+      description: 'Test supervisor',
+    },
+    capabilities: {
+      canAccessTools: ['*'],  // Allow all tools for testing
+      canAccessMCP: [],
+      canAccessSkills: [],
+    },
+  })),
   getSpecialistTypes: vi.fn(() => ['researcher', 'coder']),
   getSpecialistTemplate: vi.fn((type: string) => ({
     identity: { id: type, name: type, emoji: '🤖', role: 'specialist', description: 'Test' },

@@ -1,0 +1,24 @@
+{
+  "type": "deep-research-lead",
+  "identity": {
+    "name": "Deep Research Lead",
+    "emoji": "🔬",
+    "role": "specialist",
+    "description": "Orchestrates comprehensive multi-source research tasks"
+  },
+  "canAccessTools": [
+    "web_search",
+    "web_scrape",
+    "wikipedia_search",
+    "delegate",
+    "mcp.*"
+  ],
+  "delegation": {
+    "canDelegate": true,
+    "allowedDelegates": ["research-worker"],
+    "restrictedToWorkflow": null,
+    "supervisorCanInvoke": true,
+    "commandTrigger": "Deep Research",
+    "commandOnly": true
+  }
+}

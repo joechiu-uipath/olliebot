@@ -7,7 +7,6 @@ export * from './web-search.js';
 export * from './web-scrape.js';
 export * from './wikipedia-search.js';
 export * from './take-screenshot.js';
-export * from './analyze-image.js';
 export * from './create-image.js';
 export * from './remember.js';
 export * from './read-agent-skill.js';
@@ -19,5 +18,10 @@ export * from './speak.js';
 export * from './generate-python.js';
 export * from './run-python.js';
 export * from './website-crawler.js';
+export * from './mission-todo-create.js';
+export * from './mission-todo-update.js';
+export * from './mission-todo-complete.js';
+export * from './mission-metric-record.js';
+export * from './mission-update-dashboard.js';
 
 // Frontend code tools moved to src/self-coding/tools/

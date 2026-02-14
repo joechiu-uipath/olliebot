@@ -1,0 +1,722 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agent Performance Ranking Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.6.0/dist/echarts.min.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: #0f1117;
+    color: #e0e0e0;
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    line-height: 1.5;
+    min-height: 100vh;
+    padding: 24px 32px 48px;
+  }
+
+  /* ---- Header ---- */
+  .dashboard-header {
+    margin-bottom: 28px;
+    border-bottom: 1px solid #2a2d37;
+    padding-bottom: 20px;
+  }
+  .dashboard-header h1 {
+    font-size: 1.55rem;
+    font-weight: 700;
+    color: #e0e0e0;
+    letter-spacing: -0.01em;
+  }
+  .dashboard-header .meta {
+    display: flex;
+    gap: 18px;
+    align-items: center;
+    margin-top: 6px;
+    font-size: 0.8rem;
+    color: #8b8fa3;
+  }
+  .dashboard-header .meta .timestamp::before {
+    content: '';
+    display: inline-block;
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: #10b981;
+    margin-right: 6px;
+    vertical-align: middle;
+  }
+  .dashboard-header .synopsis {
+    margin-top: 10px;
+    font-size: 0.85rem;
+    color: #8b8fa3;
+    max-width: 820px;
+  }
+
+  /* ---- Interactivity hint ---- */
+  .interaction-hint {
+    background: linear-gradient(135deg, rgba(99,102,241,0.10), rgba(34,211,238,0.08));
+    border: 1px solid #2a2d37;
+    border-left: 3px solid #6366f1;
+    border-radius: 6px;
+    padding: 10px 16px;
+    margin-bottom: 24px;
+    font-size: 0.78rem;
+    color: #8b8fa3;
+  }
+  .interaction-hint strong { color: #6366f1; }
+
+  /* ---- KPI Cards ---- */
+  .kpi-row {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+  .kpi-card {
+    background: #1a1d27;
+    border: 1px solid #2a2d37;
+    border-radius: 8px;
+    padding: 18px 20px;
+    position: relative;
+    overflow: hidden;
+  }
+  .kpi-card::after {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+  }
+  .kpi-card:nth-child(1)::after { background: linear-gradient(90deg, #f59e0b, #f59e0b80); }
+  .kpi-card:nth-child(2)::after { background: linear-gradient(90deg, #10b981, #10b98180); }
+  .kpi-card:nth-child(3)::after { background: linear-gradient(90deg, #6366f1, #6366f180); }
+  .kpi-label {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #8b8fa3;
+    margin-bottom: 6px;
+  }
+  .kpi-value {
+    font-size: 1.35rem;
+    font-weight: 700;
+    color: #e0e0e0;
+  }
+  .kpi-sub {
+    font-size: 0.75rem;
+    color: #8b8fa3;
+    margin-top: 4px;
+  }
+  .kpi-sub .positive { color: #10b981; }
+  .kpi-sub .gold { color: #f59e0b; }
+
+  /* ---- Card wrapper ---- */
+  .card {
+    background: #1a1d27;
+    border: 1px solid #2a2d37;
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 20px;
+  }
+  .card h2 {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #e0e0e0;
+    margin-bottom: 14px;
+  }
+
+  /* ---- Two-col layout ---- */
+  .two-col {
+    display: grid;
+    grid-template-columns: 1.4fr 1fr;
+    gap: 20px;
+    margin-bottom: 20px;
+  }
+
+  /* ---- Sparklines grid ---- */
+  .sparklines-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 14px;
+  }
+  .spark-cell {
+    background: #14161f;
+    border: 1px solid #2a2d37;
+    border-radius: 6px;
+    padding: 10px 12px 6px;
+  }
+  .spark-cell .spark-title {
+    font-size: 0.73rem;
+    color: #8b8fa3;
+    margin-bottom: 4px;
+  }
+  .spark-cell .spark-title .score { color: #e0e0e0; font-weight: 600; }
+
+  /* ---- Table ---- */
+  .table-wrap { overflow-x: auto; }
+  table.metrics-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8rem;
+  }
+  table.metrics-table thead th {
+    background: #14161f;
+    color: #8b8fa3;
+    font-weight: 600;
+    text-align: left;
+    padding: 10px 14px;
+    border-bottom: 2px solid #2a2d37;
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+    position: relative;
+  }
+  table.metrics-table thead th:hover { color: #e0e0e0; }
+  table.metrics-table thead th .sort-arrow {
+    margin-left: 4px;
+    font-size: 0.65rem;
+    color: #6366f1;
+  }
+  table.metrics-table tbody td {
+    padding: 10px 14px;
+    border-bottom: 1px solid #1e2130;
+    color: #e0e0e0;
+  }
+  table.metrics-table tbody tr:nth-child(even) td { background: #14161f; }
+  table.metrics-table tbody tr:nth-child(odd) td { background: #1a1d27; }
+  table.metrics-table tbody tr.gold-row td {
+    background: rgba(245,158,11,0.08);
+    border-top: 1px solid rgba(245,158,11,0.25);
+    border-bottom: 1px solid rgba(245,158,11,0.25);
+  }
+  table.metrics-table tbody tr.gold-row td:first-child {
+    box-shadow: inset 3px 0 0 #f59e0b;
+  }
+
+  /* ---- Responsive ---- */
+  @media (max-width: 960px) {
+    .two-col { grid-template-columns: 1fr; }
+    .kpi-row { grid-template-columns: 1fr; }
+    .sparklines-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+</style>
+</head>
+<body>
+
+<!-- ===== Header ===== -->
+<header class="dashboard-header">
+  <h1>Agent Performance Ranking — Effectiveness &amp; Efficiency Leaderboard</h1>
+  <div class="meta">
+    <span class="timestamp">Live</span>
+    <span>Last updated: <span id="timestamp-val"></span></span>
+    <span>|</span>
+    <span>Reporting window: 14 days</span>
+  </div>
+  <p class="synopsis">Ranks agents by composite performance score combining success rate, speed, cost efficiency, and task complexity.</p>
+</header>
+
+<!-- ===== Interactivity Hint ===== -->
+<div class="interaction-hint">
+  <strong>Interactivity:</strong> Click column headers to sort table. Hover bars for detailed metrics. Click radar to compare agents.
+</div>
+
+<!-- ===== KPI Cards ===== -->
+<div class="kpi-row">
+  <div class="kpi-card">
+    <div class="kpi-label">Best Agent</div>
+    <div class="kpi-value">Coder Agent</div>
+    <div class="kpi-sub"><span class="gold">Score 94.2</span> &mdash; Top performer across all metrics</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Most Improved</div>
+    <div class="kpi-value">Researcher</div>
+    <div class="kpi-sub"><span class="positive">+12%</span> composite score vs. prior period</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Agents Tracked</div>
+    <div class="kpi-value">6</div>
+    <div class="kpi-sub">Active agents evaluated this cycle</div>
+  </div>
+</div>
+
+<!-- ===== Horizontal Bar + Radar ===== -->
+<div class="two-col">
+  <div class="card">
+    <h2>Agent Composite Score Ranking</h2>
+    <div id="chart-bar" style="width:100%;height:380px;"></div>
+  </div>
+  <div class="card">
+    <h2>Agent Capability Profiles</h2>
+    <div id="chart-radar" style="width:100%;height:380px;"></div>
+  </div>
+</div>
+
+<!-- ===== Sparklines ===== -->
+<div class="card">
+  <h2>Daily Performance Trend (14 Days)</h2>
+  <div class="sparklines-grid" id="sparklines-grid"></div>
+</div>
+
+<!-- ===== Grouped Bar ===== -->
+<div class="card">
+  <h2>Missions Completed by Agent (Last 7 Days)</h2>
+  <div id="chart-grouped" style="width:100%;height:380px;"></div>
+</div>
+
+<!-- ===== Table ===== -->
+<div class="card">
+  <h2>Agent Metrics Detail</h2>
+  <div class="table-wrap">
+    <table class="metrics-table" id="agent-table">
+      <thead>
+        <tr>
+          <th data-key="rank" data-type="num">Rank <span class="sort-arrow"></span></th>
+          <th data-key="agent" data-type="str">Agent <span class="sort-arrow"></span></th>
+          <th data-key="score" data-type="num">Score <span class="sort-arrow"></span></th>
+          <th data-key="missions" data-type="num">Missions <span class="sort-arrow"></span></th>
+          <th data-key="success" data-type="num">Success Rate <span class="sort-arrow"></span></th>
+          <th data-key="latency" data-type="num">Avg Latency <span class="sort-arrow"></span></th>
+          <th data-key="tokens" data-type="num">Tokens/Mission <span class="sort-arrow"></span></th>
+          <th data-key="cost" data-type="num">Cost/Mission <span class="sort-arrow"></span></th>
+        </tr>
+      </thead>
+      <tbody id="agent-tbody"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+// =====================================================================
+// DATA
+// =====================================================================
+const AGENTS = [
+  { name: 'Coder Agent',    emoji: '\u{1F4BB}', color: '#6366f1' },
+  { name: 'Researcher',     emoji: '\u{1F50D}', color: '#22d3ee' },
+  { name: 'Planner',        emoji: '\u{1F4CB}', color: '#10b981' },
+  { name: 'Reviewer',       emoji: '\u{1F9D0}', color: '#f59e0b' },
+  { name: 'Deployer',       emoji: '\u{1F680}', color: '#f43f5e' },
+  { name: 'Data Analyst',   emoji: '\u{1F4CA}', color: '#a78bfa' }
+];
+
+// Composite score breakdown: Quality, Speed, CostEff, Reliability (sum = composite)
+const SCORES = [
+  { quality: 28.5, speed: 24.2, costEff: 20.0, reliability: 21.5 }, // Coder 94.2
+  { quality: 24.0, speed: 20.5, costEff: 21.0, reliability: 20.0 }, // Researcher 85.5
+  { quality: 22.0, speed: 22.0, costEff: 19.5, reliability: 18.5 }, // Planner 82.0
+  { quality: 23.5, speed: 18.0, costEff: 18.0, reliability: 19.0 }, // Reviewer 78.5
+  { quality: 20.0, speed: 21.5, costEff: 16.5, reliability: 17.5 }, // Deployer 75.5
+  { quality: 21.0, speed: 17.0, costEff: 17.5, reliability: 16.5 }  // Data Analyst 72.0
+];
+
+const COMPOSITE = SCORES.map(s => +(s.quality + s.speed + s.costEff + s.reliability).toFixed(1));
+
+// Radar data — 5 axes per agent (all 0-100)
+const RADAR_AXES = ['Task Success Rate', 'Avg Response Time\n(inverted)', 'Token Efficiency', 'Error Recovery', 'Complexity Handled'];
+const RADAR_DATA = [
+  [96, 88, 80, 90, 94],  // Coder
+  [88, 75, 85, 82, 78],  // Researcher
+  [84, 82, 78, 76, 80],  // Planner
+  [90, 65, 72, 78, 74],  // Reviewer
+  [78, 80, 68, 72, 76],  // Deployer
+  [82, 62, 74, 68, 70]   // Data Analyst
+];
+
+// Sparkline 14-day performance
+const SPARK_DATA = [
+  [88,89,90,91,90,92,93,92,93,94,93,94,94,94],
+  [72,73,74,76,78,79,80,81,82,83,84,84,85,86],
+  [78,79,78,80,80,81,80,82,81,82,82,83,82,82],
+  [76,75,77,76,78,77,78,78,79,78,79,78,79,79],
+  [70,72,71,73,72,74,73,75,74,75,75,76,75,76],
+  [68,69,70,69,71,70,72,71,72,71,72,72,73,72]
+];
+
+// Missions per agent per day (7 days)
+const DAYS_LABELS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const MISSIONS_DATA = [
+  [12, 15, 14, 18, 16, 8, 10],  // Coder
+  [10, 11, 13, 12, 14, 6,  8],  // Researcher
+  [ 8,  9, 10, 11,  9, 5,  7],  // Planner
+  [ 7,  8,  9,  8, 10, 4,  6],  // Reviewer
+  [ 6,  7,  8,  9,  7, 3,  5],  // Deployer
+  [ 9, 10,  8, 10, 11, 5,  7]   // Data Analyst
+];
+
+// Table data
+const TABLE_DATA = [
+  { rank:1, agent:'Coder Agent',  score:94.2, missions:93, success:'96.8%', latency:'1.2s',  tokens:'1,840',  cost:'$0.032' },
+  { rank:2, agent:'Researcher',   score:85.5, missions:84, success:'91.7%', latency:'2.1s',  tokens:'2,250',  cost:'$0.041' },
+  { rank:3, agent:'Planner',      score:82.0, missions:69, success:'89.9%', latency:'1.6s',  tokens:'1,980',  cost:'$0.036' },
+  { rank:4, agent:'Reviewer',     score:78.5, missions:52, success:'92.3%', latency:'2.8s',  tokens:'2,580',  cost:'$0.048' },
+  { rank:5, agent:'Deployer',     score:75.5, missions:45, success:'86.7%', latency:'1.9s',  tokens:'2,120',  cost:'$0.039' },
+  { rank:6, agent:'Data Analyst', score:72.0, missions:60, success:'88.3%', latency:'3.1s',  tokens:'2,890',  cost:'$0.054' }
+];
+
+// =====================================================================
+// TIMESTAMP
+// =====================================================================
+document.getElementById('timestamp-val').textContent = new Date().toLocaleString('en-US', {
+  year:'numeric', month:'short', day:'numeric', hour:'2-digit', minute:'2-digit', second:'2-digit'
+});
+
+// =====================================================================
+// 1. HORIZONTAL STACKED BAR — COMPOSITE SCORE RANKING
+// =====================================================================
+(function() {
+  var chart = echarts.init(document.getElementById('chart-bar'));
+
+  // Sort agents by composite score descending for display (lowest at top so highest is at bottom visually in horizontal bar)
+  var indices = [0,1,2,3,4,5];
+  indices.sort(function(a,b){ return COMPOSITE[a] - COMPOSITE[b]; });
+
+  var yLabels = indices.map(function(i){ return AGENTS[i].emoji + ' ' + AGENTS[i].name; });
+  var qualityArr = indices.map(function(i){ return SCORES[i].quality; });
+  var speedArr   = indices.map(function(i){ return SCORES[i].speed; });
+  var costArr    = indices.map(function(i){ return SCORES[i].costEff; });
+  var reliArr    = indices.map(function(i){ return SCORES[i].reliability; });
+  var totals     = indices.map(function(i){ return COMPOSITE[i]; });
+
+  chart.setOption({
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'shadow' },
+      backgroundColor: '#1a1d27',
+      borderColor: '#2a2d37',
+      textStyle: { color: '#e0e0e0', fontSize: 12 },
+      formatter: function(params) {
+        var idx = params[0].dataIndex;
+        var total = totals[idx];
+        var lines = '<b>' + yLabels[idx] + '</b><br/>';
+        params.forEach(function(p) {
+          lines += '<span style="color:' + p.color + ';">\u25CF</span> ' + p.seriesName + ': <b>' + p.value + '</b><br/>';
+        });
+        lines += '<br/>Composite Score: <b>' + total + '</b>';
+        return lines;
+      }
+    },
+    grid: { left: 140, right: 60, top: 10, bottom: 20 },
+    xAxis: {
+      type: 'value',
+      max: 100,
+      axisLabel: { color: '#8b8fa3', fontSize: 11 },
+      splitLine: { lineStyle: { color: '#1e2130' } },
+      axisLine: { lineStyle: { color: '#2a2d37' } }
+    },
+    yAxis: {
+      type: 'category',
+      data: yLabels,
+      axisLabel: { color: '#e0e0e0', fontSize: 12 },
+      axisLine: { lineStyle: { color: '#2a2d37' } },
+      axisTick: { show: false }
+    },
+    series: [
+      {
+        name: 'Quality',
+        type: 'bar',
+        stack: 'total',
+        data: qualityArr,
+        itemStyle: { color: '#10b981', borderRadius: [0,0,0,0] },
+        barWidth: 26
+      },
+      {
+        name: 'Speed',
+        type: 'bar',
+        stack: 'total',
+        data: speedArr,
+        itemStyle: { color: '#22d3ee' }
+      },
+      {
+        name: 'Cost Efficiency',
+        type: 'bar',
+        stack: 'total',
+        data: costArr,
+        itemStyle: { color: '#f59e0b' }
+      },
+      {
+        name: 'Reliability',
+        type: 'bar',
+        stack: 'total',
+        data: reliArr,
+        itemStyle: { color: '#6366f1' },
+        label: {
+          show: true,
+          position: 'right',
+          formatter: function(p) { return totals[p.dataIndex]; },
+          color: '#e0e0e0',
+          fontWeight: 'bold',
+          fontSize: 12
+        }
+      }
+    ]
+  });
+
+  window.addEventListener('resize', function(){ chart.resize(); });
+})();
+
+// =====================================================================
+// 2. RADAR CHART — AGENT CAPABILITY PROFILES
+// =====================================================================
+(function() {
+  var chart = echarts.init(document.getElementById('chart-radar'));
+
+  var radarSeries = AGENTS.map(function(agent, i) {
+    return {
+      value: RADAR_DATA[i],
+      name: agent.emoji + ' ' + agent.name,
+      lineStyle: { color: agent.color, width: 2 },
+      areaStyle: { color: agent.color, opacity: 0.10 },
+      itemStyle: { color: agent.color },
+      symbol: 'circle',
+      symbolSize: 5
+    };
+  });
+
+  chart.setOption({
+    tooltip: {
+      backgroundColor: '#1a1d27',
+      borderColor: '#2a2d37',
+      textStyle: { color: '#e0e0e0', fontSize: 12 }
+    },
+    legend: {
+      data: AGENTS.map(function(a){ return a.emoji + ' ' + a.name; }),
+      bottom: 0,
+      textStyle: { color: '#8b8fa3', fontSize: 10 },
+      itemWidth: 14,
+      itemHeight: 10,
+      selectedMode: 'multiple'
+    },
+    radar: {
+      indicator: RADAR_AXES.map(function(name) {
+        return { name: name, max: 100 };
+      }),
+      shape: 'polygon',
+      center: ['50%', '46%'],
+      radius: '60%',
+      axisName: { color: '#8b8fa3', fontSize: 10 },
+      splitArea: { areaStyle: { color: ['#14161f','#1a1d27','#14161f','#1a1d27','#14161f'] } },
+      splitLine: { lineStyle: { color: '#2a2d37' } },
+      axisLine: { lineStyle: { color: '#2a2d37' } }
+    },
+    series: [{
+      type: 'radar',
+      data: radarSeries
+    }]
+  });
+
+  window.addEventListener('resize', function(){ chart.resize(); });
+})();
+
+// =====================================================================
+// 3. SPARKLINES — 2x3 GRID
+// =====================================================================
+(function() {
+  var container = document.getElementById('sparklines-grid');
+  var sparkCharts = [];
+
+  AGENTS.forEach(function(agent, i) {
+    var cell = document.createElement('div');
+    cell.className = 'spark-cell';
+
+    var currentScore = SPARK_DATA[i][SPARK_DATA[i].length - 1];
+    cell.innerHTML = '<div class="spark-title">' + agent.emoji + ' ' + agent.name +
+      ' &mdash; <span class="score">' + currentScore + '</span></div>' +
+      '<div id="spark-' + i + '" style="width:100%;height:100px;"></div>';
+    container.appendChild(cell);
+
+    var sparkChart = echarts.init(document.getElementById('spark-' + i));
+    sparkChart.setOption({
+      grid: { left: 4, right: 4, top: 8, bottom: 4 },
+      xAxis: {
+        type: 'category',
+        show: false,
+        data: Array.from({length:14}, function(_,d){ return 'D' + (d+1); })
+      },
+      yAxis: {
+        type: 'value',
+        show: false,
+        min: function(v){ return v.min - 3; },
+        max: function(v){ return v.max + 2; }
+      },
+      tooltip: {
+        trigger: 'axis',
+        backgroundColor: '#1a1d27',
+        borderColor: '#2a2d37',
+        textStyle: { color: '#e0e0e0', fontSize: 11 },
+        formatter: function(params) {
+          return agent.name + '<br/>' + params[0].name + ': <b>' + params[0].value + '</b>';
+        }
+      },
+      series: [{
+        type: 'line',
+        data: SPARK_DATA[i],
+        smooth: true,
+        showSymbol: false,
+        lineStyle: { color: agent.color, width: 2 },
+        areaStyle: {
+          color: {
+            type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
+            colorStops: [
+              { offset: 0, color: agent.color + '40' },
+              { offset: 1, color: agent.color + '05' }
+            ]
+          }
+        },
+        itemStyle: { color: agent.color }
+      }]
+    });
+    sparkCharts.push(sparkChart);
+  });
+
+  window.addEventListener('resize', function() {
+    sparkCharts.forEach(function(c){ c.resize(); });
+  });
+})();
+
+// =====================================================================
+// 4. GROUPED BAR — MISSIONS COMPLETED BY AGENT (7 DAYS)
+// =====================================================================
+(function() {
+  var chart = echarts.init(document.getElementById('chart-grouped'));
+
+  var series = AGENTS.map(function(agent, i) {
+    return {
+      name: agent.emoji + ' ' + agent.name,
+      type: 'bar',
+      data: MISSIONS_DATA[i],
+      itemStyle: { color: agent.color, borderRadius: [2,2,0,0] },
+      barMaxWidth: 18
+    };
+  });
+
+  chart.setOption({
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'shadow' },
+      backgroundColor: '#1a1d27',
+      borderColor: '#2a2d37',
+      textStyle: { color: '#e0e0e0', fontSize: 12 }
+    },
+    legend: {
+      data: AGENTS.map(function(a){ return a.emoji + ' ' + a.name; }),
+      bottom: 28,
+      textStyle: { color: '#8b8fa3', fontSize: 10 },
+      itemWidth: 14,
+      itemHeight: 10
+    },
+    grid: { left: 50, right: 20, top: 14, bottom: 80 },
+    xAxis: {
+      type: 'category',
+      data: DAYS_LABELS,
+      axisLabel: { color: '#8b8fa3', fontSize: 11 },
+      axisLine: { lineStyle: { color: '#2a2d37' } },
+      axisTick: { show: false }
+    },
+    yAxis: {
+      type: 'value',
+      axisLabel: { color: '#8b8fa3', fontSize: 11 },
+      splitLine: { lineStyle: { color: '#1e2130' } },
+      axisLine: { lineStyle: { color: '#2a2d37' } }
+    },
+    dataZoom: [
+      {
+        type: 'slider',
+        xAxisIndex: 0,
+        bottom: 52,
+        height: 18,
+        borderColor: '#2a2d37',
+        backgroundColor: '#14161f',
+        fillerColor: 'rgba(99,102,241,0.15)',
+        handleStyle: { color: '#6366f1' },
+        textStyle: { color: '#8b8fa3', fontSize: 10 },
+        dataBackground: {
+          lineStyle: { color: '#2a2d37' },
+          areaStyle: { color: '#1a1d27' }
+        }
+      },
+      { type: 'inside', xAxisIndex: 0 }
+    ],
+    series: series
+  });
+
+  window.addEventListener('resize', function(){ chart.resize(); });
+})();
+
+// =====================================================================
+// 5. INTERACTIVE SORTABLE TABLE
+// =====================================================================
+(function() {
+  var tableData = TABLE_DATA.map(function(r){ return Object.assign({}, r); });
+  var tbody = document.getElementById('agent-tbody');
+  var thead = document.querySelector('#agent-table thead tr');
+  var ths = thead.querySelectorAll('th');
+
+  var currentSortKey = 'rank';
+  var currentSortDir = 'asc';
+
+  function parseNumeric(val) {
+    if (typeof val === 'number') return val;
+    var cleaned = String(val).replace(/[^0-9.\-]/g, '');
+    return parseFloat(cleaned) || 0;
+  }
+
+  function render() {
+    tbody.innerHTML = '';
+    tableData.forEach(function(row) {
+      var tr = document.createElement('tr');
+      if (row.rank === 1) tr.className = 'gold-row';
+
+      var cells = [row.rank, row.agent, row.score, row.missions, row.success, row.latency, row.tokens, row.cost];
+      cells.forEach(function(val) {
+        var td = document.createElement('td');
+        td.textContent = val;
+        tr.appendChild(td);
+      });
+      tbody.appendChild(tr);
+    });
+  }
+
+  function sortTable(key, type) {
+    if (currentSortKey === key) {
+      currentSortDir = currentSortDir === 'asc' ? 'desc' : 'asc';
+    } else {
+      currentSortKey = key;
+      currentSortDir = 'asc';
+    }
+
+    tableData.sort(function(a,b) {
+      var va, vb;
+      if (type === 'str') {
+        va = a[key]; vb = b[key];
+        return currentSortDir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va);
+      } else {
+        va = parseNumeric(a[key]); vb = parseNumeric(b[key]);
+        return currentSortDir === 'asc' ? va - vb : vb - va;
+      }
+    });
+
+    // Update sort arrows
+    ths.forEach(function(th) {
+      var arrow = th.querySelector('.sort-arrow');
+      if (th.getAttribute('data-key') === key) {
+        arrow.textContent = currentSortDir === 'asc' ? ' \u25B2' : ' \u25BC';
+      } else {
+        arrow.textContent = '';
+      }
+    });
+
+    render();
+  }
+
+  // Attach click handlers
+  ths.forEach(function(th) {
+    th.addEventListener('click', function() {
+      sortTable(th.getAttribute('data-key'), th.getAttribute('data-type'));
+    });
+  });
+
+  // Initial render with default sort
+  sortTable('rank', 'num');
+})();
+</script>
+</body>
+</html>

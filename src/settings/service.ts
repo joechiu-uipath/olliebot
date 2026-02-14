@@ -23,12 +23,15 @@ export interface TokenReductionSettings {
 export interface UserSettings {
   /** List of disabled MCP server IDs */
   disabled_mcps: string[];
+  /** List of disabled task names */
+  disabled_tasks: string[];
   /** Token reduction (prompt compression) settings */
   token_reduction: TokenReductionSettings;
 }
 
 const DEFAULT_SETTINGS: UserSettings = {
   disabled_mcps: [],
+  disabled_tasks: [],
   token_reduction: {
     enabledForMain: false,
     enabledForFast: false,
@@ -64,8 +67,9 @@ export class UserSettingsService {
       return {
         ...DEFAULT_SETTINGS,
         ...parsed,
-        // Ensure disabled_mcps is always an array
+        // Ensure arrays are always arrays
         disabled_mcps: Array.isArray(parsed.disabled_mcps) ? parsed.disabled_mcps : [],
+        disabled_tasks: Array.isArray(parsed.disabled_tasks) ? parsed.disabled_tasks : [],
         // Deep-merge token_reduction with defaults
         token_reduction: {
           ...DEFAULT_SETTINGS.token_reduction,
@@ -159,6 +163,58 @@ export class UserSettingsService {
    */
   getDisabledMcps(): string[] {
     return [...this.settings.disabled_mcps];
+  }
+
+  // ============================================================================
+  // Task Enable/Disable Methods
+  // ============================================================================
+
+  /**
+   * Check if a task is disabled
+   */
+  isTaskDisabled(taskName: string): boolean {
+    return this.settings.disabled_tasks.includes(taskName);
+  }
+
+  /**
+   * Disable a task (add to disabled list)
+   */
+  disableTask(taskName: string): void {
+    if (!this.settings.disabled_tasks.includes(taskName)) {
+      this.settings.disabled_tasks.push(taskName);
+      this.save();
+      console.log(`[UserSettings] Task disabled: ${taskName}`);
+    }
+  }
+
+  /**
+   * Enable a task (remove from disabled list)
+   */
+  enableTask(taskName: string): void {
+    const index = this.settings.disabled_tasks.indexOf(taskName);
+    if (index !== -1) {
+      this.settings.disabled_tasks.splice(index, 1);
+      this.save();
+      console.log(`[UserSettings] Task enabled: ${taskName}`);
+    }
+  }
+
+  /**
+   * Set task enabled/disabled status
+   */
+  setTaskEnabled(taskName: string, enabled: boolean): void {
+    if (enabled) {
+      this.enableTask(taskName);
+    } else {
+      this.disableTask(taskName);
+    }
+  }
+
+  /**
+   * Get list of disabled task names
+   */
+  getDisabledTasks(): string[] {
+    return [...this.settings.disabled_tasks];
   }
 
   // ============================================================

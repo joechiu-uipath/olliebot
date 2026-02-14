@@ -32,6 +32,14 @@ function sanitizeToolName(name: string): string {
 }
 
 /**
+ * Truncate a string for logging, showing first N chars + "..." + length indicator.
+ */
+function truncateForLog(str: string, maxLength = 200): string {
+  if (str.length <= maxLength) return str;
+  return `${str.slice(0, maxLength)}... (${str.length} chars total)`;
+}
+
+/**
  * Configuration for making OpenAI-compatible API requests.
  */
 export interface OpenAIRequestConfig {
@@ -499,8 +507,13 @@ export abstract class OpenAIBaseProvider implements LLMProvider {
       let parsedArgs: Record<string, unknown> = {};
       try {
         parsedArgs = JSON.parse(tc.arguments || '{}');
-      } catch {
-        console.warn(`${config.logPrefix} Failed to parse tool arguments for ${tc.name}: ${tc.arguments}`);
+      } catch (e) {
+        // Log error with actual parse error message for debugging
+        const parseError = e instanceof Error ? e.message : String(e);
+        console.error(`${config.logPrefix} Failed to parse tool arguments for ${tc.name}: ${parseError}`);
+        console.error(`${config.logPrefix} Raw arguments (${tc.arguments.length} chars): ${truncateForLog(tc.arguments || '', 500)}`);
+        // Skip this tool call - don't execute with invalid/empty arguments
+        continue;
       }
       // Restore original tool name from sanitized name
       const originalName = toolNameMap.get(tc.name) || tc.name;
@@ -588,8 +601,13 @@ export abstract class OpenAIBaseProvider implements LLMProvider {
         let parsedArgs: Record<string, unknown> = {};
         try {
           parsedArgs = JSON.parse(toolCall.function.arguments || '{}');
-        } catch {
-          console.warn(`${logPrefix} Failed to parse tool arguments for ${toolCall.function.name}: ${toolCall.function.arguments}`);
+        } catch (e) {
+          const parseError = e instanceof Error ? e.message : String(e);
+          const args = toolCall.function.arguments || '';
+          console.error(`${logPrefix} Failed to parse tool arguments for ${toolCall.function.name}: ${parseError}`);
+          console.error(`${logPrefix} Raw arguments (${args.length} chars): ${truncateForLog(args, 500)}`);
+          // Skip this tool call - don't execute with invalid/empty arguments
+          continue;
         }
         // Restore original tool name from sanitized name
         const originalName = toolNameMap?.get(toolCall.function.name) || toolCall.function.name;

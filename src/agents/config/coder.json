@@ -1,0 +1,14 @@
+{
+  "type": "coder",
+  "identity": {
+    "name": "Code Agent",
+    "emoji": "💻",
+    "role": "specialist",
+    "description": "Specializes in writing, reviewing, and explaining code"
+  },
+  "canAccessTools": [
+    "web_search",
+    "web_scrape",
+    "mcp.*"
+  ]
+}

@@ -33,7 +33,6 @@ import {
   WebScrapeTool,
   WikipediaSearchTool,
   TakeScreenshotTool,
-  AnalyzeImageTool,
   CreateImageTool,
   RememberTool,
   ReadAgentSkillTool,
@@ -45,6 +44,10 @@ import {
   GeneratePythonTool,
   RunPythonTool,
   WebsiteCrawlerTool,
+  MissionTodoCreateTool,
+  MissionTodoUpdateTool,
+  MissionTodoCompleteTool,
+  MissionMetricRecordTool,
 } from './tools/index.js';
 import {
   ReadFrontendCodeTool,
@@ -52,6 +55,7 @@ import {
   CheckFrontendCodeTool,
 } from './self-coding/index.js';
 import { TaskManager } from './tasks/index.js';
+import { MissionManager, initMissionSchema, validateMissionConversations } from './missions/index.js';
 import { MemoryService } from './memory/index.js';
 import { UserToolManager } from './tools/user/index.js';
 import {
@@ -138,6 +142,7 @@ const CONFIG = {
   port: parseInt(process.env.PORT || '3000', 10),
   dbPath: process.env.DB_PATH || join(process.cwd(), 'user', 'data', 'olliebot.db'),
   tasksDir: join(process.cwd(), 'user', 'tasks'),
+  missionsDir: join(process.cwd(), 'user', 'missions'),
   skillsDir: join(process.cwd(), 'user', 'skills'),
   userToolsDir: join(process.cwd(), 'user', 'tools'),
   ragDir: join(process.cwd(), 'user', 'rag'),
@@ -387,7 +392,7 @@ async function main(): Promise<void> {
       async summarize(content: string, prompt: string): Promise<string> {
         const response = await llmService.quickGenerate([
           { role: 'user', content: `${prompt}\n\n${content}` },
-        ], { maxTokens: 200 });
+        ], { maxTokens: 200 }, 'RAG Indexer');
         return response.content.trim();
       },
     });
@@ -437,7 +442,6 @@ async function main(): Promise<void> {
   }));
 
   toolRunner.registerNativeTool(new TakeScreenshotTool());
-  toolRunner.registerNativeTool(new AnalyzeImageTool(llmService));
 
   // Image generation (requires API key based on provider)
   const imageApiKey = CONFIG.imageGenProvider === 'azure_openai'
@@ -566,6 +570,25 @@ async function main(): Promise<void> {
     llmService,
   });
   await taskManager.init();
+
+  // Initialize Mission Manager (watches user/missions for .md mission configs)
+  console.log('[Init] Initializing mission manager...');
+  initMissionSchema();
+  const missionManager = new MissionManager({
+    missionsDir: CONFIG.missionsDir,
+    llmService,
+  });
+  await missionManager.init();
+
+  // Validate all well-known mission conversations exist (non-blocking)
+  validateMissionConversations();
+
+  // Register mission tools (requires mission manager)
+  toolRunner.registerNativeTool(new MissionTodoCreateTool(missionManager));
+  toolRunner.registerNativeTool(new MissionTodoUpdateTool(missionManager));
+  toolRunner.registerNativeTool(new MissionTodoCompleteTool(missionManager));
+  toolRunner.registerNativeTool(new MissionMetricRecordTool(missionManager));
+  console.log('[Init] Mission tools registered (todo_create, todo_update, todo_complete, metric_record)');
 
   // Create supervisor agent (multi-agent architecture)
   console.log('[Init] Creating supervisor agent...');
@@ -741,6 +764,7 @@ async function main(): Promise<void> {
       browserManager,
       desktopManager,
       taskManager,
+      missionManager,
       ragProjectService: ragProjectService || undefined,
       traceStore,
       mainProvider: CONFIG.mainProvider,
@@ -831,6 +855,7 @@ async function main(): Promise<void> {
     await browserManager.shutdown();
     await desktopManager.closeAllSessions();
     await taskManager.close();
+    await missionManager.close();
     await userToolManager.close();
     await skillManager.close();
     if (ragProjectService) {

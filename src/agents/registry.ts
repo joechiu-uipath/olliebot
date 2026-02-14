@@ -11,10 +11,10 @@ import type {
 } from './types.js';
 import { DEFAULT_DELEGATION_CONFIG } from './types.js';
 
-// Directory for sub-agent prompts (part of app code)
+// Directory for agent config files (.md prompts and .json templates)
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
-const PROMPTS_DIR = __dirname;
+const CONFIG_DIR = join(__dirname, 'config');
 
 /**
  * Specialist agent template - defines identity and capabilities for a specialist type
@@ -36,240 +36,43 @@ export interface SpecialistTemplate {
 const SUPERVISOR_ONLY_TOOLS = ['!delegate', '!remember'];
 
 /**
- * Built-in specialist templates
+ * Known agent types - loaded from JSON files in templates/ directory
  */
-const SPECIALIST_TEMPLATES: SpecialistTemplate[] = [
-  {
-    type: 'researcher',
-    identity: {
-      name: 'Research Agent',
-      emoji: '🔍',
-      role: 'specialist',
-      description: 'Specializes in research, information gathering, and analysis',
-    },
-    // Researcher: web search, scraping, wikipedia, http
-    canAccessTools: [
-      'web_search',
-      'web_scrape',
-      'wikipedia_search',
-      'analyze_image',
-      'query_rag_project',
-      'mcp.*', // MCP tools
-    ],
-  },
-  {
-    type: 'coder',
-    identity: {
-      name: 'Code Agent',
-      emoji: '💻',
-      role: 'specialist',
-      description: 'Specializes in writing, reviewing, and explaining code',
-    },
-    // Coder: web for docs
-    canAccessTools: [
-      'web_search',
-      'web_scrape',
-      'analyze_image',
-      'mcp.*', // MCP tools (filesystem, etc.)
-    ],
-  },
-  {
-    type: 'writer',
-    identity: {
-      name: 'Writer Agent',
-      emoji: '✍️',
-      role: 'specialist',
-      description: 'Specializes in writing, editing, and content creation',
-    },
-    // Writer: web research, image creation for illustrations
-    canAccessTools: [
-      'web_search',
-      'web_scrape',
-      'wikipedia_search',
-      'create_image',
-      'query_rag_project',
-      'mcp.*', // MCP tools
-    ],
-  },
-  {
-    type: 'planner',
-    identity: {
-      name: 'Planner Agent',
-      emoji: '📋',
-      role: 'specialist',
-      description: 'Specializes in planning, organizing, and task breakdown',
-    },
-    // Planner: research tools for gathering info to plan
-    canAccessTools: [
-      'web_search',
-      'web_scrape',
-      'wikipedia_search',
-      'mcp.*', // MCP tools
-    ],
-  },
-  // ============================================================================
-  // DEEP RESEARCH AGENTS
-  // ============================================================================
-  {
-    type: 'deep-research-lead',
-    identity: {
-      name: 'Deep Research Lead',
-      emoji: '🔬',
-      role: 'specialist',
-      description: 'Orchestrates comprehensive multi-source research tasks',
-    },
-    canAccessTools: [
-      'web_search',
-      'web_scrape',
-      'wikipedia_search',
-      'delegate', // Can delegate to research-worker
-      'mcp.*', // MCP tools
-      // Note: delegate is explicitly included above (overrides SUPERVISOR_ONLY_TOOLS exclusion)
-    ],
-    delegation: {
-      canDelegate: true,
-      allowedDelegates: ['research-worker'], // research-reviewer removed for now - needs workflow redesign
-      restrictedToWorkflow: null,
-      supervisorCanInvoke: true,
-      commandTrigger: 'Deep Research', // Triggered by #Deep Research
-      commandOnly: true, // Only via command, not auto-delegated
-    },
-  },
-  {
-    type: 'research-worker',
-    identity: {
-      name: 'Research Worker',
-      emoji: '📚',
-      role: 'specialist',
-      description: 'Deep exploration of specific research subtopics',
-    },
-    canAccessTools: [
-      'web_search',
-      'web_scrape',
-      'wikipedia_search',
-      'query_rag_project',
-    ],
-    allowedSkills: [], // No skills - research workers only use web tools
-    delegation: {
-      canDelegate: false,
-      allowedDelegates: [],
-      restrictedToWorkflow: 'deep-research',
-      supervisorCanInvoke: false, // Only invocable by deep-research-lead
-    },
-    collapseResponseByDefault: true, // Collapse worker responses in UI
-  },
-  {
-    type: 'research-reviewer',
-    identity: {
-      name: 'Research Reviewer',
-      emoji: '📝',
-      role: 'specialist',
-      description: 'Critical review of research reports for quality assurance',
-    },
-    canAccessTools: [
-      // Reviewer doesn't need search - just reviews drafts
-      'web_scrape', // Can verify sources
-    ],
-    delegation: {
-      canDelegate: false,
-      allowedDelegates: [],
-      restrictedToWorkflow: 'deep-research',
-      supervisorCanInvoke: false, // Only invocable by deep-research-lead
-    },
-    collapseResponseByDefault: true, // Collapse reviewer responses in UI
-  },
-  // ============================================================================
-  // SELF-CODING AGENTS (Frontend Self-Modification)
-  // ============================================================================
-  {
-    type: 'coding-lead',
-    identity: {
-      name: 'Coding Lead',
-      emoji: '👨‍💻',
-      role: 'specialist',
-      description: 'Orchestrates frontend code modifications, validates builds, and commits changes',
-    },
-    canAccessTools: [
-      'delegate', // Can delegate to coding-planner and coding-fixer
-      'check_frontend_code', // To validate build after changes
-    ],
-    delegation: {
-      canDelegate: true,
-      allowedDelegates: ['coding-planner', 'coding-fixer'], // Workers go through planner
-      restrictedToWorkflow: null,
-      supervisorCanInvoke: true,
-      commandTrigger: 'Modify', // Triggered by #Modify
-      commandOnly: true, // Only via command, not auto-delegated
-    },
-    allowedSkills: [], // No skills - coding-lead delegates to planner/worker who have the skills
-  },
-  {
-    type: 'coding-planner',
-    identity: {
-      name: 'Coding Planner',
-      emoji: '📐',
-      role: 'specialist',
-      description: 'Analyzes frontend modification requests, creates change plans, and delegates to workers',
-    },
-    canAccessTools: [
-      'read_agent_skill', // To read skill instructions (e.g., frontend-modifier)
-      'read_frontend_code', // Read-only access to understand current state
-      'delegate', // Can delegate to coding-worker
-    ],
-    delegation: {
-      canDelegate: true,
-      allowedDelegates: ['coding-worker'],
-      restrictedToWorkflow: 'self-coding',
-      supervisorCanInvoke: false, // Only invocable by coding-lead
-    },
-    collapseResponseByDefault: true,
-    allowedSkills: ['frontend-modifier'], // Only frontend-modifier skill, not docx/pdf/pptx
-  },
-  {
-    type: 'coding-worker',
-    identity: {
-      name: 'Coding Worker',
-      emoji: '🔧',
-      role: 'specialist',
-      description: 'Executes individual code changes using the modify_frontend_code tool',
-    },
-    canAccessTools: [
-      'read_agent_skill', // To read skill instructions if needed
-      'read_frontend_code', // To verify file state before/after changes
-      'modify_frontend_code', // Write access for creating, editing, deleting files
-    ],
-    delegation: {
-      canDelegate: false,
-      allowedDelegates: [],
-      restrictedToWorkflow: 'self-coding',
-      supervisorCanInvoke: false, // Only invocable by coding-planner
-    },
-    collapseResponseByDefault: true,
-    allowedSkills: ['frontend-modifier'], // Only frontend-modifier skill, not docx/pdf/pptx
-  },
-  {
-    type: 'coding-fixer',
-    identity: {
-      name: 'Coding Fixer',
-      emoji: '🔨',
-      role: 'specialist',
-      description: 'Fixes build errors in frontend code, focusing on syntax issues like mismatched tags and brackets',
-    },
-    canAccessTools: [
-      'read_frontend_code', // To examine files with errors
-      'modify_frontend_code', // To fix the errors
-      'check_frontend_code', // To verify fixes work
-    ],
-    delegation: {
-      canDelegate: false,
-      allowedDelegates: [],
-      restrictedToWorkflow: 'self-coding',
-      supervisorCanInvoke: false, // Only invocable by coding-lead
-    },
-    collapseResponseByDefault: true,
-    allowedSkills: ['frontend-modifier'], // Only frontend-modifier skill, not docx/pdf/pptx
-  },
+const KNOWN_AGENT_TYPES = [
+  'researcher',
+  'coder',
+  'writer',
+  'planner',
+  'mission-lead',
+  'pillar-owner',
+  'deep-research-lead',
+  'research-worker',
+  'research-reviewer',
+  'coding-lead',
+  'coding-planner',
+  'coding-worker',
+  'coding-fixer',
 ];
+
+/**
+ * Load specialist templates from JSON files
+ */
+function loadSpecialistTemplates(): SpecialistTemplate[] {
+  const templates: SpecialistTemplate[] = [];
+
+  for (const agentType of KNOWN_AGENT_TYPES) {
+    try {
+      const filePath = join(CONFIG_DIR, `${agentType}.json`);
+      const content = readFileSync(filePath, 'utf-8');
+      const template = JSON.parse(content) as SpecialistTemplate;
+      templates.push(template);
+    } catch (error) {
+      console.warn(`[AgentRegistry] Failed to load template for "${agentType}":`, error);
+    }
+  }
+
+  return templates;
+}
 
 export class AgentRegistry {
   private agents: Map<string, BaseAgent> = new Map();
@@ -277,10 +80,12 @@ export class AgentRegistry {
   private specialists: Map<string, SpecialistTemplate> = new Map();
 
   constructor() {
-    // Register built-in specialist templates
-    for (const template of SPECIALIST_TEMPLATES) {
+    // Load and register specialist templates from JSON files
+    const templates = loadSpecialistTemplates();
+    for (const template of templates) {
       this.specialists.set(template.type, template);
     }
+    console.log(`[AgentRegistry] Loaded ${templates.length} specialist templates`);
   }
 
   // ============================================================================
@@ -363,8 +168,22 @@ export class AgentRegistry {
    * Load the system prompt for an agent type from its .md file
    */
   loadAgentPrompt(type: string): string {
-    const promptPath = join(PROMPTS_DIR, `${type}.md`);
+    const promptPath = join(CONFIG_DIR, `${type}.md`);
     return readFileSync(promptPath, 'utf-8').trim();
+  }
+
+  /**
+   * Load agent config from its .json file
+   * Returns identity, capabilities, and other config fields
+   */
+  loadAgentConfig(type: string): Record<string, unknown> | null {
+    try {
+      const configPath = join(CONFIG_DIR, `${type}.json`);
+      const content = readFileSync(configPath, 'utf-8');
+      return JSON.parse(content);
+    } catch {
+      return null;
+    }
   }
 
   /**

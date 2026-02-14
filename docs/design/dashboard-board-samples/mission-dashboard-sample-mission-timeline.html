@@ -1,0 +1,855 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mission Timeline — Execution Sequence Analysis</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.6.0/dist/echarts.min.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: #0f1117;
+    color: #e0e0e0;
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    line-height: 1.6;
+    min-height: 100vh;
+    padding: 24px 32px 48px;
+  }
+
+  /* ---- Header ---- */
+  .header { margin-bottom: 24px; }
+  .header h1 {
+    font-size: 1.65rem;
+    font-weight: 700;
+    color: #e0e0e0;
+    letter-spacing: -0.3px;
+  }
+  .header .meta {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin-top: 6px;
+    font-size: 0.82rem;
+    color: #8b8fa3;
+  }
+  .header .meta .timestamp {
+    background: #1a1d27;
+    border: 1px solid #2a2d37;
+    border-radius: 4px;
+    padding: 2px 10px;
+    font-family: 'Cascadia Code', 'Fira Code', monospace;
+  }
+  .synopsis {
+    margin-top: 10px;
+    font-size: 0.88rem;
+    color: #8b8fa3;
+    max-width: 900px;
+    line-height: 1.55;
+  }
+
+  /* ---- Info Panel (collapsible) ---- */
+  .info-panel {
+    margin: 16px 0 24px;
+    border: 1px solid #2a2d37;
+    border-radius: 8px;
+    background: #1a1d27;
+    overflow: hidden;
+  }
+  .info-panel summary {
+    cursor: pointer;
+    padding: 10px 16px;
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: #818cf8;
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    user-select: none;
+  }
+  .info-panel summary::-webkit-details-marker { display: none; }
+  .info-panel summary::before {
+    content: '\25B6';
+    font-size: 0.65rem;
+    transition: transform 0.2s;
+  }
+  .info-panel[open] summary::before { transform: rotate(90deg); }
+  .info-panel .body {
+    padding: 0 16px 14px;
+    font-size: 0.82rem;
+    color: #8b8fa3;
+    line-height: 1.6;
+  }
+
+  /* ---- KPI Row ---- */
+  .kpi-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+  .kpi-card {
+    background: #1a1d27;
+    border: 1px solid #2a2d37;
+    border-radius: 10px;
+    padding: 18px 20px;
+    position: relative;
+    overflow: hidden;
+  }
+  .kpi-card::after {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    border-radius: 10px 10px 0 0;
+  }
+  .kpi-card:nth-child(1)::after { background: #6366f1; }
+  .kpi-card:nth-child(2)::after { background: #22d3ee; }
+  .kpi-card:nth-child(3)::after { background: #10b981; }
+  .kpi-card:nth-child(4)::after { background: #f59e0b; }
+  .kpi-label {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: #8b8fa3;
+    margin-bottom: 6px;
+  }
+  .kpi-value {
+    font-size: 1.65rem;
+    font-weight: 700;
+    color: #e0e0e0;
+    font-family: 'Cascadia Code', 'Fira Code', monospace;
+  }
+  .kpi-sub {
+    font-size: 0.75rem;
+    color: #8b8fa3;
+    margin-top: 4px;
+  }
+  .kpi-sub .accent-green { color: #10b981; }
+  .kpi-sub .accent-amber { color: #f59e0b; }
+
+  /* ---- Chart Containers ---- */
+  .chart-card {
+    background: #1a1d27;
+    border: 1px solid #2a2d37;
+    border-radius: 10px;
+    padding: 20px 20px 16px;
+    margin-bottom: 24px;
+  }
+  .chart-card h2 {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: #e0e0e0;
+    margin-bottom: 4px;
+  }
+  .chart-card .chart-desc {
+    font-size: 0.78rem;
+    color: #8b8fa3;
+    margin-bottom: 14px;
+  }
+  .chart-box { width: 100%; }
+
+  /* two-col layout */
+  .two-col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 24px;
+    margin-bottom: 24px;
+  }
+  .two-col .chart-card { margin-bottom: 0; }
+
+  /* ---- Sortable Table ---- */
+  .table-wrap {
+    overflow-x: auto;
+    margin-top: 10px;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.82rem;
+  }
+  thead th {
+    text-align: left;
+    padding: 10px 12px;
+    background: #12141c;
+    color: #8b8fa3;
+    font-weight: 600;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    border-bottom: 1px solid #2a2d37;
+    cursor: pointer;
+    white-space: nowrap;
+    user-select: none;
+    position: relative;
+  }
+  thead th:hover { color: #e0e0e0; }
+  thead th .sort-arrow {
+    margin-left: 4px;
+    font-size: 0.65rem;
+    color: #6366f1;
+  }
+  tbody tr { border-bottom: 1px solid #1e2130; }
+  tbody tr:hover { background: rgba(99,102,241,0.05); }
+  tbody td {
+    padding: 9px 12px;
+    color: #e0e0e0;
+    white-space: nowrap;
+  }
+  tbody td.mono {
+    font-family: 'Cascadia Code', 'Fira Code', monospace;
+    font-size: 0.78rem;
+  }
+
+  /* status badges */
+  .badge {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 9999px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.3px;
+  }
+  .badge-completed { background: rgba(16,185,129,0.14); color: #10b981; }
+  .badge-skipped   { background: rgba(139,143,163,0.14); color: #8b8fa3; }
+  .badge-error     { background: rgba(244,63,94,0.14);   color: #f43f5e; }
+
+  /* agent dot */
+  .agent-cell { display: flex; align-items: center; gap: 7px; }
+  .agent-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  /* responsive */
+  @media (max-width: 900px) {
+    .kpi-row { grid-template-columns: repeat(2, 1fr); }
+    .two-col { grid-template-columns: 1fr; }
+    body { padding: 16px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ===== HEADER ===== -->
+<div class="header">
+  <h1>Mission Timeline &mdash; Execution Sequence Analysis</h1>
+  <div class="meta">
+    <span class="timestamp">Feb 13, 2026 14:30 UTC</span>
+    <span>Mission ID: msn_7f3a9b2e</span>
+  </div>
+  <p class="synopsis">
+    Step-by-step execution timeline for mission <strong style="color:#818cf8;">'Implement OAuth2 Flow'</strong>,
+    showing agent handoffs, parallel execution, and critical path.
+  </p>
+</div>
+
+<!-- ===== INFO PANEL ===== -->
+<details class="info-panel">
+  <summary>Interactivity Guide</summary>
+  <div class="body">
+    Hover bars for step details. Use data zoom to pan/zoom the timeline. Click legend to show/hide agents.
+    Table headers are sortable &mdash; click any column to toggle ascending / descending sort.
+  </div>
+</details>
+
+<!-- ===== KPI CARDS ===== -->
+<div class="kpi-row">
+  <div class="kpi-card">
+    <div class="kpi-label">Total Duration</div>
+    <div class="kpi-value">23m 47s</div>
+    <div class="kpi-sub">Wall-clock time, start to finish</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Steps</div>
+    <div class="kpi-value">12</div>
+    <div class="kpi-sub">10 completed, 1 skipped, <span class="accent-amber">1 error</span></div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Parallel Efficiency</div>
+    <div class="kpi-value">34%</div>
+    <div class="kpi-sub"><span class="accent-green">12m 8s saved</span> vs sequential</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Critical Path</div>
+    <div class="kpi-value">18m 12s</div>
+    <div class="kpi-sub">Longest sequential dependency chain</div>
+  </div>
+</div>
+
+<!-- ===== GANTT TIMELINE ===== -->
+<div class="chart-card">
+  <h2>Mission Execution Timeline</h2>
+  <p class="chart-desc">Gantt-style view of agent activity. Overlapping bars indicate parallel execution. Diamond markers denote key milestones.</p>
+  <div id="ganttChart" class="chart-box" style="height:500px;"></div>
+</div>
+
+<!-- ===== WATERFALL + TOKEN AREA (two-col) ===== -->
+<div class="two-col">
+  <div class="chart-card">
+    <h2>Step Duration Breakdown</h2>
+    <p class="chart-desc">Waterfall showing sequential vs. parallel step execution and the resulting critical path.</p>
+    <div id="waterfallChart" class="chart-box" style="height:460px;"></div>
+  </div>
+  <div class="chart-card">
+    <h2>Token Consumption Over Time</h2>
+    <p class="chart-desc">Cumulative token usage per agent across mission duration.</p>
+    <div id="tokenChart" class="chart-box" style="height:460px;"></div>
+  </div>
+</div>
+
+<!-- ===== STEP DETAILS TABLE ===== -->
+<div class="chart-card">
+  <h2>Step Details</h2>
+  <p class="chart-desc">Full breakdown of every mission step. Click column headers to sort.</p>
+  <div class="table-wrap">
+    <table id="stepTable">
+      <thead>
+        <tr>
+          <th data-key="num" data-type="number">#<span class="sort-arrow"></span></th>
+          <th data-key="step" data-type="string">Step<span class="sort-arrow"></span></th>
+          <th data-key="agent" data-type="string">Agent<span class="sort-arrow"></span></th>
+          <th data-key="start" data-type="string">Start<span class="sort-arrow"></span></th>
+          <th data-key="end" data-type="string">End<span class="sort-arrow"></span></th>
+          <th data-key="duration" data-type="number">Duration<span class="sort-arrow"></span></th>
+          <th data-key="llmCalls" data-type="number">LLM Calls<span class="sort-arrow"></span></th>
+          <th data-key="tokens" data-type="number">Tokens<span class="sort-arrow"></span></th>
+          <th data-key="status" data-type="string">Status<span class="sort-arrow"></span></th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+/* ====================================================================
+   DATA
+   ==================================================================== */
+
+const AGENTS = {
+  Supervisor:  '#6366f1',
+  MissionLead: '#818cf8',
+  Researcher:  '#22d3ee',
+  Coder:       '#10b981',
+  Reviewer:    '#f59e0b'
+};
+
+// Gantt tasks: [agent, taskName, startMin, endMin]
+const ganttTasks = [
+  ['Supervisor',  'Init & Assign Mission',       0.0,  1.2],
+  ['MissionLead', 'Parse Requirements',           1.2,  3.0],
+  ['MissionLead', 'Plan Execution Steps',         3.0,  5.1],
+  ['Researcher',  'Research OAuth2 Best Practices',5.1,  9.4],
+  ['Researcher',  'Analyze Existing Auth Code',   5.1,  7.8],
+  ['Coder',       'Scaffold OAuth2 Module',       9.4, 13.6],
+  ['Coder',       'Implement Token Exchange',    13.6, 17.2],
+  ['Coder',       'Add Refresh Token Logic',     17.2, 19.0],
+  ['Reviewer',    'Code Review — OAuth Module',  13.6, 16.5],
+  ['Reviewer',    'Security Audit',              17.2, 20.8],
+  ['MissionLead', 'Consolidate & Verify',        20.8, 22.5],
+  ['Supervisor',  'Final Approval & Close',      22.5, 23.8]
+];
+
+// Milestones: [label, timeMin]
+const milestones = [
+  ['Mission Start',     0.0],
+  ['Research Complete',  9.4],
+  ['Code Written',      19.0],
+  ['Review Pass',       20.8],
+  ['Mission Complete',  23.8]
+];
+
+// Steps table data
+const stepsData = [
+  { num:1,  step:'Init & Assign Mission',        agent:'Supervisor',  start:'0:00', end:'1:12',  duration:72,   llmCalls:2,  tokens:1840,  status:'completed' },
+  { num:2,  step:'Parse Requirements',            agent:'MissionLead', start:'1:12', end:'3:00',  duration:108,  llmCalls:3,  tokens:3210,  status:'completed' },
+  { num:3,  step:'Plan Execution Steps',          agent:'MissionLead', start:'3:00', end:'5:06',  duration:126,  llmCalls:4,  tokens:4580,  status:'completed' },
+  { num:4,  step:'Research OAuth2 Best Practices', agent:'Researcher', start:'5:06', end:'9:24',  duration:258,  llmCalls:6,  tokens:8920,  status:'completed' },
+  { num:5,  step:'Analyze Existing Auth Code',    agent:'Researcher',  start:'5:06', end:'7:48',  duration:162,  llmCalls:4,  tokens:5340,  status:'completed' },
+  { num:6,  step:'Scaffold OAuth2 Module',        agent:'Coder',       start:'9:24', end:'13:36', duration:252,  llmCalls:7,  tokens:11250, status:'completed' },
+  { num:7,  step:'Implement Token Exchange',      agent:'Coder',       start:'13:36',end:'17:12', duration:216,  llmCalls:8,  tokens:14380, status:'completed' },
+  { num:8,  step:'Add Refresh Token Logic',       agent:'Coder',       start:'17:12',end:'19:00', duration:108,  llmCalls:3,  tokens:4670,  status:'completed' },
+  { num:9,  step:'Code Review — OAuth Module',    agent:'Reviewer',    start:'13:36',end:'16:30', duration:174,  llmCalls:5,  tokens:7230,  status:'completed' },
+  { num:10, step:'Security Audit',                agent:'Reviewer',    start:'17:12',end:'20:48', duration:216,  llmCalls:6,  tokens:9840,  status:'error' },
+  { num:11, step:'Consolidate & Verify',          agent:'MissionLead', start:'20:48',end:'22:30', duration:102,  llmCalls:3,  tokens:3150,  status:'completed' },
+  { num:12, step:'Final Approval & Close',        agent:'Supervisor',  start:'22:30',end:'23:47', duration:77,   llmCalls:2,  tokens:1420,  status:'completed' }
+];
+
+/* ====================================================================
+   1. GANTT CHART
+   ==================================================================== */
+(function() {
+  const chart = echarts.init(document.getElementById('ganttChart'));
+
+  const agentNames = ['Reviewer','Coder','Researcher','MissionLead','Supervisor'];
+
+  // Build bar data for custom series
+  const barData = ganttTasks.map(function(t) {
+    var agentIdx = agentNames.indexOf(t[0]);
+    return {
+      value: [agentIdx, t[2], t[3], t[3] - t[2]],
+      itemStyle: { color: AGENTS[t[0]] },
+      name: t[1],
+      agent: t[0]
+    };
+  });
+
+  // Milestone data
+  const milestoneData = milestones.map(function(m) {
+    return { value: [5.3, m[1]], name: m[0] };
+  });
+
+  var option = {
+    backgroundColor: 'transparent',
+    tooltip: {
+      trigger: 'item',
+      backgroundColor: '#1a1d27',
+      borderColor: '#2a2d37',
+      textStyle: { color: '#e0e0e0', fontSize: 12 },
+      formatter: function(p) {
+        if (p.seriesIndex === 1) {
+          return '<strong>' + p.data.name + '</strong><br/>at ' + p.data.value[1].toFixed(1) + ' min';
+        }
+        var d = p.data;
+        return '<strong>' + d.name + '</strong><br/>'
+          + 'Agent: ' + d.agent + '<br/>'
+          + 'Start: ' + d.value[1].toFixed(1) + ' min<br/>'
+          + 'End: ' + d.value[2].toFixed(1) + ' min<br/>'
+          + 'Duration: ' + d.value[3].toFixed(1) + ' min';
+      }
+    },
+    legend: {
+      data: Object.keys(AGENTS),
+      top: 8,
+      right: 20,
+      textStyle: { color: '#8b8fa3', fontSize: 11 },
+      itemWidth: 14,
+      itemHeight: 10,
+      itemGap: 16
+    },
+    grid: { left: 120, right: 40, top: 50, bottom: 70 },
+    xAxis: {
+      type: 'value',
+      name: 'Minutes',
+      nameLocation: 'center',
+      nameGap: 30,
+      nameTextStyle: { color: '#8b8fa3', fontSize: 11 },
+      min: 0,
+      max: 25,
+      axisLine: { lineStyle: { color: '#2a2d37' } },
+      axisTick: { lineStyle: { color: '#2a2d37' } },
+      axisLabel: { color: '#8b8fa3', fontSize: 11, formatter: '{value}m' },
+      splitLine: { lineStyle: { color: '#1e2130' } }
+    },
+    yAxis: {
+      type: 'category',
+      data: agentNames,
+      axisLine: { lineStyle: { color: '#2a2d37' } },
+      axisTick: { show: false },
+      axisLabel: {
+        color: '#e0e0e0',
+        fontSize: 12,
+        fontWeight: 600
+      }
+    },
+    dataZoom: [
+      {
+        type: 'slider',
+        xAxisIndex: 0,
+        bottom: 10,
+        height: 22,
+        borderColor: '#2a2d37',
+        backgroundColor: '#12141c',
+        fillerColor: 'rgba(99,102,241,0.15)',
+        handleStyle: { color: '#6366f1', borderColor: '#6366f1' },
+        textStyle: { color: '#8b8fa3', fontSize: 10 },
+        dataBackground: {
+          lineStyle: { color: '#2a2d37' },
+          areaStyle: { color: 'rgba(99,102,241,0.05)' }
+        }
+      }
+    ],
+    series: [
+      // Custom series for Gantt bars
+      {
+        type: 'custom',
+        renderItem: function(params, api) {
+          var agentIdx = api.value(0);
+          var start = api.coord([api.value(1), agentIdx]);
+          var end = api.coord([api.value(2), agentIdx]);
+          var barHeight = 22;
+          var rectShape = echarts.graphic.clipRectByRect(
+            { x: start[0], y: start[1] - barHeight / 2, width: end[0] - start[0], height: barHeight },
+            { x: params.coordSys.x, y: params.coordSys.y, width: params.coordSys.width, height: params.coordSys.height }
+          );
+          if (rectShape) {
+            return {
+              type: 'group',
+              children: [
+                {
+                  type: 'rect',
+                  shape: rectShape,
+                  style: api.style({
+                    fill: api.visual('color'),
+                    opacity: 0.85
+                  }),
+                  emphasis: {
+                    style: { opacity: 1, shadowBlur: 6, shadowColor: 'rgba(99,102,241,0.3)' }
+                  }
+                },
+                {
+                  type: 'text',
+                  style: {
+                    text: (end[0] - start[0] > 60) ? params.dataIndex < ganttTasks.length ? ganttTasks[params.dataIndex][1] : '' : '',
+                    x: rectShape.x + 6,
+                    y: rectShape.y + barHeight / 2,
+                    textVerticalAlign: 'middle',
+                    fill: '#fff',
+                    fontSize: 10,
+                    fontWeight: 500,
+                    width: rectShape.width - 12,
+                    overflow: 'truncate'
+                  }
+                }
+              ]
+            };
+          }
+        },
+        encode: { x: [1, 2], y: 0 },
+        data: barData,
+        clip: true,
+        z: 10
+      },
+      // Milestone markers
+      {
+        type: 'scatter',
+        symbol: 'diamond',
+        symbolSize: 14,
+        z: 20,
+        itemStyle: { color: '#f59e0b', borderColor: '#0f1117', borderWidth: 1.5 },
+        label: {
+          show: true,
+          position: 'top',
+          formatter: function(p) { return p.data.name; },
+          color: '#f59e0b',
+          fontSize: 10,
+          fontWeight: 600,
+          distance: 8
+        },
+        data: milestoneData,
+        tooltip: {
+          formatter: function(p) {
+            return '<strong>' + p.data.name + '</strong><br/>at ' + p.data.value[1].toFixed(1) + ' min';
+          }
+        }
+      },
+      // Invisible series for legend interactivity
+      { type: 'bar', name: 'Supervisor',  itemStyle: { color: '#6366f1' }, data: [], barWidth: 0 },
+      { type: 'bar', name: 'MissionLead', itemStyle: { color: '#818cf8' }, data: [], barWidth: 0 },
+      { type: 'bar', name: 'Researcher',  itemStyle: { color: '#22d3ee' }, data: [], barWidth: 0 },
+      { type: 'bar', name: 'Coder',       itemStyle: { color: '#10b981' }, data: [], barWidth: 0 },
+      { type: 'bar', name: 'Reviewer',    itemStyle: { color: '#f59e0b' }, data: [], barWidth: 0 }
+    ]
+  };
+
+  chart.setOption(option);
+  window.addEventListener('resize', function() { chart.resize(); });
+})();
+
+
+/* ====================================================================
+   2. WATERFALL CHART
+   ==================================================================== */
+(function() {
+  var chart = echarts.init(document.getElementById('waterfallChart'));
+
+  // For the waterfall, we track the cumulative critical-path position.
+  // Parallel steps share the same base offset as their predecessor on the critical path.
+  // Steps: sequential base shown as transparent, colored bar on top.
+  var steps = [
+    { label: 'Init & Assign',       agent: 'Supervisor',  dur: 1.2, parallel: false },
+    { label: 'Parse Reqs',          agent: 'MissionLead', dur: 1.8, parallel: false },
+    { label: 'Plan Steps',          agent: 'MissionLead', dur: 2.1, parallel: false },
+    { label: 'Research OAuth2',     agent: 'Researcher',  dur: 4.3, parallel: false },
+    { label: 'Analyze Auth Code',   agent: 'Researcher',  dur: 2.7, parallel: true  },
+    { label: 'Scaffold Module',     agent: 'Coder',       dur: 4.2, parallel: false },
+    { label: 'Token Exchange',      agent: 'Coder',       dur: 3.6, parallel: false },
+    { label: 'Refresh Token',       agent: 'Coder',       dur: 1.8, parallel: false },
+    { label: 'Code Review',         agent: 'Reviewer',    dur: 2.9, parallel: true  },
+    { label: 'Security Audit',      agent: 'Reviewer',    dur: 3.6, parallel: true  },
+    { label: 'Consolidate',         agent: 'MissionLead', dur: 1.7, parallel: false },
+    { label: 'Final Approval',      agent: 'Supervisor',  dur: 1.3, parallel: false }
+  ];
+
+  // Compute cumulative offsets
+  // Critical path goes through non-parallel steps sequentially.
+  // Parallel steps run alongside the previous critical-path step (same base).
+  var cpBase = 0;
+  var lastCpEnd = 0;
+  var bases = [];
+  var durs = [];
+  var colors = [];
+  var categories = [];
+  var borderColors = [];
+
+  for (var i = 0; i < steps.length; i++) {
+    var s = steps[i];
+    categories.push(s.label);
+    durs.push(s.dur);
+    colors.push(AGENTS[s.agent]);
+
+    if (s.parallel) {
+      // base is same as the start of the previous critical-path segment
+      bases.push(cpBase);
+      borderColors.push('rgba(255,255,255,0.25)');
+    } else {
+      bases.push(lastCpEnd);
+      cpBase = lastCpEnd;
+      lastCpEnd = lastCpEnd + s.dur;
+      borderColors.push('transparent');
+    }
+  }
+
+  // Add total
+  categories.push('Total');
+  bases.push(0);
+  durs.push(lastCpEnd);
+  colors.push('#6366f1');
+  borderColors.push('transparent');
+
+  var option = {
+    backgroundColor: 'transparent',
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'shadow' },
+      backgroundColor: '#1a1d27',
+      borderColor: '#2a2d37',
+      textStyle: { color: '#e0e0e0', fontSize: 12 },
+      formatter: function(params) {
+        var base = params[0];
+        var bar = params[1];
+        if (!bar) return '';
+        var idx = bar.dataIndex;
+        var lbl = categories[idx];
+        var d = durs[idx];
+        if (lbl === 'Total') return '<strong>Total Critical Path</strong><br/>' + d.toFixed(1) + ' min';
+        var par = idx < steps.length && steps[idx].parallel ? ' (parallel)' : ' (sequential)';
+        return '<strong>' + lbl + '</strong>' + par + '<br/>'
+          + 'Duration: ' + d.toFixed(1) + ' min<br/>'
+          + 'Agent: ' + (idx < steps.length ? steps[idx].agent : '');
+      }
+    },
+    grid: { left: 14, right: 20, top: 20, bottom: 36, containLabel: true },
+    xAxis: {
+      type: 'category',
+      data: categories,
+      axisLine: { lineStyle: { color: '#2a2d37' } },
+      axisTick: { show: false },
+      axisLabel: { color: '#8b8fa3', fontSize: 10, rotate: 40, interval: 0 }
+    },
+    yAxis: {
+      type: 'value',
+      name: 'Minutes',
+      nameTextStyle: { color: '#8b8fa3', fontSize: 10 },
+      axisLine: { lineStyle: { color: '#2a2d37' } },
+      axisLabel: { color: '#8b8fa3', fontSize: 10, formatter: '{value}m' },
+      splitLine: { lineStyle: { color: '#1e2130' } }
+    },
+    series: [
+      {
+        name: 'Base',
+        type: 'bar',
+        stack: 'waterfall',
+        itemStyle: { color: 'transparent', borderColor: 'transparent' },
+        emphasis: { itemStyle: { color: 'transparent' } },
+        data: bases
+      },
+      {
+        name: 'Duration',
+        type: 'bar',
+        stack: 'waterfall',
+        barWidth: '55%',
+        itemStyle: {
+          color: function(params) { return colors[params.dataIndex]; },
+          borderColor: function(params) { return borderColors[params.dataIndex]; },
+          borderWidth: function(params) { return borderColors[params.dataIndex] !== 'transparent' ? 1.5 : 0; },
+          borderType: 'dashed',
+          borderRadius: [3, 3, 0, 0]
+        },
+        label: {
+          show: true,
+          position: 'top',
+          color: '#8b8fa3',
+          fontSize: 10,
+          formatter: function(p) { return p.value.toFixed(1) + 'm'; }
+        },
+        data: durs
+      }
+    ]
+  };
+
+  chart.setOption(option);
+  window.addEventListener('resize', function() { chart.resize(); });
+})();
+
+
+/* ====================================================================
+   3. TOKEN CONSUMPTION STACKED AREA
+   ==================================================================== */
+(function() {
+  var chart = echarts.init(document.getElementById('tokenChart'));
+
+  var timeLabels = [];
+  for (var m = 0; m <= 24; m++) timeLabels.push(m + 'm');
+
+  // Cumulative tokens per minute per agent (realistic curve)
+  var tokenData = {
+    Supervisor:  [480,1840,1840,1840,1840,1840,1840,1840,1840,1840,1840,1840,1840,1840,1840,1840,1840,1840,1840,1840,1840,1840,1840,2650,3260],
+    MissionLead: [0,0,1200,2850,4580,4580,4580,4580,4580,4580,4580,4580,4580,4580,4580,4580,4580,4580,4580,4580,4580,5420,6380,7730,7730],
+    Researcher:  [0,0,0,0,0,1260,3480,5340,7120,8920,8920,8920,8920,8920,8920,8920,8920,8920,8920,8920,8920,8920,8920,8920,8920],
+    Coder:       [0,0,0,0,0,0,0,0,0,0,2150,5340,8420,11250,14820,18260,22340,26100,30300,30300,30300,30300,30300,30300,30300],
+    Reviewer:    [0,0,0,0,0,0,0,0,0,0,0,0,0,0,1840,4120,7230,7230,9450,12680,17070,17070,17070,17070,17070]
+  };
+
+  var seriesList = Object.keys(AGENTS).map(function(agent) {
+    return {
+      name: agent,
+      type: 'line',
+      stack: 'tokens',
+      areaStyle: { opacity: 0.35 },
+      lineStyle: { width: 1.5 },
+      symbol: 'none',
+      itemStyle: { color: AGENTS[agent] },
+      emphasis: { focus: 'series' },
+      data: tokenData[agent]
+    };
+  });
+
+  var option = {
+    backgroundColor: 'transparent',
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: '#1a1d27',
+      borderColor: '#2a2d37',
+      textStyle: { color: '#e0e0e0', fontSize: 12 },
+      formatter: function(params) {
+        var out = '<strong>' + params[0].axisValue + '</strong><br/>';
+        var total = 0;
+        params.forEach(function(p) {
+          total += p.value;
+          out += '<span style="color:' + p.color + ';">\u25CF</span> ' + p.seriesName + ': ' + p.value.toLocaleString() + '<br/>';
+        });
+        out += '<strong>Total: ' + total.toLocaleString() + '</strong>';
+        return out;
+      }
+    },
+    legend: {
+      data: Object.keys(AGENTS),
+      bottom: 4,
+      textStyle: { color: '#8b8fa3', fontSize: 10 },
+      itemWidth: 12,
+      itemHeight: 8,
+      itemGap: 12
+    },
+    grid: { left: 54, right: 20, top: 16, bottom: 42 },
+    xAxis: {
+      type: 'category',
+      data: timeLabels,
+      boundaryGap: false,
+      axisLine: { lineStyle: { color: '#2a2d37' } },
+      axisTick: { show: false },
+      axisLabel: { color: '#8b8fa3', fontSize: 10 }
+    },
+    yAxis: {
+      type: 'value',
+      name: 'Tokens',
+      nameTextStyle: { color: '#8b8fa3', fontSize: 10 },
+      axisLine: { lineStyle: { color: '#2a2d37' } },
+      axisLabel: { color: '#8b8fa3', fontSize: 10, formatter: function(v) { return v >= 1000 ? (v/1000).toFixed(0)+'k' : v; } },
+      splitLine: { lineStyle: { color: '#1e2130' } }
+    },
+    series: seriesList
+  };
+
+  chart.setOption(option);
+  window.addEventListener('resize', function() { chart.resize(); });
+})();
+
+
+/* ====================================================================
+   4. SORTABLE TABLE
+   ==================================================================== */
+(function() {
+  var table = document.getElementById('stepTable');
+  var tbody = table.querySelector('tbody');
+  var headers = table.querySelectorAll('thead th');
+  var sortState = { key: null, asc: true };
+
+  function agentColor(a) { return AGENTS[a] || '#8b8fa3'; }
+
+  function renderRows(data) {
+    tbody.innerHTML = '';
+    data.forEach(function(r) {
+      var tr = document.createElement('tr');
+      var statusClass = 'badge-' + r.status;
+      var statusLabel = r.status.charAt(0).toUpperCase() + r.status.slice(1);
+      var durStr = Math.floor(r.duration / 60) + 'm ' + (r.duration % 60) + 's';
+
+      tr.innerHTML =
+        '<td class="mono">' + r.num + '</td>' +
+        '<td>' + r.step + '</td>' +
+        '<td><div class="agent-cell"><span class="agent-dot" style="background:' + agentColor(r.agent) + ';"></span>' + r.agent + '</div></td>' +
+        '<td class="mono">' + r.start + '</td>' +
+        '<td class="mono">' + r.end + '</td>' +
+        '<td class="mono">' + durStr + '</td>' +
+        '<td class="mono">' + r.llmCalls + '</td>' +
+        '<td class="mono">' + r.tokens.toLocaleString() + '</td>' +
+        '<td><span class="badge ' + statusClass + '">' + statusLabel + '</span></td>';
+      tbody.appendChild(tr);
+    });
+  }
+
+  function updateArrows(activeKey, asc) {
+    headers.forEach(function(th) {
+      var arrow = th.querySelector('.sort-arrow');
+      if (th.getAttribute('data-key') === activeKey) {
+        arrow.textContent = asc ? ' \u25B2' : ' \u25BC';
+      } else {
+        arrow.textContent = '';
+      }
+    });
+  }
+
+  headers.forEach(function(th) {
+    th.addEventListener('click', function() {
+      var key = th.getAttribute('data-key');
+      var type = th.getAttribute('data-type');
+      if (sortState.key === key) {
+        sortState.asc = !sortState.asc;
+      } else {
+        sortState.key = key;
+        sortState.asc = true;
+      }
+      var sorted = stepsData.slice().sort(function(a, b) {
+        var va = a[key], vb = b[key];
+        if (type === 'number') return sortState.asc ? va - vb : vb - va;
+        va = String(va).toLowerCase();
+        vb = String(vb).toLowerCase();
+        if (va < vb) return sortState.asc ? -1 : 1;
+        if (va > vb) return sortState.asc ? 1 : -1;
+        return 0;
+      });
+      updateArrows(key, sortState.asc);
+      renderRows(sorted);
+    });
+  });
+
+  // initial render
+  renderRows(stepsData);
+})();
+</script>
+</body>
+</html>
