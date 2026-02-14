@@ -947,6 +947,33 @@ export class AssistantServer {
       res.json(this.taskManager?.getTasksForApi() || []);
     });
 
+    // Toggle task enabled/disabled status
+    this.app.patch('/api/tasks/:id', (req: Request, res: Response) => {
+      const taskId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+      const { enabled } = req.body || {};
+
+      if (!this.taskManager) {
+        res.status(500).json({ error: 'Task manager not initialized' });
+        return;
+      }
+
+      if (typeof enabled !== 'boolean') {
+        res.status(400).json({ error: 'enabled must be a boolean' });
+        return;
+      }
+
+      const success = this.taskManager.setTaskEnabled(taskId, enabled);
+      if (!success) {
+        res.status(404).json({ error: 'Task not found' });
+        return;
+      }
+
+      // Return updated task info
+      const tasks = this.taskManager.getTasksForApi();
+      const task = tasks.find(t => t.id === taskId);
+      res.json(task || { id: taskId, enabled });
+    });
+
     // Run a task immediately
     this.app.post('/api/tasks/:id/run', async (req: Request, res: Response) => {
       try {

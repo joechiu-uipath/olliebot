@@ -11,6 +11,7 @@ import { EventEmitter } from 'events';
 import { CronExpressionParser } from 'cron-parser';
 import { ConfigWatcher, type ConfigFile } from '../config/watcher.js';
 import type { LLMService } from '../llm/service.js';
+import { getUserSettingsService } from '../settings/service.js';
 
 export interface TaskManagerConfig {
   tasksDir: string;
@@ -26,6 +27,7 @@ export interface Task {
   mdFile: string;
   jsonConfig: Record<string, unknown>;
   status: 'active' | 'paused';
+  enabled: boolean;
   lastRun: string | null;
   nextRun: string | null;
 }
@@ -130,7 +132,8 @@ export class TaskManager extends EventEmitter {
     const now = new Date();
 
     for (const task of this.tasks.values()) {
-      if (task.status !== 'active' || !task.nextRun) {
+      // Skip disabled or paused tasks
+      if (!task.enabled || task.status !== 'active' || !task.nextRun) {
         continue;
       }
 
@@ -222,12 +225,17 @@ export class TaskManager extends EventEmitter {
       // Check if task already exists (preserve lastRun if updating)
       const existing = this.tasks.get(config.name);
 
+      // Check if task is disabled in user settings
+      const userSettings = getUserSettingsService();
+      const isDisabled = userSettings.isTaskDisabled(config.name);
+
       const task: Task = {
         id: existing?.id || uuid(),
         name: config.name,
         mdFile: config.mdPath,
         jsonConfig,
         status: 'active',
+        enabled: !isDisabled,
         lastRun: existing?.lastRun || null,
         nextRun: this.calculateNextRun(jsonConfig),
       };
@@ -283,21 +291,22 @@ export class TaskManager extends EventEmitter {
   }
 
   /**
-   * Get all active tasks
+   * Get all tasks (both enabled and disabled)
    */
   getTasks(): Array<{
     id: string;
     name: string;
     status: string;
+    enabled: boolean;
     lastRun: string | null;
     nextRun: string | null;
   }> {
     return Array.from(this.tasks.values())
-      .filter((t) => t.status === 'active')
       .map((t) => ({
         id: t.id,
         name: t.name,
         status: t.status,
+        enabled: t.enabled,
         lastRun: t.lastRun,
         nextRun: t.nextRun,
       }));
@@ -324,11 +333,11 @@ export class TaskManager extends EventEmitter {
     description: string;
     schedule: string | null;
     status: string;
+    enabled: boolean;
     lastRun: string | null;
     nextRun: string | null;
   }> {
     return Array.from(this.tasks.values())
-      .filter((t) => t.status === 'active')
       .map((t) => {
         const config = t.jsonConfig as { description?: string; trigger?: { schedule?: string } };
         return {
@@ -337,10 +346,53 @@ export class TaskManager extends EventEmitter {
           description: config.description || '',
           schedule: config.trigger?.schedule || null,
           status: t.status,
+          enabled: t.enabled,
           lastRun: t.lastRun,
           nextRun: t.nextRun,
         };
       });
+  }
+
+  /**
+   * Set task enabled/disabled status
+   */
+  setTaskEnabled(taskId: string, enabled: boolean): boolean {
+    // Find task by ID
+    let task: Task | undefined;
+    for (const t of this.tasks.values()) {
+      if (t.id === taskId) {
+        task = t;
+        break;
+      }
+    }
+
+    if (!task) {
+      console.warn(`[TaskManager] Task not found: ${taskId}`);
+      return false;
+    }
+
+    // Update in-memory state
+    task.enabled = enabled;
+
+    // Persist to user settings
+    const userSettings = getUserSettingsService();
+    userSettings.setTaskEnabled(task.name, enabled);
+
+    console.log(`[TaskManager] Task "${task.name}" ${enabled ? 'enabled' : 'disabled'}`);
+
+    // Emit task:updated event for WebSocket sync
+    this.emit('task:updated', {
+      task: {
+        id: task.id,
+        name: task.name,
+        status: task.status,
+        enabled: task.enabled,
+        lastRun: task.lastRun,
+        nextRun: task.nextRun,
+      },
+    });
+
+    return true;
   }
 
   async close(): Promise<void> {

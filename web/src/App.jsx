@@ -1122,6 +1122,59 @@ function App() {
     }
   };
 
+  // Toggle task enabled/disabled status
+  const handleToggleTask = async (taskId, currentEnabled) => {
+    const newEnabled = !currentEnabled;
+
+    // Optimistic UI update
+    setAgentTasks((prev) =>
+      prev.map((task) =>
+        task.id === taskId
+          ? { ...task, enabled: newEnabled }
+          : task
+      )
+    );
+
+    try {
+      const res = await fetch(`/api/tasks/${taskId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: newEnabled }),
+      });
+
+      if (res.ok) {
+        const updatedTask = await res.json();
+        setAgentTasks((prev) =>
+          prev.map((task) =>
+            task.id === taskId
+              ? { ...task, ...updatedTask }
+              : task
+          )
+        );
+      } else {
+        console.error('Failed to toggle task:', await res.text());
+        // Revert optimistic update
+        setAgentTasks((prev) =>
+          prev.map((task) =>
+            task.id === taskId
+              ? { ...task, enabled: currentEnabled }
+              : task
+          )
+        );
+      }
+    } catch (error) {
+      console.error('Error toggling task:', error);
+      // Revert optimistic update
+      setAgentTasks((prev) =>
+        prev.map((task) =>
+          task.id === taskId
+            ? { ...task, enabled: currentEnabled }
+            : task
+        )
+      );
+    }
+  };
+
   // Helper to check if a value is a data URL image
   const isDataUrlImage = (value) => {
     return typeof value === 'string' && value.startsWith('data:image/');
@@ -2036,7 +2089,7 @@ function App() {
                 <span className="accordion-arrow">{expandedAccordions.tasks ? '▼' : '▶'}</span>
               </button>
               {expandedAccordions.tasks && (
-                <div className="accordion-content">
+                <div className="accordion-content tasks-list">
                   {agentTasks.length === 0 ? (
                     <div className="accordion-empty">No active tasks</div>
                   ) : (
@@ -2081,10 +2134,18 @@ function App() {
                       const nextRunDisplay = formatNextRun(task.nextRun);
 
                       return (
-                        <div key={task.id} className="accordion-item task-item" title={tooltip}>
-                          <span className={`task-status ${task.status}`}>●</span>
+                        <div key={task.id} className={`accordion-item task-item ${task.enabled === false ? 'disabled' : ''}`} title={tooltip}>
+                          <label className="task-toggle" title={task.enabled !== false ? 'Disable task' : 'Enable task'} onClick={(e) => e.stopPropagation()}>
+                            <input
+                              type="checkbox"
+                              checked={task.enabled !== false}
+                              onChange={() => handleToggleTask(task.id, task.enabled !== false)}
+                            />
+                            <span className="task-toggle-slider"></span>
+                          </label>
+                          <span className={`task-status ${task.enabled === false ? 'disabled' : task.status}`}>●</span>
                           <span className="task-name">{task.name}</span>
-                          {nextRunDisplay && (
+                          {nextRunDisplay && task.enabled !== false && (
                             <span className="task-next-run">{nextRunDisplay}</span>
                           )}
                           <button
