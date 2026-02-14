@@ -13,7 +13,7 @@ import { LLM_SUMMARIZE_MAX_TOKENS, LLM_TASK_CONFIG_MAX_TOKENS } from '../constan
 import type { TraceStore } from '../tracing/trace-store.js';
 import type { TraceContext, LlmWorkload } from '../tracing/types.js';
 import { TokenReductionService } from './token-reduction/token-reduction-service.js';
-import type { TokenReductionConfig, CompressionResult, CompressionLevel, TokenReductionProviderType } from './token-reduction/types.js';
+import type { TokenReductionConfig, CompressionResult, TokenReductionProviderType } from './token-reduction/types.js';
 import type { UserSettingsService } from '../settings/service.js';
 
 export interface LLMServiceConfig {
@@ -56,7 +56,6 @@ export class LLMService {
   ): TokenReductionConfig | undefined {
     const envEnabled = env.TOKEN_REDUCTION_ENABLED === 'true';
     const envProvider = (env.TOKEN_REDUCTION_PROVIDER || 'llmlingua2') as TokenReductionProviderType;
-    const envLevel = (env.TOKEN_REDUCTION_LEVEL || 'default') as CompressionLevel;
 
     const trSettings = settingsService?.getTokenReductionSettings();
     const wanted = envEnabled || trSettings?.enabledForMain || trSettings?.enabledForFast;
@@ -65,7 +64,7 @@ export class LLMService {
     return {
       enabled: true,
       provider: (trSettings?.provider || envProvider) as TokenReductionProviderType,
-      compressionLevel: trSettings?.compressionLevel || envLevel,
+      compressionLevel: trSettings?.compressionLevel || 'default',
     };
   }
 
