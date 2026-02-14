@@ -7,13 +7,20 @@
 import type { Express, Request, Response } from 'express';
 import { existsSync, readFileSync } from 'fs';
 import type { MissionManager } from '../missions/index.js';
+import { getDashboardStore, RenderEngine } from '../dashboard/index.js';
+import type { LLMService } from '../llm/service.js';
 
 export interface MissionRoutesConfig {
   missionManager: MissionManager;
+  llmService?: LLMService;
 }
 
 export function setupMissionRoutes(app: Express, config: MissionRoutesConfig): void {
-  const { missionManager } = config;
+  const { missionManager, llmService } = config;
+
+  // Dashboard store and render engine for database-backed dashboards
+  const dashboardStore = getDashboardStore();
+  const renderEngine = llmService ? new RenderEngine(llmService, dashboardStore) : null;
 
   // ========================================================================
   // Helpers — eliminate repeated mission/pillar lookup boilerplate
@@ -198,9 +205,50 @@ export function setupMissionRoutes(app: Express, config: MissionRoutesConfig): v
   // Dashboard endpoints
   // ========================================================================
 
+  /**
+   * Helper: Try to serve a dashboard from the database (created by mission_update_dashboard tool).
+   * Returns true if served, false if should fall back to file-based.
+   */
+  function tryServeDatabaseDashboard(
+    res: Response,
+    missionId: string,
+    conversationId: string
+  ): boolean {
+    if (!renderEngine) return false;
+
+    // Try to find a rendered snapshot by missionId first, then conversationId
+    let snapshots = dashboardStore.getSnapshots({ missionId, limit: 1 });
+    if (snapshots.length === 0) {
+      snapshots = dashboardStore.getSnapshots({ conversationId, limit: 1 });
+    }
+
+    if (snapshots.length > 0) {
+      const snapshot = snapshots[0];
+      if (snapshot.status === 'rendered' && snapshot.renderedHtml) {
+        const fullHtml = renderEngine.wrapWithLibraries(snapshot.renderedHtml);
+        res.type('html').send(fullHtml);
+        return true;
+      }
+    }
+
+    return false;
+  }
+
   // Serve mission dashboard HTML
   app.get('/api/missions/:slug/dashboard', (req: Request, res: Response) => {
     try {
+      const mission = missionManager.getMissionBySlug(param(req, 'slug'));
+      if (!mission) {
+        res.status(404).json({ error: 'Mission not found' });
+        return;
+      }
+
+      // Try database-backed dashboard first (from mission_update_dashboard tool)
+      if (tryServeDatabaseDashboard(res, mission.id, mission.conversationId)) {
+        return;
+      }
+
+      // Fall back to file-based dashboard
       const htmlPath = missionManager.getMissionDashboardPath(param(req, 'slug'));
       if (existsSync(htmlPath)) {
         const html = readFileSync(htmlPath, 'utf-8');
@@ -217,6 +265,24 @@ export function setupMissionRoutes(app: Express, config: MissionRoutesConfig): v
   // Serve pillar dashboard HTML
   app.get('/api/missions/:slug/pillars/:pillarSlug/dashboard', (req: Request, res: Response) => {
     try {
+      const mission = missionManager.getMissionBySlug(param(req, 'slug'));
+      if (!mission) {
+        res.status(404).json({ error: 'Mission not found' });
+        return;
+      }
+
+      const pillar = missionManager.getPillarBySlug(mission.id, param(req, 'pillarSlug'));
+      if (!pillar) {
+        res.status(404).json({ error: 'Pillar not found' });
+        return;
+      }
+
+      // Try database-backed dashboard first (from mission_update_dashboard tool)
+      if (tryServeDatabaseDashboard(res, mission.id, pillar.conversationId)) {
+        return;
+      }
+
+      // Fall back to file-based dashboard
       const htmlPath = missionManager.getPillarDashboardPath(param(req, 'slug'), param(req, 'pillarSlug'));
       if (existsSync(htmlPath)) {
         const html = readFileSync(htmlPath, 'utf-8');

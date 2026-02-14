@@ -466,33 +466,34 @@ export class MissionManager extends EventEmitter {
   }
 
   /**
-   * Count active TODOs (pending + in_progress) for a mission.
-   * Used for capacity enforcement.
+   * Count active TODOs (pending + in_progress) for a pillar.
+   * Used for capacity enforcement (limits are per-pillar).
    */
-  getActiveTodoCount(missionId: string): number {
+  getActiveTodoCount(pillarId: string): number {
     const db = getDb();
     const rows = db.rawQuery(
-      'SELECT COUNT(*) as count FROM mission_todos WHERE missionId = ? AND status IN (?, ?)',
-      [missionId, 'pending', 'in_progress']
+      'SELECT COUNT(*) as count FROM mission_todos WHERE pillarId = ? AND status IN (?, ?)',
+      [pillarId, 'pending', 'in_progress']
     ) as Array<{ count: number }>;
     return rows[0]?.count ?? 0;
   }
 
   /**
-   * Count backlog TODOs for a mission.
-   * Used for capacity enforcement.
+   * Count backlog TODOs for a pillar.
+   * Used for capacity enforcement (limits are per-pillar).
    */
-  getBacklogTodoCount(missionId: string): number {
+  getBacklogTodoCount(pillarId: string): number {
     const db = getDb();
     const rows = db.rawQuery(
-      'SELECT COUNT(*) as count FROM mission_todos WHERE missionId = ? AND status = ?',
-      [missionId, 'backlog']
+      'SELECT COUNT(*) as count FROM mission_todos WHERE pillarId = ? AND status = ?',
+      [pillarId, 'backlog']
     ) as Array<{ count: number }>;
     return rows[0]?.count ?? 0;
   }
 
   /**
    * Get TODO capacity limits from mission config.
+   * Limits are enforced per-pillar but configured at mission level.
    */
   getTodoLimits(missionId: string): { activeTodoLimit: number; backlogTodoLimit: number } {
     const db = getDb();

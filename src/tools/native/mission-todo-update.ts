@@ -67,11 +67,11 @@ Cannot cancel an in_progress TODO — there is no reliable cancellation for a ru
         if (todo.status !== 'backlog') {
           return { success: false, error: `Cannot promote "${todo.title}": status is "${todo.status}", expected "backlog"` };
         }
-        // Check active limit
+        // Check active limit (per-pillar)
         const limits = this.missionManager.getTodoLimits(todo.missionId);
-        const activeCount = this.missionManager.getActiveTodoCount(todo.missionId);
+        const activeCount = this.missionManager.getActiveTodoCount(todo.pillarId);
         if (activeCount >= limits.activeTodoLimit) {
-          return { success: false, error: `Cannot promote "${todo.title}": active TODO limit (${limits.activeTodoLimit}) reached. ${activeCount} active TODOs. Cancel or complete existing items first.` };
+          return { success: false, error: `Cannot promote "${todo.title}": active TODO limit (${limits.activeTodoLimit}) per pillar reached. ${activeCount} active TODOs. Cancel or complete existing items first.` };
         }
         this.missionManager.updateTodo(todoId, { status: 'pending' });
         return {

@@ -72,7 +72,8 @@ Rules:
         {
           systemPrompt,
           maxTokens: 4096,
-        }
+        },
+        'Python Generator'
       );
 
       const code = response.content.trim();

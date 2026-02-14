@@ -140,19 +140,13 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
     // Get base prompt from parent (includes memory, skills, RAG sections)
     let prompt = super.buildSystemPrompt(additionalContext, allowedTools);
 
-    // Helper to check tool access (same logic as parent)
-    const hasToolAccess = (toolName: string): boolean => {
-      if (!allowedTools) return true;
-      return allowedTools.some(t => t === toolName || t.includes(toolName));
-    };
-
     // Add delegation section if delegate tool is available
-    if (hasToolAccess('delegate')) {
+    if (this.hasToolAccess('delegate', allowedTools)) {
       prompt += DELEGATION_SECTION;
     }
 
     // Add browser section if browser_session tool is available
-    if (hasToolAccess('browser_session')) {
+    if (this.hasToolAccess('browser_session', allowedTools)) {
       prompt += BROWSER_SECTION;
     }
 
@@ -1253,7 +1247,8 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
             content: `Generate a short, descriptive title (3-6 words max) for a conversation that starts like this:\n\n${context}\n\nRespond with ONLY the title, no quotes or punctuation.`,
           },
         ],
-        { maxTokens: AUTO_NAME_LLM_MAX_TOKENS }
+        { maxTokens: AUTO_NAME_LLM_MAX_TOKENS },
+        'Auto-Namer'
       );
 
       const title = response.content.trim().substring(0, CONVERSATION_TITLE_MAX_LENGTH);
@@ -1282,6 +1277,11 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
   }
 
   private incrementMessageCount(conversationId: string): void {
+    // Skip well-known conversations (Feed, etc.) - they cannot be renamed and aren't shown in chat list
+    if (isWellKnownConversation(conversationId)) {
+      return;
+    }
+
     const count = (this.conversationMessageCount.get(conversationId) || 0) + 1;
     this.conversationMessageCount.set(conversationId, count);
 
@@ -1293,6 +1293,4 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
       });
     }
   }
-
-
 }

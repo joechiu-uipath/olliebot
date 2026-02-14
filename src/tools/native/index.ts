@@ -22,5 +22,6 @@ export * from './mission-todo-create.js';
 export * from './mission-todo-update.js';
 export * from './mission-todo-complete.js';
 export * from './mission-metric-record.js';
+export * from './mission-update-dashboard.js';
 
 // Frontend code tools moved to src/self-coding/tools/

@@ -26,15 +26,21 @@ export class MissionLeadAgent extends SupervisorAgentImpl {
   constructor(llmService: LLMService, registry: AgentRegistry) {
     super(llmService, registry);
 
-    // Load identity from JSON config
+    // Load config from JSON
     const jsonConfig = registry.loadAgentConfig('mission-lead');
     const identity = jsonConfig?.identity as Record<string, string> | undefined;
+    const canAccessTools = jsonConfig?.canAccessTools as string[] | undefined;
 
     // Override identity from JSON (readonly prevents reassignment, not property mutation)
     this.identity.id = identity?.id || 'mission-lead';
     this.identity.name = identity?.name || 'Mission Lead';
     this.identity.emoji = identity?.emoji || '🎯';
     this.identity.description = identity?.description || 'Mission Lead agent for strategic mission guidance';
+
+    // Override capabilities from JSON (mission-lead has restricted tool access)
+    if (canAccessTools) {
+      this.capabilities.canAccessTools = canAccessTools;
+    }
 
     // Override system prompt from .md file
     this.config.systemPrompt = registry.loadAgentPrompt('mission-lead');

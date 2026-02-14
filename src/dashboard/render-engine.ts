@@ -49,7 +49,8 @@ Rules:
 9. Use CSS Grid or Flexbox for layout. Use CSS custom properties for consistent theming.
 10. Include a header section with the dashboard title and key metadata.
 11. Format large numbers with toLocaleString(). Format durations in human-readable units.
-12. Use professional BI styling: subtle borders, card-based layout, consistent spacing.`;
+12. Use professional BI styling: subtle borders, card-based layout, consistent spacing.
+13. CRITICAL: Never cause horizontal scrolling. Use width:100%, max-width:100%, and box-sizing:border-box on all containers. Use flex-wrap:wrap on flex containers. Avoid fixed pixel widths — use percentages or fr units instead.`;
 
 // ================================================================
 // Default specs per snapshot type
@@ -197,11 +198,21 @@ export class RenderEngine {
   <style>
     /* Base reset for dashboard iframe */
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    html, body { background: #0f1117; color: #e0e0e0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+    html { overflow-x: hidden; width: 100%; }
+    body { background: #0f1117; color: #e0e0e0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; width: 100%; max-width: 100%; overflow-x: hidden; padding: 16px; }
+    /* Ensure all direct children respect width */
+    body > * { max-width: 100%; }
+    /* Scrollbar styling to match parent app */
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: #1a1d24; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb { background: #3a3d44; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #4a4d54; }
   </style>
 </head>
 <body>
+<div style="width:100%;max-width:100%;overflow-x:hidden;">
 ${generatedBody}
+</div>
 </body>
 </html>`;
   }

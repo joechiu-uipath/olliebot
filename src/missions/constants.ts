@@ -6,14 +6,14 @@
  */
 
 // =============================================================================
-// TODO capacity defaults
+// TODO capacity defaults (per pillar)
 // =============================================================================
 
-/** Maximum concurrent active TODOs (pending + in_progress) per mission */
-export const DEFAULT_ACTIVE_TODO_LIMIT = 10;
+/** Maximum concurrent active TODOs (pending + in_progress) per pillar */
+export const DEFAULT_ACTIVE_TODO_LIMIT = 5;
 
-/** Maximum backlog TODOs per mission */
-export const DEFAULT_BACKLOG_TODO_LIMIT = 50;
+/** Maximum backlog TODOs per pillar */
+export const DEFAULT_BACKLOG_TODO_LIMIT = 20;
 
 // =============================================================================
 // Metric computation

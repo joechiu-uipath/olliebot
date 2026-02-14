@@ -61,8 +61,9 @@ export class LLMService {
 
   /**
    * Record start of an LLM call with the trace store.
+   * @param callerName - Optional fallback caller name when no agent context is available
    */
-  private traceStart(workload: LlmWorkload, provider: LLMProvider, messages: LLMMessage[], options?: LLMOptions, purpose?: string): string | null {
+  private traceStart(workload: LlmWorkload, provider: LLMProvider, messages: LLMMessage[], options?: LLMOptions, purpose?: string, callerName?: string): string | null {
     if (!this.traceStore) return null;
     const ctx = this.getContext();
     const callId = uuid();
@@ -90,7 +91,7 @@ export class LLMService {
       temperature: options?.temperature,
       reasoningEffort: options?.reasoningEffort,
       callerAgentId: ctx?.agentId,
-      callerAgentName: ctx?.agentName,
+      callerAgentName: ctx?.agentName || callerName,
       callerPurpose: purpose || ctx?.purpose,
       conversationId: ctx?.conversationId,
     });
@@ -155,14 +156,15 @@ export class LLMService {
 
   /**
    * Summarize text using the Fast LLM
+   * @param callerName - Optional caller identifier for tracing (defaults to "System")
    */
-  async summarize(text: string, context?: string): Promise<string> {
+  async summarize(text: string, context?: string, callerName?: string): Promise<string> {
     const systemPrompt = `You are a precise summarizer. Summarize the following content into no more than 3000 characters while preserving key information and structure.${context ? ` Context: ${context}` : ''}`;
 
     const messages: LLMMessage[] = [{ role: 'user', content: text }];
     const options = { systemPrompt, maxTokens: LLM_SUMMARIZE_MAX_TOKENS };
 
-    const callId = this.traceStart('fast', this.fast, messages, options, 'summarize');
+    const callId = this.traceStart('fast', this.fast, messages, options, 'summarize', callerName || 'System');
     try {
       const response = await this.fast.complete(messages, options);
       this.traceComplete(callId, response);
@@ -367,12 +369,14 @@ export class LLMService {
 
   /**
    * Quick generation using Fast LLM (for simple tasks)
+   * @param callerName - Optional caller identifier for tracing (defaults to "System")
    */
   async quickGenerate(
     messages: LLMMessage[],
-    options?: LLMOptions
+    options?: LLMOptions,
+    callerName?: string
   ): Promise<LLMResponse> {
-    const callId = this.traceStart('fast', this.fast, messages, options, 'quick_generate');
+    const callId = this.traceStart('fast', this.fast, messages, options, 'quick_generate', callerName || 'System');
     try {
       const response = await this.fast.complete(messages, options);
       this.traceComplete(callId, response);

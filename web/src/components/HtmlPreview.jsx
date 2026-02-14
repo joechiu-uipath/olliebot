@@ -121,6 +121,11 @@ const HtmlPreview = memo(function HtmlPreview({ html, className = '', isStreamin
               padding: 12px;
               background: #fff;
             }
+            /* Scrollbar styling */
+            ::-webkit-scrollbar { width: 8px; height: 8px; }
+            ::-webkit-scrollbar-track { background: #f1f1f1; border-radius: 4px; }
+            ::-webkit-scrollbar-thumb { background: #c1c1c1; border-radius: 4px; }
+            ::-webkit-scrollbar-thumb:hover { background: #a1a1a1; }
             img { max-width: 100%; height: auto; }
             table { border-collapse: collapse; width: 100%; }
             th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }

@@ -719,24 +719,46 @@ function PillarTodos({ todos, onSelectTodo }) {
                 className={`todo-item ${todo.status}`}
                 onClick={() => todo.conversationId && onSelectTodo(todo.id)}
               >
-                <span className="todo-status-icon">
-                  {TODO_STATUS_ICONS[todo.status] || '⚪'}
-                </span>
-                <div className="todo-item-content">
+                <div className="todo-card-header">
+                  <span className="todo-status-icon">
+                    {TODO_STATUS_ICONS[todo.status] || '⚪'}
+                  </span>
                   <div className="todo-title">{todo.title}</div>
-                  <div className="todo-meta">
-                    Priority: {todo.priority}
-                    {todo.assignedAgent && ` · Agent: ${todo.assignedAgent}`}
-                    {todo.startedAt && ` · Started: ${formatTimeAgo(todo.startedAt)}`}
-                    {todo.completedAt && ` · Completed: ${formatTimeAgo(todo.completedAt)}`}
+                </div>
+
+                {todo.description && (
+                  <div className="todo-description">{todo.description}</div>
+                )}
+
+                {todo.justification && (
+                  <div className="todo-field">
+                    <span className="todo-field-label">Why:</span>{todo.justification}
                   </div>
-                  {todo.outcome && (
-                    <div className="todo-outcome">{todo.outcome}</div>
+                )}
+
+                {todo.completionCriteria && (
+                  <div className="todo-field">
+                    <span className="todo-field-label">Done:</span>{todo.completionCriteria}
+                  </div>
+                )}
+
+                {todo.outcome && (
+                  <div className="todo-outcome">
+                    <span className="todo-outcome-label">Result:</span>{todo.outcome}
+                  </div>
+                )}
+
+                <div className="todo-card-footer">
+                  <span className="todo-timestamps">
+                    {todo.startedAt && `Started ${formatTimeAgo(todo.startedAt)}`}
+                    {todo.startedAt && todo.completedAt && ' · '}
+                    {todo.completedAt && `Completed ${formatTimeAgo(todo.completedAt)}`}
+                    {!todo.startedAt && !todo.completedAt && `Created ${formatTimeAgo(todo.createdAt)}`}
+                  </span>
+                  {todo.conversationId && (
+                    <span className="todo-view-btn">View →</span>
                   )}
                 </div>
-                {todo.conversationId && (
-                  <span className="todo-view-btn">View →</span>
-                )}
               </div>
             ))}
           </div>
@@ -780,22 +802,41 @@ function TodoExecution({ todoId, missionSlug, pillarSlug, onBack, sendMessage, s
       {todo && (
         <div className="todo-execution-detail">
           <h3 className="todo-execution-title">{todo.title}</h3>
+
           <div className="todo-execution-meta">
             <span className={`mission-status-badge ${todo.status}`}>{todo.status.replace('_', ' ')}</span>
-            <span>Priority: {todo.priority}</span>
-            {todo.assignedAgent && <span>Agent: {todo.assignedAgent}</span>}
-            {todo.startedAt && <span>Started: {new Date(todo.startedAt).toLocaleString()}</span>}
-            {todo.completedAt && <span>Completed: {new Date(todo.completedAt).toLocaleString()}</span>}
+            {todo.startedAt && <span>Started {formatTimeAgo(todo.startedAt)}</span>}
+            {todo.completedAt && <span>Completed {formatTimeAgo(todo.completedAt)}</span>}
           </div>
+
           {todo.description && (
-            <div className="todo-execution-description">{todo.description}</div>
+            <div className="todo-execution-field">
+              <span className="todo-execution-field-label">Description</span>
+              <div className="todo-execution-field-value">{todo.description}</div>
+            </div>
           )}
+
+          {todo.justification && (
+            <div className="todo-execution-field">
+              <span className="todo-execution-field-label">Why</span>
+              <div className="todo-execution-field-value">{todo.justification}</div>
+            </div>
+          )}
+
+          {todo.completionCriteria && (
+            <div className="todo-execution-field">
+              <span className="todo-execution-field-label">Done When</span>
+              <div className="todo-execution-field-value">{todo.completionCriteria}</div>
+            </div>
+          )}
+
           {todo.outcome && (
             <div className="todo-execution-section">
               <h4>Outcome</h4>
               <div className="todo-execution-outcome">{todo.outcome}</div>
             </div>
           )}
+
           {todo.conversationId && (
             <div className="todo-execution-section">
               <h4>Execution Log</h4>

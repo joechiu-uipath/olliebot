@@ -8,15 +8,12 @@
     "description": "Orchestrates mission strategy, monitors pillars, and coordinates pillar owners"
   },
   "canAccessTools": [
-    "web_search",
-    "web_scrape",
-    "wikipedia_search",
     "delegate",
     "mission_todo_create",
     "mission_todo_update",
     "mission_todo_complete",
     "mission_metric_record",
-    "mcp.*"
+    "mission_update_dashboard"
   ],
   "delegation": {
     "canDelegate": true,

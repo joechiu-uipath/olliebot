@@ -113,26 +113,27 @@ Each TODO should have a clear justification (why this, why now) and measurable c
       };
     }
 
-    // Capacity enforcement
+    // Capacity enforcement (limits are per-pillar)
     const limits = this.missionManager.getTodoLimits(mission.id);
     let finalStatus = targetStatus;
     let capacityWarning = '';
 
     if (targetStatus === 'pending') {
-      const activeCount = this.missionManager.getActiveTodoCount(mission.id);
+      const activeCount = this.missionManager.getActiveTodoCount(pillar.id);
       if (activeCount >= limits.activeTodoLimit) {
         // Overflow to backlog
         finalStatus = 'backlog';
-        capacityWarning = ` (Active TODO limit of ${limits.activeTodoLimit} reached — created in backlog instead)`;
+        capacityWarning = ` (Active TODO limit of ${limits.activeTodoLimit} per pillar reached — created in backlog instead)`;
       }
     }
 
     if (finalStatus === 'backlog') {
-      const backlogCount = this.missionManager.getBacklogTodoCount(mission.id);
+      const backlogCount = this.missionManager.getBacklogTodoCount(pillar.id);
       if (backlogCount >= limits.backlogTodoLimit) {
+        const activeCount = this.missionManager.getActiveTodoCount(pillar.id);
         return {
           success: false,
-          error: `Backlog limit (${limits.backlogTodoLimit}) reached. Cancel or complete existing TODOs first. Active: ${this.missionManager.getActiveTodoCount(mission.id)}/${limits.activeTodoLimit}, Backlog: ${backlogCount}/${limits.backlogTodoLimit}`,
+          error: `Backlog limit (${limits.backlogTodoLimit}) per pillar reached. Cancel or complete existing TODOs first. Active: ${activeCount}/${limits.activeTodoLimit}, Backlog: ${backlogCount}/${limits.backlogTodoLimit}`,
         };
       }
     }

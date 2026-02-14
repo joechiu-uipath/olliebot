@@ -21,6 +21,7 @@ import { type RAGProjectService, createRAGProjectRoutes, type IndexingProgress }
 import type { MissionManager } from '../missions/index.js';
 import { setupMissionRoutes } from './mission-routes.js';
 import { getDashboardStore, SnapshotEngine, RenderEngine, setupDashboardRoutes } from '../dashboard/index.js';
+import { MissionUpdateDashboardTool } from '../tools/native/mission-update-dashboard.js';
 import { getMessageEventService, setMessageEventServiceChannel } from '../services/message-event-service.js';
 import { getUserSettingsService } from '../settings/index.js';
 import { OllieBotMCPServer } from '../mcp-server/index.js';
@@ -1029,6 +1030,7 @@ export class AssistantServer {
     if (this.missionManager) {
       setupMissionRoutes(this.app, {
         missionManager: this.missionManager,
+        llmService: this.llmService,
       });
     }
 
@@ -1043,6 +1045,17 @@ export class AssistantServer {
         snapshotEngine,
         renderEngine,
       });
+
+      // Register dashboard update tool (requires missionManager + dashboard components)
+      if (this.missionManager && this.toolRunner) {
+        this.toolRunner.registerNativeTool(new MissionUpdateDashboardTool({
+          missionManager: this.missionManager,
+          dashboardStore,
+          renderEngine,
+          snapshotEngine,
+        }));
+        console.log('[Server] Dashboard update tool registered (mission_update_dashboard)');
+      }
     }
 
     // REST endpoints for browser session management
@@ -1480,7 +1493,8 @@ export class AssistantServer {
   <title>${mission.name} - Dashboard</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    body { background: #0f1117; color: #e0e0e0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 24px; }
+    html { overflow-x: hidden; }
+    body { background: #0f1117; color: #e0e0e0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 24px; max-width: 100%; overflow-x: hidden; }
     ::-webkit-scrollbar { width: 8px; height: 8px; }
     ::-webkit-scrollbar-track { background: #1a1d24; border-radius: 4px; }
     ::-webkit-scrollbar-thumb { background: #3a3d44; border-radius: 4px; }
@@ -1602,7 +1616,8 @@ export class AssistantServer {
   <title>${pillar.name} - ${mission.name}</title>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-    body { background: #0f1117; color: #e0e0e0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 24px; }
+    html { overflow-x: hidden; }
+    body { background: #0f1117; color: #e0e0e0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 24px; max-width: 100%; overflow-x: hidden; }
     ::-webkit-scrollbar { width: 8px; height: 8px; }
     ::-webkit-scrollbar-track { background: #1a1d24; border-radius: 4px; }
     ::-webkit-scrollbar-thumb { background: #3a3d44; border-radius: 4px; }

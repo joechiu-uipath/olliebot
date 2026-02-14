@@ -347,7 +347,7 @@ async function main(): Promise<void> {
       async summarize(content: string, prompt: string): Promise<string> {
         const response = await llmService.quickGenerate([
           { role: 'user', content: `${prompt}\n\n${content}` },
-        ], { maxTokens: 200 });
+        ], { maxTokens: 200 }, 'RAG Indexer');
         return response.content.trim();
       },
     });

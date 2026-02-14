@@ -26,11 +26,11 @@ The current TODO system has a basic schema and a create tool, but lacks:
 
 ## 2. TODO Capacity Model
 
-### 2.1 Two-Tier System: Active + Backlog
+### 2.1 Two-Tier System: Active + Backlog (Per-Pillar)
 
 ```
 ┌─────────────────────────────────────────────┐
-│ Active TODOs (default limit: 10)            │
+│ Active TODOs (default limit: 5 per pillar)  │
 │                                             │
 │ These are the CURRENT priorities.           │
 │ Status: pending | in_progress               │
@@ -39,7 +39,7 @@ The current TODO system has a basic schema and a create tool, but lacks:
 │ When completed/cancelled → freed slot       │
 │ When backlog item promoted → fills slot     │
 ├─────────────────────────────────────────────┤
-│ Backlog (default limit: 50)                 │
+│ Backlog (default limit: 20 per pillar)      │
 │                                             │
 │ These are CANDIDATES for pickup.            │
 │ Status: backlog                             │
@@ -56,28 +56,38 @@ The current TODO system has a basic schema and a create tool, but lacks:
 {
   "name": "Improve Developer Experience",
   "todo": {
-    "activeTodoLimit": 10,
-    "backlogTodoLimit": 50
+    "activeTodoLimit": 5,
+    "backlogTodoLimit": 20
   },
   "pillars": [...]
 }
 ```
 
-Defaults: `activeTodoLimit = 10`, `backlogTodoLimit = 50`.
+Defaults: `activeTodoLimit = 5`, `backlogTodoLimit = 20` (per pillar).
 
 **Enforcement:**
-- `mission_todo_create` checks count before creating. If active list is full, the
-  TODO is created in `backlog` status (with a warning to the agent). If backlog is
-  also full, creation is rejected — the agent must cancel or complete existing items
-  first.
-- This forces prioritization: "You have 10 active TODOs and 50 backlog items. To add
-  a new one, you must first cancel or complete something."
+- `mission_todo_create` checks the **pillar's** TODO count before creating. If the
+  pillar's active list is full, the TODO is created in `backlog` status (with a
+  warning to the agent). If the pillar's backlog is also full, creation is rejected —
+  the agent must cancel or complete existing items first.
+- This forces prioritization: "This pillar has 5 active TODOs and 20 backlog items.
+  To add a new one, you must first cancel or complete something."
 
-### 2.3 Per-Pillar vs. Mission-Level Limits
+### 2.3 Per-Pillar Limits
 
-Limits are per-**mission** (not per-pillar). This prevents a single pillar from
-monopolizing the TODO capacity. The Mission Lead is responsible for balancing allocation
-across pillars.
+Limits are per-**pillar** (not per-mission). Each pillar gets its own capacity (5 active,
+20 backlog by default). This design:
+
+1. **Encourages focus** — Each pillar must prioritize its own top 5 items, preventing
+   sprawl within a single area
+2. **Enables parallel progress** — All pillars can make progress independently without
+   competing for a shared TODO pool
+3. **Simplifies ownership** — Pillar Owners manage their pillar's TODO capacity directly
+4. **Scales with pillars** — A mission with 4 pillars has 20 total active slots (4×5),
+   naturally scaling capacity with scope
+
+The limits are configured at mission level (shared defaults for all pillars) but
+enforced per-pillar.
 
 ---
 
@@ -178,12 +188,12 @@ Add these new fields to the existing tool:
 ```
 
 **Enforcement logic:**
-1. Count active TODOs (pending + in_progress) for this mission
+1. Count active TODOs (pending + in_progress) for this **pillar**
 2. If `targetStatus === 'pending'` and count >= `activeTodoLimit`:
    - Create as `backlog` instead, warn agent:
-     "Active TODO limit (10) reached. Created in backlog instead."
-3. If `targetStatus === 'backlog'` and backlog count >= `backlogTodoLimit`:
-   - Reject: "Backlog limit (50) reached. Cancel or complete existing items first."
+     "Active TODO limit (5) per pillar reached. Created in backlog instead."
+3. If `targetStatus === 'backlog'` and pillar's backlog count >= `backlogTodoLimit`:
+   - Reject: "Backlog limit (20) per pillar reached. Cancel or complete existing items first."
 
 ### 4.2 `mission_todo_update` (new)
 
@@ -397,10 +407,10 @@ Review the current state of the {pillarName} pillar:
 ### Active Strategies
 {for each strategy: description, status}
 
-### Active TODOs ({activeCount}/{activeTodoLimit})
+### Active TODOs ({activeCount}/{activeTodoLimit} for this pillar)
 {for each active TODO: id, title, status, age}
 
-### Backlog ({backlogCount}/{backlogTodoLimit})
+### Backlog ({backlogCount}/{backlogTodoLimit} for this pillar)
 {for each backlog TODO: id, title, age}
 
 ### Instructions
