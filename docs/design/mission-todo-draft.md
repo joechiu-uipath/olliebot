@@ -104,7 +104,6 @@ interface MissionTodo {
   assignedAgent: string | null;     // Reserved: not used in v1 (always pillar-owner)
 
   // --- Execution ---
-  conversationId: string | null;    // Execution chat (created when work begins)
   outcome: string | null;           // Result summary (filled on completion)
 
   // --- Timestamps ---
@@ -196,7 +195,7 @@ Add these new fields to the existing tool:
 |--------|------------|-----------|-------|
 | `promote` | backlog | pending | Checks active limit; fails if full |
 | `demote` | pending | backlog | Frees an active slot |
-| `start` | pending | in_progress | Creates execution conversation, sets startedAt |
+| `start` | pending | in_progress | Sets startedAt, execution happens in pillar TODO chat |
 | `cancel` | any (not completed) | cancelled | Requires reason |
 
 **Permission model:**
@@ -237,24 +236,21 @@ Pillar Owner's `canAccessTools` list does NOT include `mission_todo_complete`.
 Mission Lead decides to start a TODO
   │
   ├── 1. Calls mission_todo_update({ action: 'start', todoId })
-  │     → Creates a new conversation with metadata:
-  │         { channel: 'todo', missionId, pillarId, todoId }
-  │     → Sets todo.conversationId = new conversation ID
   │     → Sets todo.startedAt = now
   │     → Sets todo.status = 'in_progress'
   │
-  ├── 2. Mission Lead delegates to pillar-owner in the TODO conversation:
+  ├── 2. Mission Lead delegates to pillar-owner in the pillar TODO chat:
   │     "Execute this task: [title]. [description].
   │      Completion criteria: [completionCriteria].
   │      Use the tools available to you."
   │
-  ├── 3. Pillar Owner works in the TODO conversation:
+  ├── 3. Pillar Owner works in the pillar TODO chat:
   │     ├── Uses tools (web_search, user tools, MCP tools)
   │     ├── May delegate to sub-workers (researcher, coder, writer)
   │     ├── Reports progress in conversation
   │     └── When done, sends result summary back to Mission Lead
   │
-  ├── 4. Mission Lead reviews the conversation and result
+  ├── 4. Mission Lead reviews the result in the pillar TODO chat
   │     ├── If satisfied: calls mission_todo_complete({
   │     │     todoId, outcome: "...", metricsImpacted: ["build-time"]
   │     │   })
@@ -263,14 +259,35 @@ Mission Lead decides to start a TODO
   └── 5. Completed TODO frees an active slot for the next item
 ```
 
-### 5.2 Chat as Unit of Execution
+### 5.2 Chat as the Context of Execution
 
-Each TODO gets **one conversation** for its entire lifecycle:
-- Created by `mission_todo_update({ action: 'start' })`
-- All execution happens in this conversation
-- The conversation is routed to MissionLeadAgent (channel: 'todo')
-- Human can view the conversation in the TODO detail view
-- Human can send messages (when agent is idle) — this feeds into the conversation
+Each pillar gets **one TODO chat** for all its TODO execution:
+
+```
+Mission: "Developer Experience"
+  ├── Pillar: "Build Performance"
+  │     └── Chat: "[TODOs] Build Performance"
+  │           ├── Turn 1: execute TODO "Profile webpack build..."
+  │           ├── Turn 2: execute TODO "Evaluate esbuild-loader..."
+  │           └── ...
+  ├── Pillar: "Onboarding"
+  │     └── Chat: "[TODOs] Onboarding"
+  │           └── ...
+  └── ...
+```
+
+**Key design decisions:**
+
+- **One TODO chat per pillar** — all TODOs for a pillar share a single conversation.
+  This avoids chat explosion (not 1 chat per TODO) while keeping pillar work
+  naturally separated.
+- **Created during mission initialization** — alongside the existing mission and
+  pillar conversations, with metadata:
+  `{ channel: 'pillar-todo', missionId, missionSlug, pillarId, pillarSlug }`
+- **Append-only log** — each TODO execution appends turns to the same chat,
+  creating a chronological trail of all work done for the pillar.
+- **Human can view the chat** — provides visibility into TODO execution for a pillar
+- **Human can send messages** (when agent is idle) — these feed into the conversation
   context for the next agent turn
 
 ### 5.3 Conversation Resumption (No Time Limits)
@@ -311,9 +328,9 @@ Proposed (async for TODOs):
 - Add an `async` flag to the delegation flow
 - When `async: true`, `handleDelegationFromTool` does NOT await the worker
 - Instead, it fires `agent.handleDelegatedTask()` as a detached promise
-- The worker posts its result to the conversation (persisted in DB)
+- The worker posts its result to the pillar TODO chat (persisted in DB)
 - On the next cadence cycle (or when user messages), Mission Lead reads the
-  conversation history and sees the worker's result
+  pillar TODO chat history and sees the worker's result
 - This requires a new message type or convention for "worker completed TODO"
 
 **Risk:** Detached promises can lose error context. Mitigate by wrapping in
@@ -322,7 +339,7 @@ try/catch with error persisted to the conversation.
 ### 5.5 Human Intervention
 
 For v1, human intervention is minimal:
-- Human can view the TODO execution conversation in the UI (read-only while agent is
+- Human can view the pillar TODO chat in the UI (read-only while agent is
   actively working)
 - Human can send messages when the agent is idle (completed or gave up)
 - These messages become part of the conversation context for the next agent turn
@@ -403,7 +420,6 @@ CREATE TABLE IF NOT EXISTS mission_todos (
   priority TEXT NOT NULL DEFAULT 'medium'
     CHECK(priority IN ('critical', 'high', 'medium', 'low')),
   assignedAgent TEXT,
-  conversationId TEXT,
   outcome TEXT,
   createdAt TEXT NOT NULL,
   startedAt TEXT,
@@ -415,6 +431,7 @@ CREATE TABLE IF NOT EXISTS mission_todos (
 - Added `justification` column
 - Added `completionCriteria` column
 - Added `deadline` column
+- Removed `conversationId` column (TODO execution uses per-pillar TODO chat)
 - Added `backlog` and `cancelled` to status CHECK constraint; removed `blocked`
 
 ### 7.2 Updated `missions` Table (for limits)
@@ -461,13 +478,12 @@ Mission Lead reviews the pillar's TODO list and starts execution:
   action: "start"
   reason: "Build time degradation confirmed by 3 consecutive readings. Starting investigation."
 
-→ System creates conversation { channel: 'todo', missionId, pillarId, todoId }
-→ Sets todo.conversationId, todo.startedAt, todo.status = 'in_progress'
+→ Sets todo.startedAt, todo.status = 'in_progress'
 ```
 
-**3. Execution (Pillar Owner works in the TODO conversation)**
+**3. Execution (Pillar Owner works in the pillar TODO chat)**
 
-Mission Lead delegates to pillar-owner in the TODO conversation:
+Mission Lead delegates to pillar-owner in the "[TODOs] Build Performance" chat:
 ```
 "Execute: Profile webpack build to identify top 3 slow plugins.
 
@@ -494,7 +510,7 @@ Pillar Owner works:
 
 **4. Completion (Mission Lead reviews and completes)**
 
-Mission Lead reviews the TODO conversation:
+Mission Lead reviews the result in the pillar TODO chat:
 ```
 [calls mission_todo_complete]
   missionSlug: "developer-experience"
@@ -579,7 +595,7 @@ When a TODO is overdue:
 | **Phase 2** | Implement `mission_todo_update` tool with promote/demote/start/cancel actions | M |
 | **Phase 3** | Implement `mission_todo_complete` tool with permission restriction (private tool) | S |
 | **Phase 4** | Add capacity enforcement to `mission_todo_create` (active + backlog limits from config) | S |
-| **Phase 5** | TODO execution flow: conversation creation on `start`, delegation to pillar-owner | L |
+| **Phase 5** | TODO execution flow: pillar TODO chat creation during mission init, delegation to pillar-owner on `start` | L |
 | **Phase 6** | Async delegation model (fire-and-forget for long-running TODOs) | L |
 | **Phase 7** | Planning cadence: inject TODO planning prompt into pillar chat at cycle time | M |
 | **Phase 8** | Deadline checking and escalation logic | M |
