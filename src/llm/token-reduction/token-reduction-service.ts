@@ -17,14 +17,19 @@ import type {
   TokenReductionProviderType,
 } from './types.js';
 import { LLMLingua2Provider } from './llmlingua2-provider.js';
+import { CompressionCache } from './compression-cache.js';
 
 export class TokenReductionService {
   private provider: TokenReductionProvider | null = null;
   private config: TokenReductionConfig;
   private initialized = false;
+  private cache: CompressionCache;
+  private cacheHits = 0;
+  private cacheMisses = 0;
 
-  constructor(config: TokenReductionConfig) {
+  constructor(config: TokenReductionConfig, cacheMaxSize = 100) {
     this.config = config;
+    this.cache = new CompressionCache(cacheMaxSize);
   }
 
   /**
@@ -127,18 +132,49 @@ export class TokenReductionService {
   }
 
   /**
+   * Get the internal compression cache (for wiring up DB persistence).
+   */
+  getCache(): CompressionCache {
+    return this.cache;
+  }
+
+  /**
+   * Get cache hit/miss stats.
+   */
+  getCacheStats(): { hits: number; misses: number; size: number } {
+    return { hits: this.cacheHits, misses: this.cacheMisses, size: this.cache.size };
+  }
+
+  /**
    * Compress a single text string.
+   * Checks the LRU cache first; on miss, compresses and caches the result.
    */
   async compressText(text: string): Promise<CompressionResult> {
     if (!this.provider) {
       throw new Error('Token reduction provider not initialized');
     }
 
-    return this.provider.compress(text, this.config.rate, {
+    // Build cache key from input + rate + provider
+    const cacheKey = CompressionCache.buildKey(text, this.config.rate, this.config.provider);
+    const cached = this.cache.get(cacheKey);
+    if (cached) {
+      this.cacheHits++;
+      // Return cached result with 0ms compression time (it was free)
+      return { ...cached, compressionTimeMs: 0 };
+    }
+
+    this.cacheMisses++;
+
+    const result = await this.provider.compress(text, this.config.rate, {
       forceTokens: this.config.forceTokens,
       forceReserveDigit: this.config.forceReserveDigit,
       dropConsecutive: this.config.dropConsecutive,
     });
+
+    // Store in cache
+    this.cache.set(cacheKey, text, result);
+
+    return result;
   }
 
   /**

@@ -327,6 +327,41 @@ async function main(): Promise<void> {
       await tokenReductionService.init();
       console.log(`[Init] Token reduction: ${trConfig.provider} (rate: ${trConfig.rate}, model: ${trConfig.model})`);
       console.log(`[Init] Token reduction: main=${trSettings.enabledForMain}, fast=${trSettings.enabledForFast}`);
+
+      // Wire up compression cache ↔ DB persistence
+      const cache = tokenReductionService.getCache();
+      cache.setPersistence(
+        (entry) => {
+          traceStore.persistCacheEntry({
+            key: entry.key,
+            inputTextPreview: entry.inputText,
+            resultJson: JSON.stringify(entry.result),
+            createdAt: entry.createdAt,
+          });
+        },
+        (key) => {
+          traceStore.removeCacheEntry(key);
+        }
+      );
+
+      // Load cached entries from DB asynchronously (non-blocking)
+      Promise.resolve().then(() => {
+        try {
+          const rows = traceStore.loadCacheEntries();
+          if (rows.length > 0) {
+            const entries = rows.map(row => ({
+              key: row.key,
+              inputText: row.inputTextPreview,
+              result: JSON.parse(row.resultJson),
+              createdAt: row.createdAt,
+            }));
+            cache.loadEntries(entries);
+            console.log(`[Init] Token reduction cache: loaded ${entries.length} entries from DB`);
+          }
+        } catch (err) {
+          console.warn('[Init] Failed to load token reduction cache from DB (non-fatal):', err);
+        }
+      });
     } catch (error) {
       console.error('[Init] Failed to initialize token reduction service:', error);
       console.log('[Init] Token reduction disabled due to initialization failure');

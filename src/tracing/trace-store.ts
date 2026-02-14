@@ -178,6 +178,16 @@ export class TraceStore {
       // Column already exists, ignore
     }
 
+    // Token reduction compression cache table
+    db.rawRun(`
+      CREATE TABLE IF NOT EXISTS token_reduction_cache (
+        key TEXT PRIMARY KEY,
+        inputTextPreview TEXT,
+        resultJson TEXT NOT NULL,
+        createdAt TEXT NOT NULL
+      )
+    `);
+
     // Indexes for frequent query patterns
     db.rawExec(`
       CREATE INDEX IF NOT EXISTS idx_traces_started ON traces(startedAt DESC);
@@ -190,6 +200,7 @@ export class TraceStore {
       CREATE INDEX IF NOT EXISTS idx_llm_calls_workload ON llm_calls(workload);
       CREATE INDEX IF NOT EXISTS idx_tool_calls_trace ON tool_calls(traceId);
       CREATE INDEX IF NOT EXISTS idx_tool_calls_span ON tool_calls(spanId);
+      CREATE INDEX IF NOT EXISTS idx_token_reduction_cache_created ON token_reduction_cache(createdAt ASC);
     `);
 
     this.initialized = true;
@@ -583,6 +594,57 @@ export class TraceStore {
         callId,
       ]
     );
+  }
+
+  // ============================================================
+  // Token Reduction Cache persistence
+  // ============================================================
+
+  /**
+   * Persist a single cache entry to the database.
+   * Uses INSERT OR REPLACE so re-caching updates the row.
+   */
+  persistCacheEntry(entry: {
+    key: string;
+    inputTextPreview: string;
+    resultJson: string;
+    createdAt: string;
+  }): void {
+    const db = getDb();
+    db.rawRun(
+      `INSERT OR REPLACE INTO token_reduction_cache (key, inputTextPreview, resultJson, createdAt)
+       VALUES (?, ?, ?, ?)`,
+      [entry.key, entry.inputTextPreview, entry.resultJson, entry.createdAt]
+    );
+  }
+
+  /**
+   * Remove a cache entry from the database (on LRU eviction).
+   */
+  removeCacheEntry(key: string): void {
+    const db = getDb();
+    db.rawRun('DELETE FROM token_reduction_cache WHERE key = ?', [key]);
+  }
+
+  /**
+   * Load all cached entries from the database, ordered oldest-first
+   * so the most recent entries end up at the MRU end of the LRU cache.
+   */
+  loadCacheEntries(): Array<{
+    key: string;
+    inputTextPreview: string;
+    resultJson: string;
+    createdAt: string;
+  }> {
+    const db = getDb();
+    return db.rawQuery(
+      'SELECT key, inputTextPreview, resultJson, createdAt FROM token_reduction_cache ORDER BY createdAt ASC'
+    ) as Array<{
+      key: string;
+      inputTextPreview: string;
+      resultJson: string;
+      createdAt: string;
+    }>;
   }
 
   // ============================================================
