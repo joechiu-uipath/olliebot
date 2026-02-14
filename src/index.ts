@@ -43,6 +43,7 @@ import {
   RunPythonTool,
   WebsiteCrawlerTool,
   MissionTodoCreateTool,
+  MissionMetricRecordTool,
 } from './tools/index.js';
 import {
   ReadFrontendCodeTool,
@@ -534,7 +535,8 @@ async function main(): Promise<void> {
 
   // Register mission tools (requires mission manager)
   toolRunner.registerNativeTool(new MissionTodoCreateTool(missionManager));
-  console.log('[Init] Mission TODO create tool registered');
+  toolRunner.registerNativeTool(new MissionMetricRecordTool(missionManager));
+  console.log('[Init] Mission tools registered (todo_create, metric_record)');
 
   // Create supervisor agent (multi-agent architecture)
   console.log('[Init] Creating supervisor agent...');

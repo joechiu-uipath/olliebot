@@ -25,6 +25,9 @@ import type {
   MissionTodoRow,
   PillarMetricHistory,
   PillarMetricHistoryRow,
+  MetricTarget,
+  MetricStatus,
+  MetricTrend,
 } from './types.js';
 
 export interface MissionManagerConfig {
@@ -197,7 +200,25 @@ export class MissionManager extends EventEmitter {
       'SELECT * FROM pillar_metrics WHERE pillarId = ? ORDER BY name ASC',
       [pillarId]
     ) as PillarMetricRow[];
-    return rows.map(r => r as PillarMetric);
+    return rows.map(r => this.deserializeMetric(r));
+  }
+
+  getMetricBySlug(pillarId: string, metricSlug: string): PillarMetric | undefined {
+    const db = getDb();
+    const rows = db.rawQuery(
+      'SELECT * FROM pillar_metrics WHERE pillarId = ? AND slug = ?',
+      [pillarId, metricSlug]
+    ) as PillarMetricRow[];
+    return rows[0] ? this.deserializeMetric(rows[0]) : undefined;
+  }
+
+  getMetricById(metricId: string): PillarMetric | undefined {
+    const db = getDb();
+    const rows = db.rawQuery(
+      'SELECT * FROM pillar_metrics WHERE id = ?',
+      [metricId]
+    ) as PillarMetricRow[];
+    return rows[0] ? this.deserializeMetric(rows[0]) : undefined;
   }
 
   getMetricHistory(metricId: string, limit = 30): PillarMetricHistory[] {
@@ -206,23 +227,168 @@ export class MissionManager extends EventEmitter {
       'SELECT * FROM pillar_metric_history WHERE metricId = ? ORDER BY timestamp DESC LIMIT ?',
       [metricId, limit]
     ) as PillarMetricHistoryRow[];
-    return rows.reverse(); // chronological order
+    return rows.reverse().map(r => ({
+      ...r,
+      value: typeof r.value === 'string' ? parseFloat(r.value) : r.value,
+      note: r.note || null,
+    }));
   }
 
+  /**
+   * Record a new metric value. Normalizes durations to seconds, rounds values,
+   * computes status and trend, and persists to both current and history.
+   */
+  recordMetric(metricId: string, rawValue: number, note?: string): {
+    status: MetricStatus;
+    trend: MetricTrend;
+    normalizedValue: number;
+  } {
+    const db = getDb();
+    const metric = this.getMetricById(metricId);
+    if (!metric) throw new Error(`Metric not found: ${metricId}`);
+
+    const now = new Date().toISOString();
+
+    // Normalize value (duration → seconds, round to 2 decimal places)
+    const normalizedValue = this.normalizeMetricValue(rawValue, metric.type, metric.unit);
+
+    // Persist to history
+    db.rawRun(
+      'INSERT INTO pillar_metric_history (id, metricId, value, note, timestamp) VALUES (?, ?, ?, ?, ?)',
+      [uuid(), metricId, normalizedValue, note || null, now]
+    );
+
+    // Compute status from target
+    let target: MetricTarget | null = null;
+    try { target = JSON.parse(metric.target) as MetricTarget; } catch { /* invalid JSON */ }
+    const status = this.computeStatus(normalizedValue, target);
+
+    // Compute trend from last 10 readings
+    const history = this.getMetricHistory(metricId, 10);
+    const trend = this.computeTrend(history, target?.desiredDirection);
+
+    // Update current value, status, trend, lastCollectedAt
+    db.rawRun(
+      'UPDATE pillar_metrics SET current = ?, status = ?, trend = ?, lastCollectedAt = ?, updatedAt = ? WHERE id = ?',
+      [normalizedValue, status, trend, now, now, metricId]
+    );
+
+    this.emit('metric:recorded', {
+      metricId,
+      value: normalizedValue,
+      status,
+      trend,
+    });
+
+    return { status, trend, normalizedValue };
+  }
+
+  /**
+   * Normalize a metric value: convert durations to seconds, round to 2 decimal places.
+   */
+  private normalizeMetricValue(value: number, type: string, unit: string): number {
+    let normalized = value;
+
+    if (type === 'duration') {
+      const u = unit.toLowerCase().trim();
+      if (u === 'ms') normalized = value / 1000;
+      else if (u === 'min' || u === 'minutes') normalized = value * 60;
+      else if (u === 'hours' || u === 'h') normalized = value * 3600;
+      else if (u === 'days' || u === 'd') normalized = value * 86400;
+      // 's', 'sec', 'seconds' → already in seconds
+    }
+
+    // Round to 2 decimal places
+    return Math.round(normalized * 100) / 100;
+  }
+
+  /**
+   * Compute metric status from current value and target.
+   */
+  computeStatus(current: number, target: MetricTarget | null): MetricStatus {
+    if (!target || target.value === undefined) return 'unknown';
+
+    const onTarget = this.evaluateTarget(current, target.operator, target.value);
+    if (onTarget) return 'on_target';
+
+    // Check warning threshold
+    if (target.warningThreshold !== undefined) {
+      const betterThanWarning = this.evaluateTarget(current, target.operator, target.warningThreshold);
+      if (betterThanWarning) return 'warning';
+    }
+
+    return 'off_target';
+  }
+
+  private evaluateTarget(current: number, operator: string, targetValue: number): boolean {
+    switch (operator) {
+      case '<': return current < targetValue;
+      case '<=': return current <= targetValue;
+      case '>': return current > targetValue;
+      case '>=': return current >= targetValue;
+      case '=': return current === targetValue;
+      case '!=': return current !== targetValue;
+      default: return false;
+    }
+  }
+
+  /**
+   * Compute trend from the last N readings (N=10).
+   * Uses simple linear regression slope direction.
+   */
+  computeTrend(history: PillarMetricHistory[], desiredDirection?: string): MetricTrend {
+    if (history.length < 3) return 'unknown';
+
+    // Simple: compare mean of first half vs mean of second half
+    const mid = Math.floor(history.length / 2);
+    const firstHalf = history.slice(0, mid);
+    const secondHalf = history.slice(mid);
+
+    const firstMean = firstHalf.reduce((sum, h) => sum + h.value, 0) / firstHalf.length;
+    const secondMean = secondHalf.reduce((sum, h) => sum + h.value, 0) / secondHalf.length;
+
+    const delta = secondMean - firstMean;
+    const threshold = Math.abs(firstMean) * 0.05; // 5% change threshold for "stable"
+
+    if (Math.abs(delta) <= threshold) return 'stable';
+
+    const isIncreasing = delta > 0;
+
+    // Map direction to improving/degrading based on desired direction
+    if (desiredDirection === 'up') return isIncreasing ? 'improving' : 'degrading';
+    if (desiredDirection === 'down') return isIncreasing ? 'degrading' : 'improving';
+
+    // Default: increasing = improving (most metrics want to go up)
+    return isIncreasing ? 'improving' : 'degrading';
+  }
+
+  private deserializeMetric(row: PillarMetricRow): PillarMetric {
+    return {
+      ...row,
+      type: row.type as PillarMetric['type'],
+      status: row.status as PillarMetric['status'],
+      trend: row.trend as PillarMetric['trend'],
+      current: row.current !== null && row.current !== undefined
+        ? (typeof row.current === 'string' ? parseFloat(row.current) : row.current as number)
+        : null,
+    };
+  }
+
+  /** @deprecated Use recordMetric() instead */
   updateMetric(metricId: string, current: string, trend: PillarMetric['trend']): void {
     const db = getDb();
     const now = new Date().toISOString();
+    const numericValue = parseFloat(current);
     db.rawRun(
       'UPDATE pillar_metrics SET current = ?, trend = ?, updatedAt = ? WHERE id = ?',
-      [current, trend, now, metricId]
+      [isNaN(numericValue) ? null : numericValue, trend, now, metricId]
     );
 
     // Add history point
-    const numericValue = parseFloat(current);
     if (!isNaN(numericValue)) {
       db.rawRun(
-        'INSERT INTO pillar_metric_history (id, metricId, value, timestamp) VALUES (?, ?, ?, ?)',
-        [uuid(), metricId, numericValue, now]
+        'INSERT INTO pillar_metric_history (id, metricId, value, note, timestamp) VALUES (?, ?, ?, ?, ?)',
+        [uuid(), metricId, numericValue, null, now]
       );
     }
   }
@@ -387,6 +553,13 @@ export class MissionManager extends EventEmitter {
         [missionId, slug, missionName, description, 'active', config.mdPath, JSON.stringify(jsonConfig), conversationId, cadence, null, this.calculateNextCycle(cadence), now, now]
       );
 
+      // Create well-known metric collection conversation for this mission
+      const metricConvId = `${slug}-metric`;
+      db.rawRun(
+        'INSERT OR IGNORE INTO conversations (id, title, createdAt, updatedAt, manuallyNamed, metadata) VALUES (?, ?, ?, ?, ?, ?)',
+        [metricConvId, `[Metric Collection] ${missionName}`, now, now, 1, JSON.stringify({ channel: 'metric-collection', missionId, missionSlug: slug })]
+      );
+
       // Sync pillars from config
       this.syncPillars(missionId, jsonConfig, slug);
     }
@@ -415,12 +588,18 @@ export class MissionManager extends EventEmitter {
         [pillarId, missionId, pillarSlug, pillarConfig.name || '', pillarConfig.description || '', 'active', conversationId, now, now]
       );
 
-      // Sync metrics
+      // Sync metrics (enhanced schema)
       const metrics = (pillarConfig.metrics as Array<Record<string, unknown>>) || [];
       for (const metric of metrics) {
+        const metricSlug = (metric.slug as string) || this.slugify((metric.name as string) || 'unnamed');
+        const metricType = (metric.type as string) || 'numeric';
+        const target = typeof metric.target === 'object' ? JSON.stringify(metric.target) : (metric.target as string || '{}');
+        const current = typeof metric.current === 'number' ? metric.current : null;
+        const collection = typeof metric.collection === 'object' ? JSON.stringify(metric.collection) : '{}';
+
         db.rawRun(
-          'INSERT INTO pillar_metrics (id, pillarId, name, target, current, unit, trend, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-          [uuid(), pillarId, metric.name || '', metric.target || '', metric.current || '', metric.unit || '', 'unknown', now]
+          'INSERT INTO pillar_metrics (id, pillarId, slug, name, type, unit, target, current, status, trend, collection, lastCollectedAt, updatedAt) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [uuid(), pillarId, metricSlug, metric.name || '', metricType, metric.unit || '', target, current, 'unknown', 'unknown', collection, null, now]
         );
       }
 

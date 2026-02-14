@@ -37,12 +37,14 @@ archetypes, and a tool-based collection model that agents can execute autonomous
 | `numeric` | Any number (integer or float) | Build time: 42s | `<`, `>`, `<=`, `>=`, `=` |
 | `percentage` | 0–100 (or 0–1 normalized) | Cache hit rate: 82% | Same as numeric, UI shows `%` |
 | `count` | Non-negative integer | Open bugs: 7 | Same as numeric |
-| `duration` | Seconds (stored), display converts | P95 latency: 0.230s | Same as numeric |
+| `duration` | **Always stored as seconds** (display layer converts to human-friendly units) | P95 latency: 0.230s | Same as numeric |
 | `boolean` | `true` / `false` | CI pipeline green: true | `= true` (pass) or `= false` (fail) |
 | `rating` | 1–N point scale (configurable, decimal values allowed e.g. 4.5) | Code quality: 4.5/5 | `>=` threshold |
 
 All types are stored as `REAL` in `pillar_metric_history.value`:
 - `boolean`: stored as `1.0` (true) or `0.0` (false)
+- `duration`: **always stored in seconds** — the `mission_metric_record` tool normalizes
+  before writing (e.g., 5 min → 300s). Values are rounded to 2 decimal places.
 - `rating`: stored as the numeric rating value (supports decimals, e.g. 4.5 stars)
 
 ### 2.2 Target Specification
@@ -83,8 +85,8 @@ Given `current`, `target`, and `warningThreshold`, compute:
 | `unknown` | No current value collected yet |
 
 This replaces the manual `trend` field with a computable status. The `trend` field
-(improving/stable/degrading) is computed from the last N data points in
-`pillar_metric_history`.
+(improving/stable/degrading) is computed from the **last 10 data points** in
+`pillar_metric_history` (N = 10).
 
 ---
 
@@ -114,7 +116,7 @@ This replaces the manual `trend` field with a computable status. The `trend` fie
             "method": "tool",
             "toolName": "user.measure_build_time",
             "toolParams": { "buildType": "dev", "iterations": 3 },
-            "schedule": "0 */4 * * *",
+            "collectionSchedule": "0 */4 * * *",
             "instructions": "Run 3 local dev builds and report the average wall-clock time in seconds. Exclude the first run (cold cache)."
           }
         },
@@ -133,7 +135,7 @@ This replaces the manual `trend` field with a computable status. The `trend` fie
             "method": "tool",
             "toolName": "mcp.ci__get_cache_stats",
             "toolParams": { "pipeline": "main", "window": "24h" },
-            "schedule": "0 8 * * *",
+            "collectionSchedule": "0 8 * * *",
             "instructions": "Fetch cache statistics from the CI system for the main pipeline over the last 24 hours. Report as percentage (hits / total * 100)."
           }
         }
@@ -155,13 +157,15 @@ interface MetricCollection {
   toolName?: string;
   /** Parameters to pass to the tool */
   toolParams?: Record<string, unknown>;
-  /** Cron expression for automated collection (uses mission cadence if omitted) */
-  schedule?: string;
+  /** Cron expression for automated collection (uses mission cadence if omitted).
+   *  Each metric can have its own schedule, allowing high-frequency metrics
+   *  (e.g., build time every 4h) and low-frequency metrics (e.g., NPS weekly). */
+  collectionSchedule?: string;
   /** Natural-language instructions for the collecting agent on how to interpret the
    *  tool result and extract the metric value */
   instructions?: string;
 
-  // --- For method: 'derived' ---
+  // --- For method: 'derived' (DEFERRED — not implemented in v1) ---
   /** Formula referencing other metric slugs: "metric_a / metric_b * 100" */
   formula?: string;
   /** Slugs of metrics this depends on (auto-recalculate when inputs change) */
@@ -169,13 +173,17 @@ interface MetricCollection {
 }
 ```
 
-**Two collection methods:**
+**Collection methods:**
 
-| Method | Use Case | Example |
-|--------|----------|---------|
-| `tool` | Automated collection via native, user, or MCP tool | CI build time via `mcp.ci__get_build_stats`, NPS via `mcp.survey__get_results` |
-| `derived` | Calculated from other metrics | "Productivity = features_shipped / engineer_count" |
+| Method | Use Case | v1? | Example |
+|--------|----------|-----|---------|
+| `tool` | Automated collection via native, user, or MCP tool | Yes | CI build time via `mcp.ci__get_build_stats`, NPS via `mcp.survey__get_results` |
+| `derived` | Calculated from other metrics | **No — deferred** | "Productivity = features_shipped / engineer_count" |
 
+> **v1 scope:** Only `tool`-based (measured) metrics are supported in the initial
+> implementation. Derived metrics require dependency resolution (DAG validation,
+> circular reference detection) and will be added in a follow-up phase.
+>
 > **Why no `manual` method?** Manual collection requires human input which doesn't scale.
 > Metrics that seem inherently human-entered (NPS, CSAT, eNPS) should be collected via
 > tool integrations — survey platforms (Delighted, Typeform, Google Forms), helpdesk APIs,
@@ -203,11 +211,13 @@ output, handle failures, and record results. A chat is the natural execution con
 for multi-turn agent work and provides built-in record-keeping (every tool call,
 result, and decision is captured in the conversation history).
 
-To avoid chat explosion, each mission gets a single **utility metric collection chat**:
+To avoid chat explosion, each mission gets a single **utility metric collection chat**
+with a **well-known (non-GUID) conversation ID** based on the mission slug:
 
 ```
-Mission: "Developer Experience"
-  └── Chat: "[Metric Collection] Developer Experience"
+Mission slug: "developer-experience"
+  └── Conversation ID: "developer-experience-metric"
+      Title: "[Metric Collection] Developer Experience"
         ├── Turn 1: collect build-performance/local-build-time
         ├── Turn 2: collect build-performance/ci-build-time
         ├── Turn 3: collect build-performance/cache-hit-rate
@@ -215,6 +225,13 @@ Mission: "Developer Experience"
         ├── ...
         └── Turn N: collect last metric
 ```
+
+**Well-known conversation ID pattern:**
+- Metric collection: `{missionSlug}-metric` (e.g., `"developer-experience-metric"`)
+- Pillar TODO execution: `{missionSlug}-{pillarSlug}-todo` (e.g., `"developer-experience-build-performance-todo"`)
+- These are **not GUIDs** — they are predictable, human-readable, and can be
+  constructed from slugs without a DB lookup.
+- Created during `syncPillars()` alongside existing mission/pillar conversations.
 
 **Key design decisions:**
 
@@ -224,42 +241,45 @@ Mission: "Developer Experience"
 - **All pillars collected in the same chat** — the Mission Lead iterates through
   every pillar's metrics within the same conversation, delegating each to the
   appropriate Pillar Owner worker.
-- **Append-only log** — each cadence cycle appends new turns to the same chat,
-  creating a chronological audit trail of every collection attempt, success, and
-  failure.
+- **Stateless per-turn execution** — following the feed channel pattern, each
+  metric collection turn does NOT use chat history context. The collection prompt
+  includes all needed context (metric definition, tool config, instructions).
+  This avoids unbounded context growth in the collection chat.
+- **One worker per metric** — each metric collection spawns a single worker turn.
+  The worker calls the tool, interprets the result, and records via
+  `mission_metric_record`. One metric = one turn = one worker.
 
 ### 4.2 Collection Execution Model
 
-Each tool-based metric is collected in a **single-turn agentic loop** within the
-metric collection chat:
+Each tool-based metric is collected by **spawning one worker per metric** in the
+metric collection chat. Each turn is **stateless** — no chat history context is used
+(following the feed channel pattern).
 
 ```
-Cadence trigger (cron)
+Cadence trigger (cron or per-metric collectionSchedule)
   │
   ▼
-Metric collection chat receives cycle prompt
+Metric collection chat receives collection prompt
   │
   ├── For each pillar:
   │     └── For each metric with collection.method === 'tool':
   │           │
   │           │  ┌─────────────────────────────────────────────┐
-  │           └──│  Single-turn agentic loop:                  │
-  │              │  1. Mission Lead delegates to Pillar Owner   │
-  │              │     worker, passing metric instructions and  │
-  │              │     tool configuration                       │
-  │              │  2. Pillar Owner runs the data collection    │
-  │              │     tool → metric value collected             │
-  │              │  3. Pillar Owner calls mission_metric_record │
-  │              │     → metric logged and status computed       │
+  │           └──│  One worker, one turn (stateless):          │
+  │              │  1. Spawn a worker for this single metric    │
+  │              │  2. Worker receives metric definition, tool  │
+  │              │     config, and instructions (full context   │
+  │              │     in prompt — no chat history needed)       │
+  │              │  3. Worker calls the collection tool          │
+  │              │  4. Worker calls mission_metric_record        │
+  │              │     → value normalized, status/trend computed │
   │              └─────────────────────────────────────────────┘
-  │
-  ├── For each metric with collection.method === 'derived':
-  │     ├── System fetches latest values of dependsOn metrics
-  │     ├── System evaluates formula
-  │     └── System persists result automatically
   │
   └── Agent generates status summary (on_target / warning / off_target per metric)
 ```
+
+> **Note:** Derived metrics are deferred to v2. Only `tool`-based collection is
+> implemented in the initial version.
 
 ### 4.3 Agent-Based Collection (Why Agents, Not Cron Jobs)
 
@@ -290,11 +310,14 @@ A native tool that persists a metric reading:
 
 The tool:
 1. Resolves slugs to IDs
-2. Updates `pillar_metrics.current` with the new value
-3. Inserts a row into `pillar_metric_history`
-4. Computes `status` (on_target / warning / off_target)
-5. Computes `trend` from last N readings
-6. Returns the computed status and trend to the agent
+2. **Normalizes value** — for `duration` type metrics, converts to seconds
+   (e.g., if unit is "min", multiplies by 60). Rounds the value before writing
+   to avoid floating-point noise (e.g., `50.3712...` → `50.37`)
+3. Updates `pillar_metrics.current` with the normalized value
+4. Inserts a row into `pillar_metric_history`
+5. Computes `status` (on_target / warning / off_target) from current vs target
+6. Computes `trend` from last **10** readings in history
+7. Returns the computed status and trend to the agent
 
 ---
 
@@ -413,6 +436,18 @@ CREATE TABLE IF NOT EXISTS pillar_metrics (
 );
 ```
 
+### 6.1b Updated `pillar_metric_history` Table
+
+```sql
+CREATE TABLE IF NOT EXISTS pillar_metric_history (
+  id TEXT PRIMARY KEY,
+  metricId TEXT NOT NULL REFERENCES pillar_metrics(id) ON DELETE CASCADE,
+  value REAL NOT NULL,                   -- normalized (durations in seconds, rounded)
+  note TEXT,                             -- NEW: optional context for the reading
+  timestamp TEXT NOT NULL
+);
+```
+
 ### 6.2 Migration Strategy
 
 Since this is pre-production, we can alter the table directly. For existing rows:
@@ -453,7 +488,7 @@ Since this is pre-production, we can alter the table directly. For existing rows
           "iterations": 3,
           "warmup": 1
         },
-        "schedule": "0 */4 * * *",
+        "collectionSchedule": "0 */4 * * *",
         "instructions": "Run the dev build command 3 times (after 1 warmup run). Report the average wall-clock time in seconds. If the command fails, report the failure instead of a metric value."
       }
     },
@@ -476,7 +511,7 @@ Since this is pre-production, we can alter the table directly. For existing rows
           "branch": "main",
           "limit": 20
         },
-        "schedule": "0 8 * * *",
+        "collectionSchedule": "0 8 * * *",
         "instructions": "Fetch the last 20 successful CI runs on main. Calculate the P50 (median) duration in minutes. Exclude cancelled or failed runs."
       }
     },
@@ -495,7 +530,7 @@ Since this is pre-production, we can alter the table directly. For existing rows
         "method": "tool",
         "toolName": "mcp.turborepo__cache_stats",
         "toolParams": { "window": "24h" },
-        "schedule": "0 8 * * *",
+        "collectionSchedule": "0 8 * * *",
         "instructions": "Fetch Turborepo cache statistics for the last 24 hours. Calculate hit rate as: (cache_hits / (cache_hits + cache_misses)) * 100. Report as a percentage."
       }
     }
@@ -568,8 +603,8 @@ Run a build command multiple times and report the average duration.
 2. **Alerting / escalation** — When a metric goes `off_target`, should the agent
    automatically create a TODO? Or just flag it in the status summary?
 
-3. **Derived metric dependencies** — How to handle circular references in `dependsOn`?
-   Need a DAG validator.
+3. ~~**Derived metric dependencies**~~ — **Deferred to v2.** Only measured (tool-based)
+   metrics in v1.
 
 4. **Collection failure handling** — If a tool call fails 3 times in a row, should
    the metric status change to a new `collection_error` state?
@@ -587,6 +622,6 @@ Run a build command multiple times and report the average duration.
 | **Phase 2** | Create `mission_metric_record` native tool | S |
 | **Phase 3** | Update mission.json parser to extract collection config | M |
 | **Phase 4** | Implement status computation (on_target/warning/off_target) and trend computation from history | M |
-| **Phase 5** | Wire cadence-triggered metric collection into MissionLeadAgent cycle prompt | L |
-| **Phase 6** | Implement derived metrics (formula evaluation, dependency resolution) | M |
+| **Phase 5** | Wire cadence-triggered metric collection into MissionLeadAgent cycle prompt (feed channel pattern, stateless per-turn, one worker per metric) | L |
+| **Phase 6** | ~~Implement derived metrics~~ — **Deferred to v2** | — |
 | **Phase 7** | Dashboard integration — metric charts, sparklines, status badges | L |

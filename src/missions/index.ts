@@ -7,4 +7,9 @@ export type {
   PillarMetricHistory,
   PillarStrategy,
   MissionTodo,
+  MetricType,
+  MetricTarget,
+  MetricCollection,
+  MetricStatus,
+  MetricTrend,
 } from './types.js';

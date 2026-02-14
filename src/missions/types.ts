@@ -37,14 +37,40 @@ export interface Pillar {
   updatedAt: string;
 }
 
+// --- Metric type system ---
+
+export type MetricType = 'numeric' | 'percentage' | 'count' | 'duration' | 'boolean' | 'rating';
+export type MetricStatus = 'on_target' | 'warning' | 'off_target' | 'unknown';
+export type MetricTrend = 'improving' | 'stable' | 'degrading' | 'unknown';
+
+export interface MetricTarget {
+  operator: '<' | '<=' | '>' | '>=' | '=' | '!=';
+  value: number;
+  warningThreshold?: number;
+  desiredDirection?: 'up' | 'down' | 'stable';
+}
+
+export interface MetricCollection {
+  method: 'tool';
+  toolName?: string;
+  toolParams?: Record<string, unknown>;
+  collectionSchedule?: string;   // cron expression (per-metric schedule)
+  instructions?: string;
+}
+
 export interface PillarMetric {
   id: string;
   pillarId: string;
+  slug: string;
   name: string;
-  target: string;
-  current: string;
+  type: MetricType;
   unit: string;
-  trend: 'improving' | 'stable' | 'degrading' | 'unknown';
+  target: string;             // JSON string of MetricTarget
+  current: number | null;     // numeric value (durations always in seconds)
+  status: MetricStatus;
+  trend: MetricTrend;
+  collection: string;         // JSON string of MetricCollection
+  lastCollectedAt: string | null;
   updatedAt: string;
 }
 
@@ -52,6 +78,7 @@ export interface PillarMetricHistory {
   id: string;
   metricId: string;
   value: number;
+  note: string | null;
   timestamp: string;
 }
 
@@ -92,6 +119,6 @@ type Stringify<T> = {
 export type MissionRow = Stringify<Mission>;
 export type PillarRow = Stringify<Pillar>;
 export type PillarMetricRow = Stringify<PillarMetric>;
-export type PillarMetricHistoryRow = PillarMetricHistory; // no unions to relax
+export type PillarMetricHistoryRow = Stringify<PillarMetricHistory>;
 export type PillarStrategyRow = Stringify<PillarStrategy>;
 export type MissionTodoRow = Stringify<MissionTodo>;

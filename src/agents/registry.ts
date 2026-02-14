@@ -123,6 +123,7 @@ const SPECIALIST_TEMPLATES: SpecialistTemplate[] = [
       'wikipedia_search',
       'query_rag_project',
       'mission_todo_create',
+      'mission_metric_record',
       'mcp.*', // MCP tools
     ],
     delegation: {
