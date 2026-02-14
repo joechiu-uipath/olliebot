@@ -9,6 +9,8 @@ import { writeFile, unlink } from 'fs/promises';
 import { join, extname, basename } from 'path';
 import type { RAGProjectService } from './service.js';
 import { MAX_FILE_UPLOAD_SIZE_BYTES, RAG_DEFAULT_TOP_K } from '../constants.js';
+import { getAvailableStrategies } from './strategies/index.js';
+import type { FusionMethod } from './strategies/types.js';
 
 // Supported file extensions for upload
 const SUPPORTED_UPLOAD_EXTENSIONS = new Set(['.pdf', '.txt', '.md', '.json', '.csv', '.html']);
@@ -113,7 +115,7 @@ export function createRAGProjectRoutes(ragService: RAGProjectService): Hono {
     try {
       const projectId = c.req.param('id');
       const body = await c.req.json();
-      const { query, topK, minScore, contentType } = body;
+      const { query, topK, minScore, contentType, fusionMethod } = body;
 
       if (!query || typeof query !== 'string') {
         return c.json({ error: 'Query is required' }, 400);
@@ -124,6 +126,7 @@ export function createRAGProjectRoutes(ragService: RAGProjectService): Hono {
         topK: typeof topK === 'number' ? topK : RAG_DEFAULT_TOP_K,
         minScore: typeof minScore === 'number' ? minScore : 0,
         contentType: contentType || 'all',
+        ...(fusionMethod && { fusionMethod: fusionMethod as FusionMethod }),
       });
 
       return c.json(response);
@@ -140,6 +143,20 @@ export function createRAGProjectRoutes(ragService: RAGProjectService): Hono {
   router.get('/supported-extensions', (c) => {
     return c.json({
       extensions: ragService.getSupportedExtensions(),
+    });
+  });
+
+  /**
+   * GET /strategies
+   * Get list of available retrieval strategies and their descriptions.
+   */
+  router.get('/strategies', (c) => {
+    return c.json({
+      strategies: getAvailableStrategies(),
+      fusionMethods: [
+        { id: 'rrf', name: 'Reciprocal Rank Fusion', description: 'Rank-based fusion that is robust to score scale differences between strategies.' },
+        { id: 'weighted_score', name: 'Weighted Score', description: 'Combines raw similarity scores using configured weights per strategy.' },
+      ],
     });
   });
 

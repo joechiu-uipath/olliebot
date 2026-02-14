@@ -2,15 +2,18 @@
  * Query RAG Project Native Tool
  *
  * Queries a RAG project's vector index and returns relevant document chunks.
+ * Supports multi-strategy RAG: when a project has multiple retrieval strategies,
+ * results are automatically fused from all strategies.
  */
 
 import type { NativeTool, NativeToolResult } from './types.js';
 import type { RAGProjectService } from '../../rag-projects/service.js';
+import type { FusionMethod } from '../../rag-projects/strategies/types.js';
 
 export class QueryRAGProjectTool implements NativeTool {
   readonly name = 'query_rag_project';
   readonly description =
-    'Query a RAG (Retrieval-Augmented Generation) project to find relevant document chunks. Use this to search through indexed documents in a specific project. Returns text chunks with similarity scores.';
+    'Query a RAG (Retrieval-Augmented Generation) project to find relevant document chunks. Use this to search through indexed documents in a specific project. Returns text chunks with similarity scores. Projects with multiple retrieval strategies automatically fuse results for better accuracy.';
   readonly inputSchema = {
     type: 'object',
     properties: {
@@ -30,6 +33,15 @@ export class QueryRAGProjectTool implements NativeTool {
         type: 'number',
         description: 'Minimum similarity score threshold between 0 and 1 (default: 0)',
       },
+      fusionMethod: {
+        type: 'string',
+        enum: ['rrf', 'weighted_score'],
+        description:
+          'Override the fusion method for multi-strategy projects. ' +
+          '"rrf" (Reciprocal Rank Fusion) is rank-based and robust. ' +
+          '"weighted_score" uses weighted score averaging. ' +
+          'Only applies when the project has multiple strategies configured.',
+      },
     },
     required: ['projectId', 'query'],
   };
@@ -45,6 +57,7 @@ export class QueryRAGProjectTool implements NativeTool {
     const query = String(params.query || '');
     const topK = Math.min(Math.max(Number(params.topK) || 5, 1), 20);
     const minScore = Math.min(Math.max(Number(params.minScore) || 0, 0), 1);
+    const fusionMethod = params.fusionMethod as FusionMethod | undefined;
 
     if (!projectId.trim()) {
       return {
@@ -65,6 +78,7 @@ export class QueryRAGProjectTool implements NativeTool {
         query,
         topK,
         minScore,
+        ...(fusionMethod && { fusionMethod }),
       });
 
       if (response.results.length === 0) {
@@ -76,6 +90,8 @@ export class QueryRAGProjectTool implements NativeTool {
             results: [],
             totalResults: 0,
             queryTimeMs: response.queryTimeMs,
+            ...(response.strategiesUsed && { strategiesUsed: response.strategiesUsed }),
+            ...(response.fusionMethod && { fusionMethod: response.fusionMethod }),
             message: 'No relevant documents found for this query.',
           },
         };
@@ -98,6 +114,8 @@ export class QueryRAGProjectTool implements NativeTool {
           results: formattedResults,
           totalResults: formattedResults.length,
           queryTimeMs: response.queryTimeMs,
+          ...(response.strategiesUsed && { strategiesUsed: response.strategiesUsed }),
+          ...(response.fusionMethod && { fusionMethod: response.fusionMethod }),
         },
       };
     } catch (error) {
