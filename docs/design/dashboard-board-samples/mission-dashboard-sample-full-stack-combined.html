@@ -1,0 +1,887 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mission Intelligence Hub — Full Stack Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.6.0/dist/echarts.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked@15.0.7/lib/marked.umd.js"></script>
+<link href="https://cdn.jsdelivr.net/npm/tabulator-tables@6.3.1/dist/css/tabulator_midnight.min.css" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/tabulator-tables@6.3.1/dist/js/tabulator.min.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: #0f1117;
+    color: #e0e0e0;
+    font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif;
+    line-height: 1.6;
+    padding: 24px;
+    min-height: 100vh;
+  }
+
+  /* ── Layout ─────────────────────────────────────────── */
+  .dashboard-container { max-width: 1440px; margin: 0 auto; }
+
+  .row { display: flex; gap: 20px; margin-bottom: 20px; }
+  .row.full { flex-direction: column; }
+
+  .card {
+    background: #1a1d27;
+    border: 1px solid #2a2d37;
+    border-radius: 12px;
+    padding: 20px;
+    flex: 1;
+    min-width: 0;
+  }
+  .card.full-width { width: 100%; }
+
+  .card-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: #8b8fa3;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    margin-bottom: 14px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .card-title .dot {
+    width: 8px; height: 8px; border-radius: 50%; display: inline-block;
+  }
+
+  /* ── Header ─────────────────────────────────────────── */
+  .header { text-align: center; margin-bottom: 28px; }
+  .header h1 {
+    font-size: 28px;
+    font-weight: 700;
+    background: linear-gradient(135deg, #6366f1, #22d3ee);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    margin-bottom: 6px;
+  }
+  .header .timestamp {
+    font-size: 13px;
+    color: #8b8fa3;
+    margin-bottom: 10px;
+  }
+  .header .synopsis {
+    font-size: 14px;
+    color: #8b8fa3;
+    max-width: 860px;
+    margin: 0 auto 14px;
+    line-height: 1.7;
+  }
+
+  /* ── Library Badges ─────────────────────────────────── */
+  .lib-badges {
+    display: flex;
+    justify-content: center;
+    gap: 12px;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+  }
+  .lib-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: #1a1d27;
+    border: 1px solid #2a2d37;
+    border-radius: 20px;
+    padding: 5px 14px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #e0e0e0;
+  }
+  .lib-badge.echarts  { border-color: #6366f1; color: #a5b4fc; }
+  .lib-badge.tabulator { border-color: #22d3ee; color: #67e8f9; }
+  .lib-badge.marked    { border-color: #10b981; color: #6ee7b7; }
+
+  /* ── Interactivity Instructions ─────────────────────── */
+  .instructions {
+    background: linear-gradient(135deg, rgba(99,102,241,0.08), rgba(34,211,238,0.08));
+    border: 1px solid #2a2d37;
+    border-radius: 10px;
+    padding: 12px 20px;
+    font-size: 13px;
+    color: #8b8fa3;
+    max-width: 960px;
+    margin: 0 auto 24px;
+    text-align: center;
+    line-height: 1.8;
+  }
+  .instructions strong { color: #e0e0e0; }
+
+  /* ── KPI Cards ──────────────────────────────────────── */
+  .kpi-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; margin-bottom: 20px; }
+
+  .kpi-card {
+    background: #1a1d27;
+    border: 1px solid #2a2d37;
+    border-radius: 12px;
+    padding: 18px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+  .kpi-gauge { width: 60px; height: 60px; flex-shrink: 0; }
+  .kpi-info {}
+  .kpi-value {
+    font-size: 28px;
+    font-weight: 700;
+    line-height: 1.2;
+  }
+  .kpi-label {
+    font-size: 12px;
+    color: #8b8fa3;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  /* ── Chart containers ───────────────────────────────── */
+  .chart-area { width: 100%; height: 360px; }
+  .chart-area-heatmap { width: 100%; height: 300px; }
+
+  /* ── Tabulator overrides ────────────────────────────── */
+  .tabulator {
+    background: #1a1d27 !important;
+    border: none !important;
+    border-radius: 8px;
+    font-size: 13px !important;
+  }
+  .tabulator .tabulator-header {
+    background: #12141c !important;
+    border-bottom: 1px solid #2a2d37 !important;
+  }
+  .tabulator .tabulator-header .tabulator-col {
+    background: #12141c !important;
+    border-right: 1px solid #2a2d37 !important;
+  }
+  .tabulator .tabulator-header .tabulator-col .tabulator-col-content {
+    color: #8b8fa3 !important;
+  }
+  .tabulator .tabulator-tableholder .tabulator-table .tabulator-row {
+    background: #1a1d27 !important;
+    border-bottom: 1px solid #1e2130 !important;
+    color: #e0e0e0 !important;
+  }
+  .tabulator .tabulator-tableholder .tabulator-table .tabulator-row:hover {
+    background: #22253a !important;
+  }
+  .tabulator .tabulator-tableholder .tabulator-table .tabulator-row .tabulator-cell {
+    border-right: 1px solid #1e2130 !important;
+  }
+  .tabulator .tabulator-footer {
+    background: #12141c !important;
+    border-top: 1px solid #2a2d37 !important;
+    color: #8b8fa3 !important;
+  }
+  .tabulator .tabulator-footer .tabulator-page {
+    background: #1a1d27 !important;
+    border: 1px solid #2a2d37 !important;
+    color: #e0e0e0 !important;
+    border-radius: 4px;
+    margin: 0 2px;
+  }
+  .tabulator .tabulator-footer .tabulator-page.active {
+    background: #6366f1 !important;
+    border-color: #6366f1 !important;
+    color: #fff !important;
+  }
+  .tabulator .tabulator-header .tabulator-col .tabulator-header-filter input {
+    background: #12141c !important;
+    border: 1px solid #2a2d37 !important;
+    color: #e0e0e0 !important;
+    border-radius: 4px;
+    padding: 3px 6px;
+    font-size: 12px;
+  }
+  .tabulator .tabulator-header .tabulator-col .tabulator-header-filter select {
+    background: #12141c !important;
+    border: 1px solid #2a2d37 !important;
+    color: #e0e0e0 !important;
+    border-radius: 4px;
+    padding: 3px 6px;
+    font-size: 12px;
+  }
+  .tabulator .tabulator-tableholder .tabulator-table .tabulator-row.tabulator-group {
+    background: #12141c !important;
+    border-bottom: 1px solid #2a2d37 !important;
+    color: #a5b4fc !important;
+    font-weight: 600;
+  }
+  .tabulator .tabulator-tableholder .tabulator-table .tabulator-row.tabulator-calcs-bottom {
+    background: #12141c !important;
+    border-top: 2px solid #6366f1 !important;
+    font-weight: 700;
+    color: #a5b4fc !important;
+  }
+
+  /* Status badges */
+  .status-badge {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+  .status-completed  { background: rgba(16,185,129,0.15); color: #10b981; }
+  .status-running    { background: rgba(99,102,241,0.15); color: #a5b4fc; }
+  .status-failed     { background: rgba(244,63,94,0.15); color: #f43f5e; }
+  .status-queued     { background: rgba(245,158,11,0.15); color: #f59e0b; }
+
+  /* ── Markdown Panel ─────────────────────────────────── */
+  .md-panel {
+    overflow-y: auto;
+    max-height: 400px;
+    padding-right: 8px;
+  }
+  .md-panel::-webkit-scrollbar { width: 6px; }
+  .md-panel::-webkit-scrollbar-track { background: #12141c; border-radius: 3px; }
+  .md-panel::-webkit-scrollbar-thumb { background: #2a2d37; border-radius: 3px; }
+
+  .md-panel h2 {
+    font-size: 18px;
+    font-weight: 700;
+    color: #e0e0e0;
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 2px solid #6366f1;
+  }
+  .md-panel ul {
+    margin: 10px 0 16px 20px;
+    list-style: disc;
+  }
+  .md-panel li {
+    margin-bottom: 8px;
+    color: #c0c4d8;
+    line-height: 1.7;
+  }
+  .md-panel strong { color: #e0e0e0; }
+  .md-panel table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 14px 0;
+    font-size: 13px;
+  }
+  .md-panel thead th {
+    background: #12141c;
+    color: #8b8fa3;
+    text-align: left;
+    padding: 8px 12px;
+    border-bottom: 2px solid #6366f1;
+    font-weight: 600;
+    text-transform: uppercase;
+    font-size: 11px;
+    letter-spacing: 0.5px;
+  }
+  .md-panel tbody td {
+    padding: 8px 12px;
+    border-bottom: 1px solid #1e2130;
+    color: #c0c4d8;
+  }
+  .md-panel tbody tr:hover td { background: rgba(99,102,241,0.06); }
+  .md-panel blockquote {
+    border-left: 3px solid #22d3ee;
+    background: rgba(34,211,238,0.06);
+    margin: 14px 0;
+    padding: 12px 16px;
+    border-radius: 0 8px 8px 0;
+    color: #a5b4fc;
+    font-style: italic;
+  }
+  .md-panel code {
+    background: #12141c;
+    color: #22d3ee;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 12px;
+  }
+  .md-panel p { margin-bottom: 10px; color: #c0c4d8; }
+
+  /* ── Footer ─────────────────────────────────────────── */
+  .footer {
+    text-align: center;
+    font-size: 12px;
+    color: #555a6e;
+    margin-top: 28px;
+    padding-top: 18px;
+    border-top: 1px solid #1e2130;
+    line-height: 1.7;
+  }
+
+  /* ── Responsive ─────────────────────────────────────── */
+  @media (max-width: 1024px) {
+    .kpi-row { grid-template-columns: repeat(2, 1fr); }
+    .row { flex-direction: column; }
+  }
+  @media (max-width: 600px) {
+    .kpi-row { grid-template-columns: 1fr; }
+    body { padding: 12px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="dashboard-container">
+
+  <!-- ════════════════════════════════════════════════════
+       HEADER
+       ════════════════════════════════════════════════════ -->
+  <div class="header">
+    <h1>Mission Intelligence Hub &mdash; Full Stack Dashboard</h1>
+    <div class="timestamp" id="timestamp"></div>
+    <div class="synopsis">
+      Comprehensive dashboard combining interactive charts (ECharts), data tables (Tabulator),
+      and rich text analysis (marked.js) &mdash; demonstrating all three libraries in one view.
+    </div>
+
+    <div class="lib-badges">
+      <span class="lib-badge echarts">&#x1F4CA; ECharts 5.6.0</span>
+      <span class="lib-badge tabulator">&#x1F4CB; Tabulator 6.3</span>
+      <span class="lib-badge marked">&#x1F4DD; marked.js 15.0</span>
+    </div>
+
+    <div class="instructions">
+      <strong>Charts:</strong> hover for tooltips, click legend to toggle, use data zoom. &nbsp;
+      <strong>Tables:</strong> click headers to sort, type to filter, drag to resize columns. &nbsp;
+      <strong>Report:</strong> scroll for full narrative.
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════════════════════
+       ROW 1 — KPI CARDS WITH MINI GAUGES
+       ════════════════════════════════════════════════════ -->
+  <div class="kpi-row">
+    <div class="kpi-card">
+      <div class="kpi-gauge" id="gauge-missions"></div>
+      <div class="kpi-info">
+        <div class="kpi-value" style="color:#6366f1">47</div>
+        <div class="kpi-label">Missions Completed</div>
+      </div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-gauge" id="gauge-token-eff"></div>
+      <div class="kpi-info">
+        <div class="kpi-value" style="color:#22d3ee">87%</div>
+        <div class="kpi-label">Token Efficiency</div>
+      </div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-gauge" id="gauge-cost"></div>
+      <div class="kpi-info">
+        <div class="kpi-value" style="color:#10b981">62%</div>
+        <div class="kpi-label">Cost vs Budget</div>
+      </div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-gauge" id="gauge-util"></div>
+      <div class="kpi-info">
+        <div class="kpi-value" style="color:#f59e0b">78%</div>
+        <div class="kpi-label">Agent Utilization</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════════════════════
+       ROW 2 — STACKED AREA + SANKEY
+       ════════════════════════════════════════════════════ -->
+  <div class="row">
+    <div class="card">
+      <div class="card-title"><span class="dot" style="background:#6366f1"></span>Token Usage Trend (7 Days)</div>
+      <div class="chart-area" id="chart-token-trend"></div>
+    </div>
+    <div class="card">
+      <div class="card-title"><span class="dot" style="background:#22d3ee"></span>Agent &rarr; Tool Flow</div>
+      <div class="chart-area" id="chart-sankey"></div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════════════════════
+       ROW 3 — TABULATOR TABLE
+       ════════════════════════════════════════════════════ -->
+  <div class="row full">
+    <div class="card full-width">
+      <div class="card-title"><span class="dot" style="background:#22d3ee"></span>Mission Log</div>
+      <div id="mission-table"></div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════════════════════
+       ROW 4 — BAR CHART + MARKDOWN
+       ════════════════════════════════════════════════════ -->
+  <div class="row">
+    <div class="card">
+      <div class="card-title"><span class="dot" style="background:#f59e0b"></span>Top 10 Tools by Cost</div>
+      <div class="chart-area" id="chart-tool-cost"></div>
+    </div>
+    <div class="card">
+      <div class="card-title"><span class="dot" style="background:#10b981"></span>Analysis Report (marked.js)</div>
+      <div class="md-panel" id="md-report"></div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════════════════════
+       ROW 5 — HEATMAP
+       ════════════════════════════════════════════════════ -->
+  <div class="row full">
+    <div class="card full-width">
+      <div class="card-title"><span class="dot" style="background:#f43f5e"></span>Hourly Activity Heatmap (7 Days)</div>
+      <div class="chart-area-heatmap" id="chart-heatmap"></div>
+    </div>
+  </div>
+
+  <!-- ════════════════════════════════════════════════════
+       FOOTER
+       ════════════════════════════════════════════════════ -->
+  <div class="footer">
+    Dashboard generated by OllieBot LLM-Powered Dashboard Engine &bull;
+    Libraries: ECharts 5.6.0, Tabulator 6.3.1, marked.js 15.0.7 &bull;
+    Data snapshot v1.0.3
+  </div>
+
+</div><!-- /dashboard-container -->
+
+<script>
+// ──────────────────────────────────────────────────────────
+// TIMESTAMP
+// ──────────────────────────────────────────────────────────
+document.getElementById('timestamp').textContent =
+  'Generated: ' + new Date().toLocaleString('en-US', {
+    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+    hour: '2-digit', minute: '2-digit', second: '2-digit'
+  });
+
+// ──────────────────────────────────────────────────────────
+// HELPERS
+// ──────────────────────────────────────────────────────────
+function initChart(id) {
+  return echarts.init(document.getElementById(id), null, { renderer: 'canvas' });
+}
+function fmtNum(n) { return n.toLocaleString(); }
+
+// ──────────────────────────────────────────────────────────
+// ROW 1 — KPI MINI GAUGES
+// ──────────────────────────────────────────────────────────
+function makeGauge(domId, value, color) {
+  var chart = echarts.init(document.getElementById(domId), null, { renderer: 'canvas' });
+  chart.setOption({
+    series: [{
+      type: 'gauge',
+      startAngle: 220,
+      endAngle: -40,
+      radius: '95%',
+      center: ['50%', '55%'],
+      min: 0, max: 100,
+      splitNumber: 0,
+      pointer: { show: false },
+      axisLine: {
+        lineStyle: {
+          width: 6,
+          color: [[value / 100, color], [1, '#2a2d37']]
+        }
+      },
+      axisTick: { show: false },
+      splitLine: { show: false },
+      axisLabel: { show: false },
+      detail: { show: false },
+      data: [{ value: value }]
+    }]
+  });
+  return chart;
+}
+
+var gaugeMissions  = makeGauge('gauge-missions',  94, '#6366f1');
+var gaugeTokenEff  = makeGauge('gauge-token-eff',  87, '#22d3ee');
+var gaugeCost      = makeGauge('gauge-cost',       62, '#10b981');
+var gaugeUtil      = makeGauge('gauge-util',       78, '#f59e0b');
+
+// ──────────────────────────────────────────────────────────
+// ROW 2a — STACKED AREA: TOKEN USAGE TREND
+// ──────────────────────────────────────────────────────────
+var chartTokenTrend = initChart('chart-token-trend');
+(function() {
+  var days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  var input  = [12400, 15800, 11200, 18600, 22300, 9800, 16500];
+  var output = [8200,  10400, 7600,  12800, 14200, 6100, 11000];
+  var cache  = [3100,  4500,  2800,  5200,  6800,  2400, 4100];
+
+  function makeAreaSeries(name, data, color) {
+    return {
+      name: name, type: 'line', stack: 'tokens', smooth: true,
+      symbol: 'circle', symbolSize: 6, lineStyle: { width: 2, color: color },
+      itemStyle: { color: color },
+      areaStyle: {
+        color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+          { offset: 0, color: color.replace(')', ',0.35)').replace('rgb', 'rgba') },
+          { offset: 1, color: color.replace(')', ',0.02)').replace('rgb', 'rgba') }
+        ])
+      },
+      data: data
+    };
+  }
+
+  chartTokenTrend.setOption({
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: '#1a1d27', borderColor: '#2a2d37', textStyle: { color: '#e0e0e0' },
+      formatter: function(params) {
+        var s = '<b>' + params[0].axisValue + '</b><br/>';
+        params.forEach(function(p) {
+          s += '<span style="color:' + p.color + '">&#9679;</span> ' + p.seriesName + ': <b>' + fmtNum(p.value) + '</b><br/>';
+        });
+        return s;
+      }
+    },
+    legend: {
+      top: 0, textStyle: { color: '#8b8fa3', fontSize: 11 },
+      icon: 'roundRect', itemWidth: 14, itemHeight: 8
+    },
+    grid: { top: 40, right: 20, bottom: 60, left: 60 },
+    xAxis: {
+      type: 'category', data: days, boundaryGap: false,
+      axisLine: { lineStyle: { color: '#2a2d37' } },
+      axisLabel: { color: '#8b8fa3' }
+    },
+    yAxis: {
+      type: 'value',
+      splitLine: { lineStyle: { color: '#1e2130' } },
+      axisLabel: { color: '#8b8fa3', formatter: function(v) { return (v / 1000) + 'k'; } }
+    },
+    dataZoom: [
+      { type: 'inside', start: 0, end: 100 },
+      { type: 'slider', start: 0, end: 100, height: 20, bottom: 8,
+        borderColor: '#2a2d37', fillerColor: 'rgba(99,102,241,0.15)',
+        handleStyle: { color: '#6366f1' },
+        textStyle: { color: '#8b8fa3' }
+      }
+    ],
+    series: [
+      makeAreaSeries('Input Tokens',  input,  'rgb(99,102,241)'),
+      makeAreaSeries('Output Tokens', output, 'rgb(34,211,238)'),
+      makeAreaSeries('Cache Tokens',  cache,  'rgb(16,185,129)')
+    ]
+  });
+})();
+
+// ──────────────────────────────────────────────────────────
+// ROW 2b — SANKEY: AGENT → TOOL FLOW
+// ──────────────────────────────────────────────────────────
+var chartSankey = initChart('chart-sankey');
+(function() {
+  var nodes = [
+    { name: 'Planner Agent',   itemStyle: { color: '#6366f1' } },
+    { name: 'Coder Agent',     itemStyle: { color: '#22d3ee' } },
+    { name: 'Research Agent',  itemStyle: { color: '#10b981' } },
+    { name: 'Review Agent',    itemStyle: { color: '#f59e0b' } },
+    { name: 'File Read',       itemStyle: { color: '#a78bfa' } },
+    { name: 'File Write',      itemStyle: { color: '#818cf8' } },
+    { name: 'Web Search',      itemStyle: { color: '#67e8f9' } },
+    { name: 'Code Execute',    itemStyle: { color: '#34d399' } },
+    { name: 'API Call',        itemStyle: { color: '#fbbf24' } },
+    { name: 'Shell Cmd',       itemStyle: { color: '#fb7185' } }
+  ];
+
+  var links = [
+    { source: 'Planner Agent',  target: 'File Read',     value: 3200 },
+    { source: 'Planner Agent',  target: 'Web Search',    value: 2100 },
+    { source: 'Planner Agent',  target: 'API Call',      value: 1800 },
+    { source: 'Coder Agent',    target: 'File Write',    value: 5400 },
+    { source: 'Coder Agent',    target: 'Code Execute',  value: 4800 },
+    { source: 'Coder Agent',    target: 'Shell Cmd',     value: 2200 },
+    { source: 'Coder Agent',    target: 'File Read',     value: 3100 },
+    { source: 'Research Agent', target: 'Web Search',    value: 6200 },
+    { source: 'Research Agent', target: 'API Call',      value: 3400 },
+    { source: 'Research Agent', target: 'File Read',     value: 1600 },
+    { source: 'Review Agent',   target: 'File Read',     value: 4100 },
+    { source: 'Review Agent',   target: 'Code Execute',  value: 2900 },
+    { source: 'Review Agent',   target: 'Shell Cmd',     value: 1300 }
+  ];
+
+  chartSankey.setOption({
+    tooltip: {
+      trigger: 'item', backgroundColor: '#1a1d27', borderColor: '#2a2d37',
+      textStyle: { color: '#e0e0e0' },
+      formatter: function(p) {
+        if (p.dataType === 'edge') {
+          return p.data.source + ' → ' + p.data.target + '<br/>Tokens: <b>' + fmtNum(p.data.value) + '</b>';
+        }
+        return p.name;
+      }
+    },
+    series: [{
+      type: 'sankey',
+      layout: 'none',
+      top: 10, bottom: 10, left: 10, right: 10,
+      nodeWidth: 20,
+      nodeGap: 14,
+      emphasis: { focus: 'adjacency' },
+      lineStyle: { color: 'gradient', curveness: 0.5, opacity: 0.35 },
+      label: { color: '#c0c4d8', fontSize: 11 },
+      data: nodes,
+      links: links
+    }]
+  });
+})();
+
+// ──────────────────────────────────────────────────────────
+// ROW 3 — TABULATOR: MISSION LOG
+// ──────────────────────────────────────────────────────────
+(function() {
+  var agents   = ['Planner', 'Coder', 'Research', 'Review'];
+  var statuses = ['Completed', 'Completed', 'Completed', 'Running', 'Failed', 'Queued',
+                  'Completed', 'Completed', 'Completed', 'Completed'];
+  var missions = [
+    'API Integration Suite', 'Database Migration', 'Frontend Redesign', 'Security Audit',
+    'Performance Optimization', 'Documentation Update', 'Test Coverage Expansion',
+    'CI/CD Pipeline Setup', 'Logging Infrastructure', 'Auth System Overhaul',
+    'Search Indexing', 'Notification Service', 'Rate Limiter Module', 'Cache Layer',
+    'Webhook Handler', 'Analytics Pipeline', 'Error Tracking', 'Config Management',
+    'Feature Flags System', 'Data Export Module', 'Payment Gateway', 'User Onboarding Flow',
+    'Admin Dashboard', 'Monitoring Alerts', 'Deployment Automation'
+  ];
+
+  var tableData = [];
+  for (var i = 0; i < 25; i++) {
+    var status = statuses[i % statuses.length];
+    var tokens = Math.floor(Math.random() * 40000) + 5000;
+    var cost   = parseFloat((tokens * 0.000035 + Math.random() * 0.5).toFixed(2));
+    var calls  = Math.floor(Math.random() * 30) + 3;
+    var durMin = Math.floor(Math.random() * 45) + 2;
+    var hour   = Math.floor(Math.random() * 23);
+    var minute = Math.floor(Math.random() * 59);
+    tableData.push({
+      id: 'M-' + String(1001 + i),
+      mission: missions[i],
+      agent: agents[i % agents.length],
+      status: status,
+      llmCalls: calls,
+      tokens: tokens,
+      cost: cost,
+      duration: durMin + 'm ' + Math.floor(Math.random() * 59) + 's',
+      completionTime: String(hour).padStart(2, '0') + ':' + String(minute).padStart(2, '0')
+    });
+  }
+
+  new Tabulator('#mission-table', {
+    data: tableData,
+    layout: 'fitColumns',
+    resizableColumns: true,
+    pagination: true,
+    paginationSize: 10,
+    paginationSizeSelector: [5, 10, 25],
+    groupBy: 'status',
+    groupHeader: function(value, count) {
+      return '<span style="color:#a5b4fc;font-weight:600">' + value + '</span> <span style="color:#8b8fa3;">(' + count + ' missions)</span>';
+    },
+    columnCalcs: 'both',
+    columns: [
+      { title: 'ID', field: 'id', width: 80, headerSort: true,
+        headerFilter: 'input' },
+      { title: 'Mission Name', field: 'mission', minWidth: 180, headerSort: true,
+        headerFilter: 'input' },
+      { title: 'Agent', field: 'agent', width: 110, headerSort: true,
+        headerFilter: 'list',
+        headerFilterParams: { values: { '': 'All', 'Planner': 'Planner', 'Coder': 'Coder', 'Research': 'Research', 'Review': 'Review' } }
+      },
+      { title: 'Status', field: 'status', width: 120, headerSort: true,
+        headerFilter: 'list',
+        headerFilterParams: { values: { '': 'All', 'Completed': 'Completed', 'Running': 'Running', 'Failed': 'Failed', 'Queued': 'Queued' } },
+        formatter: function(cell) {
+          var v = cell.getValue();
+          var cls = 'status-' + v.toLowerCase();
+          return '<span class="status-badge ' + cls + '">' + v + '</span>';
+        },
+        bottomCalc: 'count',
+        bottomCalcFormatter: function(cell) { return cell.getValue() + ' total'; }
+      },
+      { title: 'LLM Calls', field: 'llmCalls', width: 100, hozAlign: 'right', headerSort: true,
+        headerFilter: 'input' },
+      { title: 'Tokens', field: 'tokens', width: 110, hozAlign: 'right', headerSort: true,
+        formatter: function(cell) { return fmtNum(cell.getValue()); },
+        bottomCalc: 'sum',
+        bottomCalcFormatter: function(cell) { return fmtNum(cell.getValue()); },
+        headerFilter: 'input' },
+      { title: 'Cost ($)', field: 'cost', width: 100, hozAlign: 'right', headerSort: true,
+        formatter: 'money', formatterParams: { symbol: '$', precision: 2 },
+        bottomCalc: 'sum',
+        bottomCalcFormatter: 'money', bottomCalcFormatterParams: { symbol: '$', precision: 2 },
+        headerFilter: 'input' },
+      { title: 'Duration', field: 'duration', width: 110, headerSort: true,
+        headerFilter: 'input' },
+      { title: 'Completed At', field: 'completionTime', width: 120, hozAlign: 'center', headerSort: true,
+        headerFilter: 'input' }
+    ]
+  });
+})();
+
+// ──────────────────────────────────────────────────────────
+// ROW 4a — HORIZONTAL BAR: TOP 10 TOOLS BY COST
+// ──────────────────────────────────────────────────────────
+var chartToolCost = initChart('chart-tool-cost');
+(function() {
+  var tools = ['Web Search', 'Code Execute', 'File Write', 'API Call', 'File Read',
+               'Shell Cmd', 'DB Query', 'Image Gen', 'Embed Create', 'Lint Check'];
+  var costs = [4.82, 3.97, 3.45, 2.91, 2.64, 2.18, 1.73, 1.42, 0.98, 0.67];
+  var colors = ['#6366f1', '#22d3ee', '#10b981', '#f59e0b', '#f43f5e',
+                '#a78bfa', '#818cf8', '#67e8f9', '#34d399', '#fbbf24'];
+
+  chartToolCost.setOption({
+    tooltip: {
+      trigger: 'axis', axisPointer: { type: 'shadow' },
+      backgroundColor: '#1a1d27', borderColor: '#2a2d37', textStyle: { color: '#e0e0e0' },
+      formatter: function(p) { return p[0].name + ': <b>$' + p[0].value.toFixed(2) + '</b>'; }
+    },
+    grid: { top: 10, right: 40, bottom: 16, left: 100 },
+    xAxis: {
+      type: 'value',
+      splitLine: { lineStyle: { color: '#1e2130' } },
+      axisLabel: { color: '#8b8fa3', formatter: '${value}' }
+    },
+    yAxis: {
+      type: 'category', data: tools.slice().reverse(), inverse: false,
+      axisLine: { lineStyle: { color: '#2a2d37' } },
+      axisLabel: { color: '#c0c4d8', fontSize: 11 }
+    },
+    series: [{
+      type: 'bar',
+      barWidth: 18,
+      data: costs.slice().reverse().map(function(v, i) {
+        return { value: v, itemStyle: { color: colors[colors.length - 1 - i],
+          borderRadius: [0, 4, 4, 0] } };
+      }),
+      label: { show: true, position: 'right', color: '#8b8fa3', fontSize: 11,
+        formatter: function(p) { return '$' + p.value.toFixed(2); } }
+    }]
+  });
+})();
+
+// ──────────────────────────────────────────────────────────
+// ROW 4b — MARKDOWN PANEL (marked.js)
+// ──────────────────────────────────────────────────────────
+(function() {
+  var md = [
+    '## Analysis Summary',
+    '',
+    '- **Mission Success Rate** reached **94%** this cycle, up from 87% last period — driven primarily by improved prompt caching and retry logic in the Coder Agent pipeline.',
+    '- **Token Efficiency** improved by **12 percentage points** after enabling context window pruning. The Research Agent shows the highest per-token value, averaging 3.2 useful outputs per 1k tokens consumed.',
+    '- **Cost Optimization** is tracking well under budget at **62%** utilization. The biggest savings came from switching long-context missions to cached prompt workflows, reducing redundant API calls by ~40%.',
+    '',
+    '| Metric | Current | Previous | Delta |',
+    '|---|---|---|---|',
+    '| Missions Completed | 47 | 39 | +20.5% |',
+    '| Avg Cost per Mission | $0.74 | $1.12 | -33.9% |',
+    '| Token Cache Hit Rate | 68% | 41% | +27pp |',
+    '| Mean Completion Time | 14.2m | 19.8m | -28.3% |',
+    '',
+    '> **Recommendation:** Increase Coder Agent concurrency from 2 to 4 slots during peak hours (10:00-16:00). Current utilization data shows 78% average with bursts to 95%, indicating headroom for parallel execution without degradation.'
+  ].join('\n');
+
+  document.getElementById('md-report').innerHTML = marked.parse(md);
+})();
+
+// ──────────────────────────────────────────────────────────
+// ROW 5 — HEATMAP: HOURLY ACTIVITY (7 DAYS)
+// ──────────────────────────────────────────────────────────
+var chartHeatmap = initChart('chart-heatmap');
+(function() {
+  var days  = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  var hours = [];
+  for (var h = 0; h < 24; h++) {
+    hours.push(String(h).padStart(2, '0') + ':00');
+  }
+
+  // Generate heatmap data: [hourIndex, dayIndex, value]
+  var data = [];
+  var maxVal = 0;
+  // Seed-like pattern: higher activity during work hours, lower on weekends
+  var pattern = [
+    // Mon
+    [0,0,0,0,0,1,2,5,8,12,14,13,11,14,15,13,10,7,4,3,2,1,1,0],
+    // Tue
+    [0,0,0,0,1,1,3,6,9,11,15,16,12,13,16,14,11,8,5,3,2,1,0,0],
+    // Wed
+    [0,0,0,0,0,2,3,7,10,13,12,14,13,15,14,12,9,6,4,2,1,1,0,0],
+    // Thu
+    [0,0,0,1,0,1,4,8,11,14,16,15,14,16,17,15,12,9,6,4,3,1,1,0],
+    // Fri
+    [0,0,0,0,0,1,2,5,9,12,13,11,10,12,13,11,8,5,3,2,1,0,0,0],
+    // Sat
+    [0,0,0,0,0,0,1,1,2,3,4,5,4,5,4,3,2,2,1,1,0,0,0,0],
+    // Sun
+    [0,0,0,0,0,0,0,1,1,2,3,3,4,3,3,2,2,1,1,0,0,0,0,0]
+  ];
+
+  for (var d = 0; d < 7; d++) {
+    for (var hr = 0; hr < 24; hr++) {
+      var val = pattern[d][hr];
+      if (val > maxVal) maxVal = val;
+      data.push([hr, d, val]);
+    }
+  }
+
+  chartHeatmap.setOption({
+    tooltip: {
+      backgroundColor: '#1a1d27', borderColor: '#2a2d37', textStyle: { color: '#e0e0e0' },
+      formatter: function(p) {
+        return '<b>' + days[p.value[1]] + ' ' + hours[p.value[0]] + '</b><br/>Missions: <b>' + p.value[2] + '</b>';
+      }
+    },
+    grid: { top: 10, right: 20, bottom: 40, left: 70 },
+    xAxis: {
+      type: 'category', data: hours, position: 'bottom',
+      splitArea: { show: false },
+      axisLine: { lineStyle: { color: '#2a2d37' } },
+      axisLabel: {
+        color: '#8b8fa3', fontSize: 10,
+        interval: function(idx) { return idx % 3 === 0; }
+      }
+    },
+    yAxis: {
+      type: 'category', data: days,
+      splitArea: { show: false },
+      axisLine: { lineStyle: { color: '#2a2d37' } },
+      axisLabel: { color: '#c0c4d8', fontSize: 11 }
+    },
+    visualMap: {
+      min: 0, max: maxVal,
+      calculable: true, orient: 'horizontal',
+      right: 20, bottom: 0,
+      itemWidth: 12, itemHeight: 120,
+      textStyle: { color: '#8b8fa3', fontSize: 10 },
+      inRange: {
+        color: ['#12141c', '#1e1b4b', '#3730a3', '#6366f1', '#a5b4fc', '#22d3ee']
+      }
+    },
+    series: [{
+      type: 'heatmap',
+      data: data,
+      label: {
+        show: true, fontSize: 9, color: '#8b8fa3',
+        formatter: function(p) { return p.value[2] > 0 ? p.value[2] : ''; }
+      },
+      itemStyle: { borderColor: '#0f1117', borderWidth: 2, borderRadius: 3 },
+      emphasis: {
+        itemStyle: { shadowBlur: 10, shadowColor: 'rgba(99,102,241,0.5)' }
+      }
+    }]
+  });
+})();
+
+// ──────────────────────────────────────────────────────────
+// RESPONSIVE RESIZE
+// ──────────────────────────────────────────────────────────
+window.addEventListener('resize', function() {
+  [gaugeMissions, gaugeTokenEff, gaugeCost, gaugeUtil,
+   chartTokenTrend, chartSankey, chartToolCost, chartHeatmap].forEach(function(c) {
+    if (c && c.resize) c.resize();
+  });
+});
+</script>
+
+</body>
+</html>

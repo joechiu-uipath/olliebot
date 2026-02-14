@@ -119,88 +119,93 @@ export class WorkerAgent extends AbstractAgent {
         agentRole: 'worker',
         mission,
       });
-
-      // Push LLM context so all calls in this worker are associated
-      this.llmService.pushContext({
-        traceId: this.traceId,
-        spanId,
-        agentId: this.identity.id,
-        agentName: this.identity.name,
-        conversationId: this.conversationId || undefined,
-        purpose: mission,
-      });
     }
 
-    // Refresh RAG data cache before generating response
-    await this.refreshRagDataCache();
+    // Build LLM context for request-scoped tracing
+    const llmContext = this.traceId ? {
+      traceId: this.traceId,
+      spanId: spanId ?? undefined,
+      agentId: this.identity.id,
+      agentName: this.identity.name,
+      conversationId: this.conversationId || undefined,
+      purpose: mission,
+    } : null;
 
-    // Notify supervisor we're starting
-    await this.sendToAgent(this.parentId, {
-      type: 'status_update',
-      toAgent: this.parentId,
-      payload: { status: 'started', taskId: this.currentTaskId, mission },
-    });
+    // Helper to run the task execution, optionally within LLM context
+    const runTask = async () => {
+      // Refresh RAG data cache before generating response
+      await this.refreshRagDataCache();
 
-    try {
-      // Check if we have tools available
-      const tools = this.getToolsForLLM();
-      const hasTools = tools.length > 0 && this.toolRunner;
+      // Notify supervisor we're starting
+      await this.sendToAgent(this.parentId, {
+        type: 'status_update',
+        toAgent: this.parentId,
+        payload: { status: 'started', taskId: this.currentTaskId, mission },
+      });
 
-      if (hasTools) {
-        // Use tool-enabled execution
-        await this.executeWithTools(originalMessage, mission, channel, tools, spanId);
-      } else {
-        // Fallback to simple generation without tools
-        const contextMessages: Message[] = [
-          {
-            id: uuid(),
-            role: 'system',
-            content: `Your mission: ${mission}\n\nRespond as ${this.identity.name} (${this.identity.emoji}).`,
-            createdAt: new Date(),
-          },
-          originalMessage,
-        ];
+      try {
+        // Check if we have tools available
+        const tools = this.getToolsForLLM();
+        const hasTools = tools.length > 0 && this.toolRunner;
 
-        const response = await this.generateResponse(contextMessages);
-        await this.sendMessage(response, { conversationId: this.conversationId || undefined });
+        if (hasTools) {
+          // Use tool-enabled execution
+          await this.executeWithTools(originalMessage, mission, channel, tools, spanId);
+        } else {
+          // Fallback to simple generation without tools
+          const contextMessages: Message[] = [
+            {
+              id: uuid(),
+              role: 'system',
+              content: `Your mission: ${mission}\n\nRespond as ${this.identity.name} (${this.identity.emoji}).`,
+              createdAt: new Date(),
+            },
+            originalMessage,
+          ];
 
-        // Report completion
+          const response = await this.generateResponse(contextMessages);
+          await this.sendMessage(response, { conversationId: this.conversationId || undefined });
+
+          // Report completion
+          await this.sendToAgent(this.parentId, {
+            type: 'task_result',
+            toAgent: this.parentId,
+            payload: {
+              taskId: this.currentTaskId,
+              result: response,
+              status: 'completed',
+            },
+          });
+        }
+
+        // End span successfully
+        if (spanId) traceStore.endSpan(spanId);
+      } catch (error) {
+        console.error(`[${this.identity.name}] Task failed:`, error);
+
+        // End span with error
+        if (spanId) traceStore.endSpan(spanId, 'error', String(error));
+
+        await this.sendError(`${this.identity.name} encountered an error`, String(error), this.conversationId || undefined);
+
+        // Report failure to supervisor
         await this.sendToAgent(this.parentId, {
           type: 'task_result',
           toAgent: this.parentId,
           payload: {
             taskId: this.currentTaskId,
-            result: response,
-            status: 'completed',
+            error: String(error),
+            status: 'failed',
           },
         });
       }
+    };
 
-      // End span successfully
-      if (spanId) traceStore.endSpan(spanId);
-    } catch (error) {
-      console.error(`[${this.identity.name}] Task failed:`, error);
-
-      // End span with error
-      if (spanId) traceStore.endSpan(spanId, 'error', String(error));
-
-      await this.sendError(`${this.identity.name} encountered an error`, String(error), this.conversationId || undefined);
-
-      // Report failure to supervisor
-      await this.sendToAgent(this.parentId, {
-        type: 'task_result',
-        toAgent: this.parentId,
-        payload: {
-          taskId: this.currentTaskId,
-          error: String(error),
-          status: 'failed',
-        },
-      });
-    } finally {
-      // Pop LLM context
-      if (this.traceId) {
-        this.llmService.popContext();
-      }
+    // Run with LLM context if tracing is enabled, otherwise run directly
+    if (llmContext) {
+      await this.llmService.runWithContext(llmContext, runTask);
+    } else {
+      await runTask();
     }
 
     this._state.status = 'idle';

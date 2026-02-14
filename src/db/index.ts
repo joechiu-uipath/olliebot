@@ -34,6 +34,7 @@ export interface Conversation {
   updatedAt: string;
   deletedAt: string | null;
   manuallyNamed?: boolean;
+  metadata?: Record<string, unknown>;  // extensible JSON metadata (channel, missionId, etc.)
 }
 
 export interface Message {
@@ -125,6 +126,7 @@ interface ConversationRow {
   updatedAt: string;
   deletedAt: string | null;
   manuallyNamed: number | null; // SQLite stores booleans as 0/1
+  metadata: string | null;      // JSON TEXT
 }
 
 interface MessageRow {
@@ -194,9 +196,17 @@ class Database {
         createdAt TEXT NOT NULL,
         updatedAt TEXT NOT NULL,
         deletedAt TEXT,
-        manuallyNamed INTEGER
+        manuallyNamed INTEGER,
+        metadata TEXT NOT NULL DEFAULT '{}'
       )
     `);
+
+    // Migration: add metadata column if missing (existing DBs)
+    try {
+      this.sqlite.exec(`ALTER TABLE conversations ADD COLUMN metadata TEXT NOT NULL DEFAULT '{}'`);
+    } catch {
+      // Column already exists — expected on subsequent runs
+    }
 
     this.sqlite.exec(`
       CREATE TABLE IF NOT EXISTS messages (
@@ -228,6 +238,8 @@ class Database {
         ON conversations(updatedAt DESC);
       CREATE INDEX IF NOT EXISTS idx_conversations_not_deleted
         ON conversations(updatedAt DESC) WHERE deletedAt IS NULL;
+      CREATE INDEX IF NOT EXISTS idx_conversations_channel
+        ON conversations(updatedAt DESC) WHERE deletedAt IS NULL AND (metadata IS NULL OR json_extract(metadata, '$.channel') IS NULL OR json_extract(metadata, '$.channel') = 'chat');
 
       CREATE INDEX IF NOT EXISTS idx_messages_conversation
         ON messages(conversationId, createdAt, id);
@@ -369,6 +381,10 @@ class Database {
   // ============================================================================
 
   private deserializeConversation(row: ConversationRow): Conversation {
+    let metadata: Record<string, unknown> | undefined;
+    if (row.metadata && row.metadata !== '{}') {
+      try { metadata = JSON.parse(row.metadata); } catch { /* ignore */ }
+    }
     return {
       id: row.id,
       title: row.title,
@@ -376,6 +392,7 @@ class Database {
       updatedAt: row.updatedAt,
       deletedAt: row.deletedAt,
       ...(row.manuallyNamed ? { manuallyNamed: true } : {}),
+      ...(metadata && Object.keys(metadata).length > 0 ? { metadata } : {}),
     };
   }
 
@@ -414,29 +431,48 @@ class Database {
         return row ? this.deserializeConversation(row) : undefined;
       },
 
-      findAll: (options?: { limit?: number; includeDeleted?: boolean }): Conversation[] => {
+      findAll: (options?: { limit?: number; includeDeleted?: boolean; channel?: string }): Conversation[] => {
         const limit = options?.limit ?? DEFAULT_CONVERSATIONS_LIMIT;
         const includeDeleted = options?.includeDeleted ?? false;
-        let rows: ConversationRow[];
-        if (includeDeleted) {
-          rows = this.sqlite.prepare('SELECT * FROM conversations ORDER BY updatedAt DESC LIMIT ?').all(limit) as ConversationRow[];
-        } else {
-          rows = this.sqlite.prepare('SELECT * FROM conversations WHERE deletedAt IS NULL ORDER BY updatedAt DESC LIMIT ?').all(limit) as ConversationRow[];
+        const channel = options?.channel;
+
+        const conditions: string[] = [];
+        const params: unknown[] = [];
+
+        if (!includeDeleted) {
+          conditions.push('deletedAt IS NULL');
         }
+
+        if (channel) {
+          // Filter to a specific channel (e.g., 'mission', 'pillar')
+          conditions.push("json_extract(metadata, '$.channel') = ?");
+          params.push(channel);
+        } else {
+          // Default: exclude non-chat conversations (mission, pillar, etc.)
+          conditions.push("(metadata IS NULL OR json_extract(metadata, '$.channel') IS NULL OR json_extract(metadata, '$.channel') = 'chat')");
+        }
+
+        const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+        params.push(limit);
+
+        const rows = this.sqlite.prepare(
+          `SELECT * FROM conversations ${whereClause} ORDER BY updatedAt DESC LIMIT ?`
+        ).all(...params) as ConversationRow[];
+
         return rows.map(r => this.deserializeConversation(r));
       },
 
       findRecent: (withinMs: number): Conversation | undefined => {
         const cutoff = new Date(Date.now() - withinMs).toISOString();
         const row = this.sqlite.prepare(
-          'SELECT * FROM conversations WHERE updatedAt > ? AND deletedAt IS NULL ORDER BY updatedAt DESC LIMIT 1'
+          "SELECT * FROM conversations WHERE updatedAt > ? AND deletedAt IS NULL AND (metadata IS NULL OR json_extract(metadata, '$.channel') IS NULL OR json_extract(metadata, '$.channel') = 'chat') ORDER BY updatedAt DESC LIMIT 1"
         ).get(cutoff) as ConversationRow | undefined;
         return row ? this.deserializeConversation(row) : undefined;
       },
 
       create: (conversation: Conversation): void => {
         this.sqlite.prepare(
-          'INSERT INTO conversations (id, title, createdAt, updatedAt, deletedAt, manuallyNamed) VALUES (?, ?, ?, ?, ?, ?)'
+          'INSERT INTO conversations (id, title, createdAt, updatedAt, deletedAt, manuallyNamed, metadata) VALUES (?, ?, ?, ?, ?, ?, ?)'
         ).run(
           conversation.id,
           conversation.title,
@@ -444,6 +480,7 @@ class Database {
           conversation.updatedAt,
           conversation.deletedAt,
           conversation.manuallyNamed ? 1 : null,
+          conversation.metadata ? JSON.stringify(conversation.metadata) : '{}',
         );
       },
 

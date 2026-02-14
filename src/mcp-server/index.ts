@@ -18,6 +18,7 @@ import { StreamableHTTPHandler } from './handler.js';
 import { createLogTools } from './tools/logs.js';
 import { createDataTools } from './tools/data.js';
 import { createToolSystemTools } from './tools/tools.js';
+import { createTraceTools } from './tools/traces.js';
 import type { MCPServerDependencies } from './types.js';
 
 export { LogBuffer } from './log-buffer.js';
@@ -207,6 +208,11 @@ export class OllieBotMCPServer {
 
     // Tool System
     for (const tool of createToolSystemTools(this.deps)) {
+      this.handler.registerTool(tool);
+    }
+
+    // Trace & Observability
+    for (const tool of createTraceTools(this.deps)) {
       this.handler.registerTool(tool);
     }
   }

@@ -270,6 +270,21 @@ export const DEFAULT_TASKS_LIMIT = 20;
 export const MAX_QUERY_LIMIT = 100;
 
 // ============================================================
+// MISSION CONFIGURATION
+// ============================================================
+
+/**
+ * Maximum concurrent TODOs in-progress across an entire mission.
+ * Controls worker agent dispatch throttle.
+ */
+export const MISSION_MAX_CONCURRENT_TODOS = 3;
+
+/**
+ * Default limit for mission list queries.
+ */
+export const DEFAULT_MISSIONS_LIMIT = 50;
+
+// ============================================================
 // SKILL EXECUTION
 // ============================================================
 
@@ -278,3 +293,74 @@ export const MAX_QUERY_LIMIT = 100;
  * Current: 2 minutes
  */
 export const SKILL_EXECUTION_TIMEOUT_MS = 120_000;
+
+// ============================================================
+// DASHBOARD CONFIGURATION
+// ============================================================
+
+/**
+ * Max tokens for the LLM call that generates dashboard HTML.
+ * Higher values allow more complex dashboards with more charts/tables.
+ */
+export const DASHBOARD_RENDER_MAX_TOKENS = 16384;
+
+/**
+ * Temperature for the LLM dashboard rendering call.
+ * Low temperature for consistent, predictable HTML output.
+ */
+export const DASHBOARD_RENDER_TEMPERATURE = 0.3;
+
+/**
+ * Default time range for agent analytics snapshots (milliseconds).
+ * Current: 24 hours
+ */
+export const DASHBOARD_DEFAULT_TIME_RANGE_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Maximum traces to fetch when capturing a snapshot.
+ */
+export const DASHBOARD_MAX_TRACES = 100;
+
+/**
+ * Maximum LLM calls to fetch when capturing a snapshot.
+ */
+export const DASHBOARD_MAX_LLM_CALLS = 500;
+
+/**
+ * Maximum tool calls to fetch when capturing a snapshot.
+ */
+export const DASHBOARD_MAX_TOOL_CALLS = 500;
+
+/**
+ * Maximum LLM call summaries to include in metricsJson.
+ * Limits payload size sent to the rendering LLM.
+ */
+export const DASHBOARD_MAX_LLM_CALL_SUMMARIES = 200;
+
+/**
+ * Maximum trace summaries to include in metricsJson.
+ */
+export const DASHBOARD_MAX_TRACE_SUMMARIES = 50;
+
+/**
+ * Time series bucket size in milliseconds.
+ * Current: 1 hour
+ */
+export const DASHBOARD_TIME_SERIES_BUCKET_MS = 60 * 60 * 1000;
+
+/**
+ * Default retention period for old dashboard snapshots (days).
+ * Snapshots older than this are eligible for cleanup.
+ */
+export const DASHBOARD_DEFAULT_RETENTION_DAYS = 30;
+
+/**
+ * Default limit for dashboard snapshot list queries.
+ */
+export const DASHBOARD_DEFAULT_QUERY_LIMIT = 20;
+
+/**
+ * Maximum metricsJson payload size in bytes.
+ * Payloads exceeding this are trimmed to prevent LLM context overflow.
+ */
+export const DASHBOARD_MAX_METRICS_PAYLOAD_BYTES = 50_000;

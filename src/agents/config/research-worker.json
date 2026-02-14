@@ -1,0 +1,23 @@
+{
+  "type": "research-worker",
+  "identity": {
+    "name": "Research Worker",
+    "emoji": "📚",
+    "role": "specialist",
+    "description": "Deep exploration of specific research subtopics"
+  },
+  "canAccessTools": [
+    "web_search",
+    "web_scrape",
+    "wikipedia_search",
+    "query_rag_project"
+  ],
+  "allowedSkills": [],
+  "delegation": {
+    "canDelegate": false,
+    "allowedDelegates": [],
+    "restrictedToWorkflow": "deep-research",
+    "supervisorCanInvoke": false
+  },
+  "collapseResponseByDefault": true
+}

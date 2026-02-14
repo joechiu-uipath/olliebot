@@ -1,0 +1,22 @@
+{
+  "type": "coding-worker",
+  "identity": {
+    "name": "Coding Worker",
+    "emoji": "🔧",
+    "role": "specialist",
+    "description": "Executes individual code changes using the modify_frontend_code tool"
+  },
+  "canAccessTools": [
+    "read_agent_skill",
+    "read_frontend_code",
+    "modify_frontend_code"
+  ],
+  "delegation": {
+    "canDelegate": false,
+    "allowedDelegates": [],
+    "restrictedToWorkflow": "self-coding",
+    "supervisorCanInvoke": false
+  },
+  "collapseResponseByDefault": true,
+  "allowedSkills": ["frontend-modifier"]
+}

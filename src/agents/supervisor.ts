@@ -101,17 +101,22 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
   protected declare agentRegistry: AgentRegistry;
 
   constructor(llmService: LLMService, registry: AgentRegistry) {
+    // Load config from JSON file
+    const jsonConfig = registry.loadAgentConfig('supervisor');
+    const identity = jsonConfig?.identity as AgentConfig['identity'] | undefined;
+    const capabilities = jsonConfig?.capabilities as AgentConfig['capabilities'] | undefined;
+
     const config: AgentConfig = {
-      identity: {
+      identity: identity || {
         id: 'supervisor-main',
         name: SUPERVISOR_NAME,
         emoji: SUPERVISOR_ICON,
         role: 'supervisor',
         description: 'Main supervisor agent that orchestrates tasks and delegates to specialists',
       },
-      capabilities: {
+      capabilities: capabilities || {
         canSpawnAgents: true,
-        canAccessTools: ['*'], // Private tools (self-coding) are auto-excluded for supervisors unless delegating
+        canAccessTools: ['*'],
         canUseChannels: ['*'],
         maxConcurrentTasks: SUPERVISOR_MAX_CONCURRENT_TASKS,
       },
@@ -135,19 +140,13 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
     // Get base prompt from parent (includes memory, skills, RAG sections)
     let prompt = super.buildSystemPrompt(additionalContext, allowedTools);
 
-    // Helper to check tool access (same logic as parent)
-    const hasToolAccess = (toolName: string): boolean => {
-      if (!allowedTools) return true;
-      return allowedTools.some(t => t === toolName || t.includes(toolName));
-    };
-
     // Add delegation section if delegate tool is available
-    if (hasToolAccess('delegate')) {
+    if (this.hasToolAccess('delegate', allowedTools)) {
       prompt += DELEGATION_SECTION;
     }
 
     // Add browser section if browser_session tool is available
-    if (hasToolAccess('browser_session')) {
+    if (this.hasToolAccess('browser_session', allowedTools)) {
       prompt += BROWSER_SECTION;
     }
 
@@ -246,88 +245,89 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
       agentRole: 'supervisor',
     });
 
-    // Push LLM context so all calls in this turn are associated with this trace
-    this.llmService.pushContext({
+    // Run all LLM operations within a trace context.
+    // Using runWithContext() ensures concurrent requests maintain isolated contexts,
+    // preventing race conditions when multiple scheduled tasks run simultaneously.
+    const llmContext = {
       traceId,
       spanId,
       agentId: this.identity.id,
       agentName: this.identity.name,
       conversationId: requestConversationId,
-      purpose: 'chat',
-    });
+      purpose: 'chat' as const,
+    };
 
     try {
-      // Check for agent command in metadata first (from UI badge selection)
-      const agentCommand = message.metadata?.agentCommand as { command: string; icon: string } | undefined;
-      let commandResult: { command: string; agentType: string; mission: string } | null = null;
+      await this.llmService.runWithContext(llmContext, async () => {
+        // Check for agent command in metadata first (from UI badge selection)
+        const agentCommand = message.metadata?.agentCommand as { command: string; icon: string } | undefined;
+        let commandResult: { command: string; agentType: string; mission: string } | null = null;
 
-      if (agentCommand) {
-        // Command was selected via UI badge - find the agent type
-        const triggers = this.agentRegistry.getCommandTriggers();
-        const commandLower = agentCommand.command.toLowerCase();
-        const agentType = triggers.get(commandLower);
+        if (agentCommand) {
+          // Command was selected via UI badge - find the agent type
+          const triggers = this.agentRegistry.getCommandTriggers();
+          const commandLower = agentCommand.command.toLowerCase();
+          const agentType = triggers.get(commandLower);
 
-        if (agentType) {
-          commandResult = {
-            command: agentCommand.command,
-            agentType,
-            mission: message.content,
-          };
-        }
-      }
-
-      if (commandResult) {
-        const { agentType, mission } = commandResult;
-        console.log(`[${this.identity.name}] Command trigger detected: #${commandResult.command} -> ${agentType}`);
-
-        // Mark as delegated to prevent re-delegation
-        this.delegatedMessages.add(message.id);
-
-        // Directly delegate without LLM decision
-        await this.handleDelegationFromTool(
-          {
-            type: agentType,
-            mission,
-            rationale: `User explicitly requested via #${commandResult.command} command`,
-          },
-          message,
-          channel,
-          requestConversationId,
-          requestTurnId,
-          traceId,
-          spanId
-        );
-      } else {
-        // No command trigger - proceed with normal LLM processing
-        // Check if channel supports streaming
-        const supportsStreaming = typeof channel.startStream === 'function' && this.llmService.supportsStreaming();
-
-        if (supportsStreaming) {
-          await this.generateStreamingResponse(message, channel, requestConversationId, requestTurnId, traceId, spanId);
-        } else {
-          // Fallback to non-streaming
-          const response = await this.generateResponse(this.conversationHistory.slice(-CONVERSATION_HISTORY_LIMIT));
-          const delegationMatch = response.match(/```delegate\s*([\s\S]*?)```/);
-
-          if (delegationMatch) {
-            await this.handleDelegation(delegationMatch[1], message, channel, requestConversationId, requestTurnId, traceId, spanId);
-          } else {
-            await this.sendMessage(response, {
-              reasoningMode: message.metadata?.reasoningMode as string | undefined,
-              conversationId: requestConversationId,
-            });
+          if (agentType) {
+            commandResult = {
+              command: agentCommand.command,
+              agentType,
+              mission: message.content,
+            };
           }
         }
-      }
+
+        if (commandResult) {
+          const { agentType, mission } = commandResult;
+          console.log(`[${this.identity.name}] Command trigger detected: #${commandResult.command} -> ${agentType}`);
+
+          // Mark as delegated to prevent re-delegation
+          this.delegatedMessages.add(message.id);
+
+          // Directly delegate without LLM decision
+          await this.handleDelegationFromTool(
+            {
+              type: agentType,
+              mission,
+              rationale: `User explicitly requested via #${commandResult.command} command`,
+            },
+            message,
+            channel,
+            requestConversationId,
+            requestTurnId,
+            traceId,
+            spanId
+          );
+        } else {
+          // No command trigger - proceed with normal LLM processing
+          // Check if channel supports streaming
+          const supportsStreaming = typeof channel.startStream === 'function' && this.llmService.supportsStreaming();
+
+          if (supportsStreaming) {
+            await this.generateStreamingResponse(message, channel, requestConversationId, requestTurnId, traceId, spanId);
+          } else {
+            // Fallback to non-streaming
+            const response = await this.generateResponse(this.conversationHistory.slice(-CONVERSATION_HISTORY_LIMIT));
+            const delegationMatch = response.match(/```delegate\s*([\s\S]*?)```/);
+
+            if (delegationMatch) {
+              await this.handleDelegation(delegationMatch[1], message, channel, requestConversationId, requestTurnId, traceId, spanId);
+            } else {
+              await this.sendMessage(response, {
+                reasoningMode: message.metadata?.reasoningMode as string | undefined,
+                conversationId: requestConversationId,
+              });
+            }
+          }
+        }
+      });
     } catch (error) {
       console.error(`[${this.identity.name}] Error:`, error);
       traceStore.endSpan(spanId, 'error', String(error));
       traceStore.endTrace(traceId, 'error');
       await this.sendError('Failed to process message', String(error), requestConversationId);
     } finally {
-      // Pop LLM context
-      this.llmService.popContext();
-
       // End trace/span if not already ended by error handler
       const currentSpan = traceStore.getSpanById(spanId);
       if (currentSpan && currentSpan.status === 'running') {
@@ -1248,7 +1248,8 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
             content: `Generate a short, descriptive title (3-6 words max) for a conversation that starts like this:\n\n${context}\n\nRespond with ONLY the title, no quotes or punctuation.`,
           },
         ],
-        { maxTokens: AUTO_NAME_LLM_MAX_TOKENS }
+        { maxTokens: AUTO_NAME_LLM_MAX_TOKENS },
+        'Auto-Namer'
       );
 
       const title = response.content.trim().substring(0, CONVERSATION_TITLE_MAX_LENGTH);
@@ -1277,6 +1278,11 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
   }
 
   private incrementMessageCount(conversationId: string): void {
+    // Skip well-known conversations (Feed, etc.) - they cannot be renamed and aren't shown in chat list
+    if (isWellKnownConversation(conversationId)) {
+      return;
+    }
+
     const count = (this.conversationMessageCount.get(conversationId) || 0) + 1;
     this.conversationMessageCount.set(conversationId, count);
 
@@ -1288,6 +1294,4 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
       });
     }
   }
-
-
 }

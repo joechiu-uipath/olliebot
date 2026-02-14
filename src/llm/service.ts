@@ -1,4 +1,5 @@
 import { v4 as uuid } from 'uuid';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import type {
   LLMProvider,
   LLMMessage,
@@ -23,8 +24,10 @@ export class LLMService {
   private fast: LLMProvider;
   private traceStore: TraceStore | null;
 
-  // Context stack for associating LLM calls with traces/spans
-  private contextStack: TraceContext[] = [];
+  // AsyncLocalStorage provides request-scoped context that is safe for concurrent async operations.
+  // Unlike a shared stack, each async execution chain maintains its own isolated context,
+  // preventing race conditions when multiple requests run concurrently.
+  private contextStorage = new AsyncLocalStorage<TraceContext>();
 
   constructor(config: LLMServiceConfig) {
     this.main = config.main;
@@ -37,32 +40,26 @@ export class LLMService {
   // ============================================================
 
   /**
-   * Push a trace context. Called by agents before making LLM calls.
+   * Run a function with the given trace context.
+   * All LLM calls made within the callback will be associated with this context.
+   * Uses AsyncLocalStorage to ensure concurrent requests maintain isolated contexts.
    */
-  pushContext(ctx: TraceContext): void {
-    this.contextStack.push(ctx);
+  runWithContext<T>(ctx: TraceContext, fn: () => T): T {
+    return this.contextStorage.run(ctx, fn);
   }
 
   /**
-   * Pop the most recent trace context.
-   */
-  popContext(): void {
-    this.contextStack.pop();
-  }
-
-  /**
-   * Get the current (top of stack) trace context.
+   * Get the current trace context for this async execution chain.
    */
   private getContext(): TraceContext | undefined {
-    return this.contextStack.length > 0
-      ? this.contextStack[this.contextStack.length - 1]
-      : undefined;
+    return this.contextStorage.getStore();
   }
 
   /**
    * Record start of an LLM call with the trace store.
+   * @param callerName - Optional fallback caller name when no agent context is available
    */
-  private traceStart(workload: LlmWorkload, provider: LLMProvider, messages: LLMMessage[], options?: LLMOptions, purpose?: string): string | null {
+  private traceStart(workload: LlmWorkload, provider: LLMProvider, messages: LLMMessage[], options?: LLMOptions, purpose?: string, callerName?: string): string | null {
     if (!this.traceStore) return null;
     const ctx = this.getContext();
     const callId = uuid();
@@ -90,7 +87,7 @@ export class LLMService {
       temperature: options?.temperature,
       reasoningEffort: options?.reasoningEffort,
       callerAgentId: ctx?.agentId,
-      callerAgentName: ctx?.agentName,
+      callerAgentName: ctx?.agentName || callerName,
       callerPurpose: purpose || ctx?.purpose,
       conversationId: ctx?.conversationId,
     });
@@ -155,14 +152,15 @@ export class LLMService {
 
   /**
    * Summarize text using the Fast LLM
+   * @param callerName - Optional caller identifier for tracing (defaults to "System")
    */
-  async summarize(text: string, context?: string): Promise<string> {
+  async summarize(text: string, context?: string, callerName?: string): Promise<string> {
     const systemPrompt = `You are a precise summarizer. Summarize the following content into no more than 3000 characters while preserving key information and structure.${context ? ` Context: ${context}` : ''}`;
 
     const messages: LLMMessage[] = [{ role: 'user', content: text }];
     const options = { systemPrompt, maxTokens: LLM_SUMMARIZE_MAX_TOKENS };
 
-    const callId = this.traceStart('fast', this.fast, messages, options, 'summarize');
+    const callId = this.traceStart('fast', this.fast, messages, options, 'summarize', callerName || 'System');
     try {
       const response = await this.fast.complete(messages, options);
       this.traceComplete(callId, response);
@@ -367,12 +365,14 @@ export class LLMService {
 
   /**
    * Quick generation using Fast LLM (for simple tasks)
+   * @param callerName - Optional caller identifier for tracing (defaults to "System")
    */
   async quickGenerate(
     messages: LLMMessage[],
-    options?: LLMOptions
+    options?: LLMOptions,
+    callerName?: string
   ): Promise<LLMResponse> {
-    const callId = this.traceStart('fast', this.fast, messages, options, 'quick_generate');
+    const callId = this.traceStart('fast', this.fast, messages, options, 'quick_generate', callerName || 'System');
     try {
       const response = await this.fast.complete(messages, options);
       this.traceComplete(callId, response);
@@ -448,6 +448,60 @@ Only output valid JSON, no explanations.`;
       // Validate JSON
       JSON.parse(jsonStr.trim());
 
+      return jsonStr.trim();
+    } catch (error) {
+      this.traceFail(callId, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Parse mission .md into structured JSON config for the Mission system
+   */
+  async parseMissionConfig(mdContent: string): Promise<string> {
+    const systemPrompt = `You are a mission configuration parser. Convert a natural language mission description into structured JSON.
+
+The JSON should follow this schema:
+{
+  "name": "string - mission name",
+  "description": "string - mission description",
+  "cadence": "cron expression for check cycle, or null if not specified",
+  "scope": "string - scope description",
+  "agents": {
+    "lead": { "model": "string" },
+    "workers": [{ "type": "string", "config": {} }]
+  },
+  "pillars": [
+    {
+      "name": "string",
+      "slug": "string - kebab-case",
+      "description": "string",
+      "metrics": [
+        { "name": "string", "target": "string", "current": "", "unit": "string" }
+      ],
+      "strategies": [
+        { "description": "string" }
+      ]
+    }
+  ]
+}
+
+Only output valid JSON, no explanations.`;
+
+    const messages: LLMMessage[] = [{ role: 'user', content: `Convert this mission description to JSON config:\n${mdContent}` }];
+    const options = { systemPrompt, maxTokens: LLM_TASK_CONFIG_MAX_TOKENS };
+
+    const callId = this.traceStart('main', this.main, messages, options, 'parse_mission_config');
+    try {
+      const response = await this.main.complete(messages, options);
+      this.traceComplete(callId, response);
+
+      let jsonStr = response.content.trim();
+      if (jsonStr.startsWith('```json')) jsonStr = jsonStr.slice(7);
+      if (jsonStr.startsWith('```')) jsonStr = jsonStr.slice(3);
+      if (jsonStr.endsWith('```')) jsonStr = jsonStr.slice(0, -3);
+
+      JSON.parse(jsonStr.trim());
       return jsonStr.trim();
     } catch (error) {
       this.traceFail(callId, error);

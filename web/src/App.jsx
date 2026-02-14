@@ -18,16 +18,20 @@ import { CodeBlock } from './components/CodeBlock';
 import { useEvalMode, EvalSidebarContent, EvalMainContent } from './App.Eval';
 // Extracted logs mode
 import { useLogsMode, LogsSidebarContent, LogsMainContent } from './App.Logs';
+// Extracted mission mode (Level 4 continuous agent)
+import { useMissionMode, MissionSidebarContent, MissionMainContent } from './App.Mission';
 
 // Extracted utilities
 import { transformMessages, shouldCollapseByDefault } from './utils/messageHelpers';
 import { createMessageHandler } from './App.websocket';
+import { useConversationSubscription } from './hooks/useConversationSubscription';
 
 // Mode constants
 const MODES = {
   CHAT: 'chat',
   EVAL: 'eval',
   TRACES: 'traces',
+  MISSION: 'mission',
 };
 
 // Branding constants
@@ -58,6 +62,7 @@ function App() {
   // Derive mode from URL path
   const mode = location.pathname.startsWith('/eval') ? MODES.EVAL
     : location.pathname.startsWith('/traces') ? MODES.TRACES
+    : location.pathname.startsWith('/mission') ? MODES.MISSION
     : MODES.CHAT;
 
   const [messages, setMessages] = useState([]);
@@ -67,6 +72,23 @@ function App() {
 
   // Sidebar state
   const [sidebarOpen, setSidebarOpen] = useState(true);
+
+  // App width state (resizable, min 1000px)
+  const DEFAULT_APP_WIDTH = 1000;
+  const MIN_APP_WIDTH = 1000;
+  const MAX_APP_WIDTH = 2000;
+  const [appWidth, setAppWidth] = useState(() => {
+    const saved = localStorage.getItem('olliebot-app-width');
+    if (saved) {
+      const parsed = parseInt(saved, 10);
+      if (!isNaN(parsed) && parsed >= MIN_APP_WIDTH && parsed <= MAX_APP_WIDTH) {
+        return parsed;
+      }
+    }
+    return DEFAULT_APP_WIDTH;
+  });
+  const isResizingRef = useRef(false);
+  const resizeSideRef = useRef(null); // 'left' or 'right'
   const [conversations, setConversations] = useState([]);
   const [currentConversationId, setCurrentConversationId] = useState(null);
   const [conversationsLoading, setConversationsLoading] = useState(true);
@@ -143,6 +165,12 @@ function App() {
   // Logs mode - managed by useLogsMode hook (state lives in App.Logs.jsx)
   const logsMode = useLogsMode();
 
+  // Mission mode - managed by useMissionMode hook (state lives in App.Mission.jsx)
+  const missionMode = useMissionMode();
+
+  // Conversation subscription — multi-conversation WebSocket event routing for embedded chats
+  const { subscribe: subscribeConversation, dispatch: dispatchConversation } = useConversationSubscription();
+
   // Response pending state (disable input while waiting)
   const [isResponsePending, setIsResponsePending] = useState(false);
 
@@ -197,6 +225,47 @@ function App() {
     window.addEventListener('pdf-view', handlePdfView);
     return () => window.removeEventListener('pdf-view', handlePdfView);
   }, []);
+
+  // Persist app width to localStorage
+  useEffect(() => {
+    localStorage.setItem('olliebot-app-width', String(appWidth));
+  }, [appWidth]);
+
+  // App width resize handler
+  const handleAppResizeStart = useCallback((e, side) => {
+    e.preventDefault();
+    isResizingRef.current = true;
+    resizeSideRef.current = side;
+    document.body.style.cursor = 'ew-resize';
+    document.body.style.userSelect = 'none';
+
+    const startX = e.clientX;
+    const startWidth = appWidth;
+
+    const handleMouseMove = (moveEvent) => {
+      if (!isResizingRef.current) return;
+      // Left handle: dragging left increases width, dragging right decreases
+      // Right handle: dragging right increases width, dragging left decreases
+      const delta = resizeSideRef.current === 'left'
+        ? startX - moveEvent.clientX
+        : moveEvent.clientX - startX;
+      // Multiply by 2 because we're resizing from center (both sides expand)
+      const newWidth = Math.min(MAX_APP_WIDTH, Math.max(MIN_APP_WIDTH, startWidth + delta * 2));
+      setAppWidth(newWidth);
+    };
+
+    const handleMouseUp = () => {
+      isResizingRef.current = false;
+      resizeSideRef.current = null;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+  }, [appWidth]);
 
   // Close PDF viewer
   const closePdfViewer = useCallback(() => {
@@ -368,9 +437,16 @@ function App() {
   const logsHandlerRef = useRef(logsMode.handleLogEvent);
   useEffect(() => { logsHandlerRef.current = logsMode.handleLogEvent; }, [logsMode.handleLogEvent]);
 
-  // Combined WebSocket handler: main handler + logs handler
+  // Ref for conversation subscription dispatcher (stable across renders)
+  const dispatchConversationRef = useRef(dispatchConversation);
+  useEffect(() => { dispatchConversationRef.current = dispatchConversation; }, [dispatchConversation]);
+
+  // Combined WebSocket handler: main handler + logs handler + conversation subscriptions
   const [combinedMessageHandler] = useState(() => {
     return (data) => {
+      // Dispatch to conversation subscribers first (embedded mission chats, etc.)
+      dispatchConversationRef.current?.(data);
+      // Main chat handler
       handleMessage(data);
       // Forward log events to logs mode
       if (data.type && data.type.startsWith('log_')) {
@@ -1041,6 +1117,59 @@ function App() {
           mcp.id === mcpId
             ? { ...mcp, enabled: currentEnabled, status: currentEnabled ? 'connected' : 'disconnected' }
             : mcp
+        )
+      );
+    }
+  };
+
+  // Toggle task enabled/disabled status
+  const handleToggleTask = async (taskId, currentEnabled) => {
+    const newEnabled = !currentEnabled;
+
+    // Optimistic UI update
+    setAgentTasks((prev) =>
+      prev.map((task) =>
+        task.id === taskId
+          ? { ...task, enabled: newEnabled }
+          : task
+      )
+    );
+
+    try {
+      const res = await fetch(`/api/tasks/${taskId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: newEnabled }),
+      });
+
+      if (res.ok) {
+        const updatedTask = await res.json();
+        setAgentTasks((prev) =>
+          prev.map((task) =>
+            task.id === taskId
+              ? { ...task, ...updatedTask }
+              : task
+          )
+        );
+      } else {
+        console.error('Failed to toggle task:', await res.text());
+        // Revert optimistic update
+        setAgentTasks((prev) =>
+          prev.map((task) =>
+            task.id === taskId
+              ? { ...task, enabled: currentEnabled }
+              : task
+          )
+        );
+      }
+    } catch (error) {
+      console.error('Error toggling task:', error);
+      // Revert optimistic update
+      setAgentTasks((prev) =>
+        prev.map((task) =>
+          task.id === taskId
+            ? { ...task, enabled: currentEnabled }
+            : task
         )
       );
     }
@@ -1807,7 +1936,19 @@ function App() {
   }, [isLoadingOlder]);
 
   return (
-    <div className="app-layout">
+    <div className="app-layout" style={{ width: appWidth }}>
+      {/* Left resize handle */}
+      <div
+        className="app-resize-handle app-resize-handle-left"
+        onMouseDown={(e) => handleAppResizeStart(e, 'left')}
+        title="Drag to resize"
+      />
+      {/* Right resize handle */}
+      <div
+        className="app-resize-handle app-resize-handle-right"
+        onMouseDown={(e) => handleAppResizeStart(e, 'right')}
+        title="Drag to resize"
+      />
       {/* Collapsible Sidebar */}
       <aside className={`sidebar ${sidebarOpen ? 'open' : 'collapsed'}`}>
         <div className="sidebar-header">
@@ -1834,6 +1975,10 @@ function App() {
 
         {sidebarOpen && mode === MODES.TRACES && (
           <LogsSidebarContent logsMode={logsMode} />
+        )}
+
+        {sidebarOpen && mode === MODES.MISSION && (
+          <MissionSidebarContent missionMode={missionMode} />
         )}
 
         {sidebarOpen && mode === MODES.CHAT && (
@@ -1944,7 +2089,7 @@ function App() {
                 <span className="accordion-arrow">{expandedAccordions.tasks ? '▼' : '▶'}</span>
               </button>
               {expandedAccordions.tasks && (
-                <div className="accordion-content">
+                <div className="accordion-content tasks-list">
                   {agentTasks.length === 0 ? (
                     <div className="accordion-empty">No active tasks</div>
                   ) : (
@@ -1989,10 +2134,18 @@ function App() {
                       const nextRunDisplay = formatNextRun(task.nextRun);
 
                       return (
-                        <div key={task.id} className="accordion-item task-item" title={tooltip}>
-                          <span className={`task-status ${task.status}`}>●</span>
+                        <div key={task.id} className={`accordion-item task-item ${task.enabled === false ? 'disabled' : ''}`} title={tooltip}>
+                          <label className="task-toggle" title={task.enabled !== false ? 'Disable task' : 'Enable task'} onClick={(e) => e.stopPropagation()}>
+                            <input
+                              type="checkbox"
+                              checked={task.enabled !== false}
+                              onChange={() => handleToggleTask(task.id, task.enabled !== false)}
+                            />
+                            <span className="task-toggle-slider"></span>
+                          </label>
+                          <span className={`task-status ${task.enabled === false ? 'disabled' : task.status}`}>●</span>
                           <span className="task-name">{task.name}</span>
-                          {nextRunDisplay && (
+                          {nextRunDisplay && task.enabled !== false && (
                             <span className="task-next-run">{nextRunDisplay}</span>
                           )}
                           <button
@@ -2214,18 +2367,25 @@ function App() {
                 Chat
               </button>
               <button
-                className={`mode-btn ${mode === MODES.EVAL ? 'active' : ''}`}
-                onClick={() => navigate('/eval')}
+                className={`mode-btn ${mode === MODES.MISSION ? 'active' : ''}`}
+                onClick={() => navigate('/mission')}
               >
-                <span className="mode-icon">📊</span>
-                Eval
+                <span className="mode-icon">🎯</span>
+                Mission
               </button>
               <button
                 className={`mode-btn ${mode === MODES.TRACES ? 'active' : ''}`}
                 onClick={() => navigate('/traces')}
               >
                 <span className="mode-icon">📋</span>
-                Traces
+                Trace
+              </button>
+              <button
+                className={`mode-btn ${mode === MODES.EVAL ? 'active' : ''}`}
+                onClick={() => navigate('/eval')}
+              >
+                <span className="mode-icon">📊</span>
+                Eval
               </button>
             </div>
           </div>
@@ -2239,6 +2399,15 @@ function App() {
 
         {/* Logs Mode Content */}
         {mode === MODES.TRACES && <LogsMainContent logsMode={logsMode} />}
+
+        {/* Mission Mode Content */}
+        {mode === MODES.MISSION && (
+          <MissionMainContent
+            missionMode={missionMode}
+            sendMessage={sendMessage}
+            subscribe={subscribeConversation}
+          />
+        )}
 
         {/* Chat Mode Content */}
         {mode === MODES.CHAT && (

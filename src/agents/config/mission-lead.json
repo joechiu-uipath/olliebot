@@ -1,0 +1,24 @@
+{
+  "type": "mission-lead",
+  "identity": {
+    "id": "mission-lead",
+    "name": "Mission Lead",
+    "emoji": "🎯",
+    "role": "supervisor",
+    "description": "Orchestrates mission strategy, monitors pillars, and coordinates pillar owners"
+  },
+  "canAccessTools": [
+    "delegate",
+    "mission_todo_create",
+    "mission_todo_update",
+    "mission_todo_complete",
+    "mission_metric_record",
+    "mission_update_dashboard"
+  ],
+  "delegation": {
+    "canDelegate": true,
+    "allowedDelegates": ["pillar-owner"],
+    "restrictedToWorkflow": null,
+    "supervisorCanInvoke": true
+  }
+}

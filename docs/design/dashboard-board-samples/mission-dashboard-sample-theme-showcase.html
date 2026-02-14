@@ -1,0 +1,973 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Theme Showcase — Adaptive Dashboard Theming</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.6.0/dist/echarts.min.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  /* ========== Dark Theme (default) ========== */
+  :root {
+    --bg: #0f1117;
+    --card: #1a1d27;
+    --border: #2a2d37;
+    --text-primary: #e0e0e0;
+    --text-secondary: #8b8fa3;
+    --indigo: #6366f1;
+    --cyan: #22d3ee;
+    --emerald: #10b981;
+    --amber: #f59e0b;
+    --red: #ef4444;
+    --title-bar-bg: linear-gradient(135deg, #1a1d27 0%, #12141c 100%);
+    --info-bg: rgba(99,102,241,0.06);
+    --info-border: rgba(99,102,241,0.25);
+    --info-accent-bg: rgba(99,102,241,0.1);
+    --table-row-hover: rgba(99,102,241,0.08);
+    --table-row-alt: rgba(255,255,255,0.02);
+    --toggle-bg: #2a2d37;
+    --toggle-knob: #6366f1;
+    --chart-grid: rgba(255,255,255,0.06);
+    --chart-axis-label: #8b8fa3;
+    --chart-axis-line: #2a2d37;
+    --chart-tooltip-bg: rgba(26,29,39,0.95);
+    --chart-tooltip-border: #2a2d37;
+    --chart-tooltip-text: #e0e0e0;
+    --kpi-trend-up: #10b981;
+    --kpi-trend-down: #ef4444;
+    --shadow: 0 2px 8px rgba(0,0,0,0.3);
+    --heatmap-min: #1a1d27;
+    --heatmap-max: #ef4444;
+    --gauge-track: #2a2d37;
+  }
+
+  /* ========== Light Theme ========== */
+  body.light {
+    --bg: #f8f9fa;
+    --card: #ffffff;
+    --border: #e2e8f0;
+    --text-primary: #1a202c;
+    --text-secondary: #718096;
+    --indigo: #4f46e5;
+    --cyan: #0891b2;
+    --emerald: #059669;
+    --amber: #d97706;
+    --red: #dc2626;
+    --title-bar-bg: linear-gradient(135deg, #ffffff 0%, #f1f5f9 100%);
+    --info-bg: rgba(79,70,229,0.04);
+    --info-border: rgba(79,70,229,0.2);
+    --info-accent-bg: rgba(79,70,229,0.08);
+    --table-row-hover: rgba(79,70,229,0.06);
+    --table-row-alt: rgba(0,0,0,0.02);
+    --toggle-bg: #e2e8f0;
+    --toggle-knob: #4f46e5;
+    --chart-grid: rgba(0,0,0,0.06);
+    --chart-axis-label: #718096;
+    --chart-axis-line: #e2e8f0;
+    --chart-tooltip-bg: rgba(255,255,255,0.97);
+    --chart-tooltip-border: #e2e8f0;
+    --chart-tooltip-text: #1a202c;
+    --kpi-trend-up: #059669;
+    --kpi-trend-down: #dc2626;
+    --shadow: 0 2px 8px rgba(0,0,0,0.08);
+    --heatmap-min: #f1f5f9;
+    --heatmap-max: #dc2626;
+    --gauge-track: #e2e8f0;
+  }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text-primary);
+    line-height: 1.5;
+    min-height: 100vh;
+    padding: 0 0 40px 0;
+    transition: background 0.3s ease, color 0.3s ease;
+  }
+
+  /* ---------- Title bar ---------- */
+  .title-bar {
+    background: var(--title-bar-bg);
+    border-bottom: 1px solid var(--border);
+    padding: 24px 32px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 12px;
+    transition: background 0.3s ease, border-color 0.3s ease;
+  }
+  .title-bar .top-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    gap: 16px;
+  }
+  .title-bar h1 {
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: -0.3px;
+    color: var(--text-primary);
+    flex: 1;
+  }
+  .title-bar h1 span.accent { color: var(--indigo); }
+  .title-bar .meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 24px;
+    width: 100%;
+    align-items: center;
+  }
+  .title-bar .timestamp {
+    font-size: 13px;
+    color: var(--text-secondary);
+    background: var(--info-accent-bg);
+    border: 1px solid var(--info-border);
+    border-radius: 6px;
+    padding: 4px 12px;
+    transition: background 0.3s ease, border-color 0.3s ease, color 0.3s ease;
+  }
+  .title-bar .synopsis {
+    font-size: 13px;
+    color: var(--text-secondary);
+    flex: 1;
+  }
+
+  /* ---------- Theme toggle ---------- */
+  .theme-toggle-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 18px;
+    border: 2px solid var(--indigo);
+    border-radius: 24px;
+    background: var(--toggle-bg);
+    color: var(--text-primary);
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    white-space: nowrap;
+    user-select: none;
+  }
+  .theme-toggle-btn:hover {
+    background: var(--indigo);
+    color: #fff;
+    box-shadow: 0 0 16px rgba(99,102,241,0.35);
+  }
+  .theme-toggle-btn .icon { font-size: 16px; }
+
+  /* ---------- Info panel ---------- */
+  .info-panel {
+    margin: 16px 32px 0;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--info-bg);
+    overflow: hidden;
+    transition: background 0.3s ease, border-color 0.3s ease;
+  }
+  .info-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    padding: 10px 16px;
+    background: none;
+    border: none;
+    color: var(--indigo);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    text-align: left;
+  }
+  .info-toggle .arrow {
+    display: inline-block;
+    transition: transform 0.25s ease;
+    font-size: 11px;
+  }
+  .info-toggle.open .arrow { transform: rotate(90deg); }
+  .info-body {
+    display: none;
+    padding: 0 16px 14px;
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.7;
+  }
+  .info-body.show { display: block; }
+  .info-body ul { margin: 6px 0 0 18px; }
+  .info-body li { margin-bottom: 2px; }
+  .info-body code {
+    background: var(--info-accent-bg);
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 12px;
+    color: var(--indigo);
+  }
+
+  /* ---------- Grid container ---------- */
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+    margin: 20px 32px 0;
+  }
+
+  /* ---------- Cards ---------- */
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+    box-shadow: var(--shadow);
+    transition: background 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease;
+  }
+  .card.span-2 { grid-column: span 2; }
+  .card.span-3 { grid-column: span 3; }
+  .card.span-4 { grid-column: span 4; }
+
+  .card-title {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: var(--text-secondary);
+    margin-bottom: 12px;
+    font-weight: 600;
+  }
+
+  /* ---------- KPI cards ---------- */
+  .kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+    margin: 20px 32px 0;
+  }
+  .kpi-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px 22px;
+    box-shadow: var(--shadow);
+    transition: background 0.3s ease, border-color 0.3s ease, box-shadow 0.3s ease, transform 0.15s ease;
+  }
+  .kpi-card:hover { transform: translateY(-2px); }
+  .kpi-label {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: var(--text-secondary);
+    margin-bottom: 8px;
+    font-weight: 600;
+  }
+  .kpi-value {
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    color: var(--text-primary);
+    line-height: 1.1;
+  }
+  .kpi-trend {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-top: 8px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .kpi-trend.up { color: var(--kpi-trend-up); }
+  .kpi-trend.down { color: var(--kpi-trend-down); }
+  .kpi-accent {
+    width: 100%;
+    height: 3px;
+    border-radius: 2px;
+    margin-top: 14px;
+  }
+
+  /* ---------- Chart containers ---------- */
+  .chart-box { width: 100%; height: 320px; }
+  .chart-box.tall { height: 360px; }
+
+  /* ---------- Table ---------- */
+  .table-wrap { overflow-x: auto; }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  thead th {
+    text-align: left;
+    padding: 10px 14px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: var(--text-secondary);
+    border-bottom: 2px solid var(--border);
+    background: var(--info-bg);
+    cursor: pointer;
+    user-select: none;
+    transition: background 0.3s ease, border-color 0.3s ease;
+    white-space: nowrap;
+  }
+  thead th:hover { color: var(--indigo); }
+  thead th .sort-arrow {
+    display: inline-block;
+    margin-left: 4px;
+    font-size: 10px;
+    opacity: 0.4;
+  }
+  thead th.sorted .sort-arrow { opacity: 1; color: var(--indigo); }
+  tbody td {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    color: var(--text-primary);
+    transition: color 0.3s ease, border-color 0.3s ease;
+  }
+  tbody tr { transition: background 0.15s ease; }
+  tbody tr:nth-child(even) { background: var(--table-row-alt); }
+  tbody tr:hover { background: var(--table-row-hover); }
+
+  .status-badge {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+  .status-badge.success { background: rgba(16,185,129,0.15); color: var(--emerald); }
+  .status-badge.warning { background: rgba(245,158,11,0.15); color: var(--amber); }
+  .status-badge.error   { background: rgba(239,68,68,0.15); color: var(--red); }
+  .status-badge.info    { background: rgba(99,102,241,0.15); color: var(--indigo); }
+
+  /* ---------- Responsive ---------- */
+  @media (max-width: 1100px) {
+    .grid { grid-template-columns: repeat(2, 1fr); }
+    .kpi-grid { grid-template-columns: repeat(2, 1fr); }
+    .card.span-3 { grid-column: span 2; }
+  }
+  @media (max-width: 700px) {
+    .grid { grid-template-columns: 1fr; margin: 16px 16px 0; }
+    .kpi-grid { grid-template-columns: 1fr; margin: 16px 16px 0; }
+    .card.span-2, .card.span-3, .card.span-4 { grid-column: span 1; }
+    .title-bar { padding: 18px 16px; }
+    .info-panel { margin: 12px 16px 0; }
+  }
+</style>
+</head>
+<body class="dark">
+
+<!-- ==================== TITLE BAR ==================== -->
+<div class="title-bar">
+  <div class="top-row">
+    <h1><span class="accent">Theme Showcase</span> &mdash; Adaptive Dashboard Theming</h1>
+    <button class="theme-toggle-btn" id="themeToggleBtn" onclick="toggleTheme()">
+      <span class="icon" id="themeIcon">&#9790;</span>
+      <span id="themeLabel">Dark</span>
+    </button>
+  </div>
+  <div class="meta">
+    <span class="timestamp" id="ts"></span>
+    <span class="synopsis">Demonstrates the dashboard engine's theming capabilities with a live dark/light mode toggle. All charts, cards, and tables adapt instantly.</span>
+  </div>
+</div>
+
+<!-- ==================== INFO PANEL ==================== -->
+<div class="info-panel">
+  <button class="info-toggle" onclick="toggleInfo(this)">
+    <span class="arrow">&#9654;</span> Interactivity Guide
+  </button>
+  <div class="info-body" id="infoBody">
+    <ul>
+      <li>Click the <strong>theme toggle button</strong> in the header to switch between dark and light modes.</li>
+      <li>All charts <strong>re-render</strong> with adapted colors &mdash; grid lines, labels, tooltips, and data series adjust to maintain readability.</li>
+      <li><strong>Hover</strong> over any chart element for detailed tooltips.</li>
+      <li>Click <strong>table column headers</strong> to sort rows ascending or descending.</li>
+      <li>Colors are driven by <code>CSS custom properties</code> on <code>:root</code> / <code>body.light</code>.</li>
+      <li>All ECharts instances are stored in an array and batch-updated via <code>setOption()</code> on every toggle.</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ==================== KPI CARDS ==================== -->
+<div class="kpi-grid">
+  <div class="kpi-card">
+    <div class="kpi-label">Total Missions</div>
+    <div class="kpi-value">1,284</div>
+    <div class="kpi-trend up">&#9650; 12.4% vs last month</div>
+    <div class="kpi-accent" style="background: var(--indigo);"></div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Token Usage</div>
+    <div class="kpi-value">4.7M</div>
+    <div class="kpi-trend up">&#9650; 8.1% vs last month</div>
+    <div class="kpi-accent" style="background: var(--cyan);"></div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Avg Latency</div>
+    <div class="kpi-value">342ms</div>
+    <div class="kpi-trend down">&#9660; 5.2% vs last month</div>
+    <div class="kpi-accent" style="background: var(--emerald);"></div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Total Cost</div>
+    <div class="kpi-value">$2,847</div>
+    <div class="kpi-trend up">&#9650; 3.6% vs last month</div>
+    <div class="kpi-accent" style="background: var(--amber);"></div>
+  </div>
+</div>
+
+<!-- ==================== CHARTS ROW 1 ==================== -->
+<div class="grid">
+  <div class="card span-3">
+    <div class="card-title">Token Trend (14 Days)</div>
+    <div class="chart-box" id="chartLine"></div>
+  </div>
+  <div class="card">
+    <div class="card-title">Mission Distribution</div>
+    <div class="chart-box" id="chartDonut"></div>
+  </div>
+</div>
+
+<!-- ==================== CHARTS ROW 2 ==================== -->
+<div class="grid">
+  <div class="card span-2">
+    <div class="card-title">Daily Cost (7 Days)</div>
+    <div class="chart-box" id="chartBar"></div>
+  </div>
+  <div class="card">
+    <div class="card-title">Activity Heatmap</div>
+    <div class="chart-box" id="chartHeatmap"></div>
+  </div>
+  <div class="card">
+    <div class="card-title">System Health</div>
+    <div class="chart-box" id="chartGauge"></div>
+  </div>
+</div>
+
+<!-- ==================== TABLE ==================== -->
+<div class="grid">
+  <div class="card span-4">
+    <div class="card-title">Recent Missions</div>
+    <div class="table-wrap">
+      <table id="missionTable">
+        <thead>
+          <tr>
+            <th data-col="id" onclick="sortTable('id')">Mission ID <span class="sort-arrow">&#9650;</span></th>
+            <th data-col="agent" onclick="sortTable('agent')">Agent <span class="sort-arrow">&#9650;</span></th>
+            <th data-col="model" onclick="sortTable('model')">Model <span class="sort-arrow">&#9650;</span></th>
+            <th data-col="tokens" onclick="sortTable('tokens')">Tokens <span class="sort-arrow">&#9650;</span></th>
+            <th data-col="cost" onclick="sortTable('cost')">Cost <span class="sort-arrow">&#9650;</span></th>
+            <th data-col="latency" onclick="sortTable('latency')">Latency <span class="sort-arrow">&#9650;</span></th>
+            <th data-col="status" onclick="sortTable('status')">Status <span class="sort-arrow">&#9650;</span></th>
+          </tr>
+        </thead>
+        <tbody id="tableBody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ================================================================
+   GLOBAL STATE
+   ================================================================ */
+var currentTheme = 'dark';
+var chartInstances = [];
+
+/* Theme color palettes for ECharts */
+function getThemeColors() {
+  var isDark = currentTheme === 'dark';
+  return {
+    indigo:   isDark ? '#6366f1' : '#4f46e5',
+    cyan:     isDark ? '#22d3ee' : '#0891b2',
+    emerald:  isDark ? '#10b981' : '#059669',
+    amber:    isDark ? '#f59e0b' : '#d97706',
+    red:      isDark ? '#ef4444' : '#dc2626',
+    textPrimary:   isDark ? '#e0e0e0' : '#1a202c',
+    textSecondary: isDark ? '#8b8fa3' : '#718096',
+    gridLine:      isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
+    axisLine:      isDark ? '#2a2d37' : '#e2e8f0',
+    tooltipBg:     isDark ? 'rgba(26,29,39,0.95)' : 'rgba(255,255,255,0.97)',
+    tooltipBorder: isDark ? '#2a2d37' : '#e2e8f0',
+    tooltipText:   isDark ? '#e0e0e0' : '#1a202c',
+    cardBg:        isDark ? '#1a1d27' : '#ffffff',
+    heatmapMin:    isDark ? '#1a1d27' : '#f1f5f9',
+    heatmapMax:    isDark ? '#ef4444' : '#dc2626',
+    heatmapMid:    isDark ? '#6366f1' : '#4f46e5',
+    gaugeTrack:    isDark ? '#2a2d37' : '#e2e8f0'
+  };
+}
+
+/* ================================================================
+   THEME TOGGLE
+   ================================================================ */
+function toggleTheme() {
+  currentTheme = currentTheme === 'dark' ? 'light' : 'dark';
+  document.body.className = currentTheme;
+  var btn = document.getElementById('themeToggleBtn');
+  var icon = document.getElementById('themeIcon');
+  var label = document.getElementById('themeLabel');
+  if (currentTheme === 'light') {
+    icon.innerHTML = '&#9788;';
+    label.textContent = 'Light';
+  } else {
+    icon.innerHTML = '&#9790;';
+    label.textContent = 'Dark';
+  }
+  updateAllCharts();
+}
+
+function updateAllCharts() {
+  buildLineChart();
+  buildDonutChart();
+  buildBarChart();
+  buildHeatmapChart();
+  buildGaugeChart();
+}
+
+/* ================================================================
+   INFO PANEL TOGGLE
+   ================================================================ */
+function toggleInfo(btn) {
+  btn.classList.toggle('open');
+  var body = document.getElementById('infoBody');
+  body.classList.toggle('show');
+}
+
+/* ================================================================
+   TIMESTAMP
+   ================================================================ */
+(function setTimestamp() {
+  var d = new Date();
+  var opts = { year:'numeric', month:'short', day:'numeric', hour:'2-digit', minute:'2-digit', hour12:false };
+  document.getElementById('ts').textContent = 'Generated: ' + d.toLocaleDateString('en-US', opts);
+})();
+
+/* ================================================================
+   CHART HELPER: Common tooltip config
+   ================================================================ */
+function tooltipConfig(tc) {
+  return {
+    trigger: 'axis',
+    backgroundColor: tc.tooltipBg,
+    borderColor: tc.tooltipBorder,
+    textStyle: { color: tc.tooltipText, fontSize: 12 },
+    borderWidth: 1
+  };
+}
+
+function tooltipItemConfig(tc) {
+  return {
+    trigger: 'item',
+    backgroundColor: tc.tooltipBg,
+    borderColor: tc.tooltipBorder,
+    textStyle: { color: tc.tooltipText, fontSize: 12 },
+    borderWidth: 1
+  };
+}
+
+/* ================================================================
+   CHART: Line — Token Trend (14 Days)
+   ================================================================ */
+var lineChart;
+var lineDays = ['Jan 27','Jan 28','Jan 29','Jan 30','Jan 31','Feb 1','Feb 2','Feb 3','Feb 4','Feb 5','Feb 6','Feb 7','Feb 8','Feb 9'];
+var lineData1 = [320,280,350,410,390,450,480,420,510,490,530,550,520,580];
+var lineData2 = [180,200,170,220,240,210,260,250,280,270,300,310,290,330];
+var lineData3 = [90,100,85,110,120,105,130,125,140,135,150,155,145,160];
+
+function buildLineChart() {
+  var tc = getThemeColors();
+  if (!lineChart) {
+    lineChart = echarts.init(document.getElementById('chartLine'));
+    chartInstances.push(lineChart);
+  }
+  lineChart.setOption({
+    tooltip: tooltipConfig(tc),
+    legend: {
+      data: ['GPT-4o', 'Claude Opus', 'Gemini Pro'],
+      top: 4, right: 8,
+      textStyle: { color: tc.textSecondary, fontSize: 11 },
+      itemWidth: 14, itemHeight: 3
+    },
+    grid: { top: 40, right: 16, bottom: 32, left: 52 },
+    xAxis: {
+      type: 'category', data: lineDays, boundaryGap: false,
+      axisLine: { lineStyle: { color: tc.axisLine } },
+      axisLabel: { color: tc.textSecondary, fontSize: 10 },
+      axisTick: { show: false }
+    },
+    yAxis: {
+      type: 'value',
+      splitLine: { lineStyle: { color: tc.gridLine } },
+      axisLine: { show: false },
+      axisLabel: { color: tc.textSecondary, fontSize: 10, formatter: '{value}K' },
+      axisTick: { show: false }
+    },
+    series: [
+      {
+        name: 'GPT-4o', type: 'line', data: lineData1, smooth: true,
+        symbol: 'circle', symbolSize: 4,
+        lineStyle: { width: 2.5, color: tc.indigo },
+        itemStyle: { color: tc.indigo },
+        areaStyle: { color: new echarts.graphic.LinearGradient(0,0,0,1,[
+          { offset: 0, color: tc.indigo + '30' },
+          { offset: 1, color: tc.indigo + '05' }
+        ])}
+      },
+      {
+        name: 'Claude Opus', type: 'line', data: lineData2, smooth: true,
+        symbol: 'circle', symbolSize: 4,
+        lineStyle: { width: 2.5, color: tc.cyan },
+        itemStyle: { color: tc.cyan },
+        areaStyle: { color: new echarts.graphic.LinearGradient(0,0,0,1,[
+          { offset: 0, color: tc.cyan + '30' },
+          { offset: 1, color: tc.cyan + '05' }
+        ])}
+      },
+      {
+        name: 'Gemini Pro', type: 'line', data: lineData3, smooth: true,
+        symbol: 'circle', symbolSize: 4,
+        lineStyle: { width: 2.5, color: tc.emerald },
+        itemStyle: { color: tc.emerald },
+        areaStyle: { color: new echarts.graphic.LinearGradient(0,0,0,1,[
+          { offset: 0, color: tc.emerald + '30' },
+          { offset: 1, color: tc.emerald + '05' }
+        ])}
+      }
+    ]
+  }, true);
+}
+
+/* ================================================================
+   CHART: Donut — Mission Distribution
+   ================================================================ */
+var donutChart;
+function buildDonutChart() {
+  var tc = getThemeColors();
+  if (!donutChart) {
+    donutChart = echarts.init(document.getElementById('chartDonut'));
+    chartInstances.push(donutChart);
+  }
+  donutChart.setOption({
+    tooltip: tooltipItemConfig(tc),
+    legend: {
+      orient: 'vertical', right: 8, top: 'center',
+      textStyle: { color: tc.textSecondary, fontSize: 11 },
+      itemWidth: 10, itemHeight: 10, itemGap: 10
+    },
+    series: [{
+      type: 'pie',
+      radius: ['48%', '72%'],
+      center: ['38%', '50%'],
+      avoidLabelOverlap: true,
+      itemStyle: { borderRadius: 6, borderColor: tc.cardBg, borderWidth: 3 },
+      label: {
+        show: true,
+        position: 'outside',
+        color: tc.textSecondary,
+        fontSize: 11,
+        formatter: '{b}\n{d}%'
+      },
+      labelLine: { lineStyle: { color: tc.textSecondary }, length: 8, length2: 10 },
+      emphasis: {
+        label: { show: true, fontSize: 13, fontWeight: 'bold', color: tc.textPrimary },
+        itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0,0,0,0.3)' }
+      },
+      data: [
+        { value: 420, name: 'Research',   itemStyle: { color: tc.indigo } },
+        { value: 310, name: 'Code Gen',   itemStyle: { color: tc.cyan } },
+        { value: 215, name: 'Analysis',   itemStyle: { color: tc.emerald } },
+        { value: 180, name: 'Summarize',  itemStyle: { color: tc.amber } },
+        { value: 159, name: 'Other',      itemStyle: { color: tc.red } }
+      ]
+    }]
+  }, true);
+}
+
+/* ================================================================
+   CHART: Bar — Daily Cost (7 Days)
+   ================================================================ */
+var barChart;
+var barDays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+var barValues = [420, 380, 510, 470, 590, 320, 280];
+
+function buildBarChart() {
+  var tc = getThemeColors();
+  if (!barChart) {
+    barChart = echarts.init(document.getElementById('chartBar'));
+    chartInstances.push(barChart);
+  }
+  barChart.setOption({
+    tooltip: tooltipConfig(tc),
+    grid: { top: 24, right: 16, bottom: 32, left: 52 },
+    xAxis: {
+      type: 'category', data: barDays,
+      axisLine: { lineStyle: { color: tc.axisLine } },
+      axisLabel: { color: tc.textSecondary, fontSize: 11 },
+      axisTick: { show: false }
+    },
+    yAxis: {
+      type: 'value',
+      splitLine: { lineStyle: { color: tc.gridLine } },
+      axisLine: { show: false },
+      axisLabel: { color: tc.textSecondary, fontSize: 10, formatter: '${value}' },
+      axisTick: { show: false }
+    },
+    series: [{
+      type: 'bar',
+      data: barValues,
+      barWidth: '50%',
+      itemStyle: {
+        borderRadius: [6, 6, 0, 0],
+        color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+          { offset: 0, color: tc.indigo },
+          { offset: 1, color: tc.cyan }
+        ])
+      },
+      emphasis: {
+        itemStyle: {
+          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+            { offset: 0, color: tc.cyan },
+            { offset: 1, color: tc.indigo }
+          ])
+        }
+      },
+      label: {
+        show: true,
+        position: 'top',
+        color: tc.textSecondary,
+        fontSize: 11,
+        formatter: '${c}'
+      }
+    }]
+  }, true);
+}
+
+/* ================================================================
+   CHART: Heatmap — Activity Heatmap
+   ================================================================ */
+var heatmapChart;
+function buildHeatmapChart() {
+  var tc = getThemeColors();
+  if (!heatmapChart) {
+    heatmapChart = echarts.init(document.getElementById('chartHeatmap'));
+    chartInstances.push(heatmapChart);
+  }
+  var hours = ['00','04','08','12','16','20'];
+  var days  = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+  var data = [];
+  for (var i = 0; i < days.length; i++) {
+    for (var j = 0; j < hours.length; j++) {
+      data.push([j, i, Math.floor(Math.random() * 80 + 20)]);
+    }
+  }
+  // Fix random so it's deterministic across toggles
+  var fixedData = [
+    [0,0,45],[1,0,32],[2,0,78],[3,0,95],[4,0,62],[5,0,28],
+    [0,1,55],[1,1,42],[2,1,88],[3,1,72],[4,1,58],[5,1,35],
+    [0,2,38],[1,2,28],[2,2,92],[3,2,85],[4,2,70],[5,2,42],
+    [0,3,48],[1,3,35],[2,3,82],[3,3,90],[4,3,65],[5,3,30],
+    [0,4,52],[1,4,40],[2,4,96],[3,4,88],[4,4,75],[5,4,38],
+    [0,5,22],[1,5,18],[2,5,45],[3,5,40],[4,5,30],[5,5,20],
+    [0,6,18],[1,6,15],[2,6,38],[3,6,35],[4,6,25],[5,6,15]
+  ];
+
+  heatmapChart.setOption({
+    tooltip: {
+      trigger: 'item',
+      backgroundColor: tc.tooltipBg,
+      borderColor: tc.tooltipBorder,
+      textStyle: { color: tc.tooltipText, fontSize: 12 },
+      borderWidth: 1,
+      formatter: function(p) {
+        return days[p.value[1]] + ' ' + hours[p.value[0]] + ':00<br/>Requests: <strong>' + p.value[2] + '</strong>';
+      }
+    },
+    grid: { top: 8, right: 60, bottom: 32, left: 48 },
+    xAxis: {
+      type: 'category', data: hours,
+      axisLine: { lineStyle: { color: tc.axisLine } },
+      axisLabel: { color: tc.textSecondary, fontSize: 10, formatter: '{value}h' },
+      axisTick: { show: false },
+      splitArea: { show: false }
+    },
+    yAxis: {
+      type: 'category', data: days,
+      axisLine: { lineStyle: { color: tc.axisLine } },
+      axisLabel: { color: tc.textSecondary, fontSize: 10 },
+      axisTick: { show: false },
+      splitArea: { show: false }
+    },
+    visualMap: {
+      min: 15, max: 100,
+      calculable: false,
+      orient: 'vertical',
+      right: 4, top: 'center',
+      itemHeight: 180,
+      itemWidth: 12,
+      textStyle: { color: tc.textSecondary, fontSize: 10 },
+      inRange: {
+        color: [tc.heatmapMin, tc.heatmapMid, tc.heatmapMax]
+      }
+    },
+    series: [{
+      type: 'heatmap',
+      data: fixedData,
+      itemStyle: { borderColor: tc.cardBg, borderWidth: 3, borderRadius: 3 },
+      emphasis: {
+        itemStyle: { shadowBlur: 8, shadowColor: 'rgba(0,0,0,0.3)' }
+      }
+    }]
+  }, true);
+}
+
+/* ================================================================
+   CHART: Gauge — System Health
+   ================================================================ */
+var gaugeChart;
+function buildGaugeChart() {
+  var tc = getThemeColors();
+  if (!gaugeChart) {
+    gaugeChart = echarts.init(document.getElementById('chartGauge'));
+    chartInstances.push(gaugeChart);
+  }
+  gaugeChart.setOption({
+    series: [{
+      type: 'gauge',
+      startAngle: 220,
+      endAngle: -40,
+      center: ['50%', '55%'],
+      radius: '85%',
+      min: 0, max: 100,
+      splitNumber: 10,
+      axisLine: {
+        lineStyle: {
+          width: 18,
+          color: [
+            [0.3, tc.red],
+            [0.7, tc.amber],
+            [1,   tc.emerald]
+          ]
+        }
+      },
+      pointer: {
+        itemStyle: { color: tc.indigo },
+        width: 5,
+        length: '60%'
+      },
+      axisTick: {
+        distance: -18,
+        length: 6,
+        lineStyle: { color: tc.textSecondary, width: 1 }
+      },
+      splitLine: {
+        distance: -18,
+        length: 14,
+        lineStyle: { color: tc.textSecondary, width: 2 }
+      },
+      axisLabel: {
+        color: tc.textSecondary,
+        distance: 24,
+        fontSize: 10
+      },
+      detail: {
+        valueAnimation: true,
+        formatter: '{value}%',
+        fontSize: 26,
+        fontWeight: 700,
+        color: tc.textPrimary,
+        offsetCenter: [0, '70%']
+      },
+      title: {
+        offsetCenter: [0, '92%'],
+        fontSize: 12,
+        color: tc.textSecondary
+      },
+      data: [{ value: 87, name: 'Uptime' }]
+    }]
+  }, true);
+}
+
+/* ================================================================
+   TABLE: Recent Missions — Sortable
+   ================================================================ */
+var tableData = [
+  { id: 'MSN-4821', agent: 'ResearchBot',   model: 'GPT-4o',       tokens: 12480, cost: 4.12, latency: 320,  status: 'success' },
+  { id: 'MSN-4822', agent: 'CodeAssist',     model: 'Claude Opus',  tokens: 8940,  cost: 3.28, latency: 280,  status: 'success' },
+  { id: 'MSN-4823', agent: 'Analyzer',       model: 'Gemini Pro',   tokens: 15200, cost: 2.85, latency: 450,  status: 'warning' },
+  { id: 'MSN-4824', agent: 'Summarizer',     model: 'GPT-4o',       tokens: 6320,  cost: 2.08, latency: 190,  status: 'success' },
+  { id: 'MSN-4825', agent: 'ResearchBot',    model: 'Claude Opus',  tokens: 18700, cost: 6.87, latency: 520,  status: 'error' },
+  { id: 'MSN-4826', agent: 'CodeAssist',     model: 'GPT-4o',       tokens: 9100,  cost: 3.01, latency: 310,  status: 'success' },
+  { id: 'MSN-4827', agent: 'Orchestrator',   model: 'Claude Opus',  tokens: 22400, cost: 8.22, latency: 680,  status: 'info' },
+  { id: 'MSN-4828', agent: 'Analyzer',       model: 'Gemini Pro',   tokens: 7800,  cost: 1.46, latency: 240,  status: 'success' },
+  { id: 'MSN-4829', agent: 'Summarizer',     model: 'GPT-4o',       tokens: 5400,  cost: 1.78, latency: 170,  status: 'success' },
+  { id: 'MSN-4830', agent: 'ResearchBot',    model: 'Claude Opus',  tokens: 14300, cost: 5.25, latency: 410,  status: 'warning' }
+];
+
+var sortState = { col: null, asc: true };
+
+function renderTable() {
+  var tbody = document.getElementById('tableBody');
+  var html = '';
+  for (var i = 0; i < tableData.length; i++) {
+    var r = tableData[i];
+    html += '<tr>' +
+      '<td style="font-weight:600;color:var(--indigo)">' + r.id + '</td>' +
+      '<td>' + r.agent + '</td>' +
+      '<td>' + r.model + '</td>' +
+      '<td>' + r.tokens.toLocaleString() + '</td>' +
+      '<td>$' + r.cost.toFixed(2) + '</td>' +
+      '<td>' + r.latency + 'ms</td>' +
+      '<td><span class="status-badge ' + r.status + '">' + r.status + '</span></td>' +
+    '</tr>';
+  }
+  tbody.innerHTML = html;
+}
+
+function sortTable(col) {
+  var ths = document.querySelectorAll('#missionTable thead th');
+  ths.forEach(function(th) { th.classList.remove('sorted'); });
+
+  if (sortState.col === col) {
+    sortState.asc = !sortState.asc;
+  } else {
+    sortState.col = col;
+    sortState.asc = true;
+  }
+
+  var th = document.querySelector('th[data-col="' + col + '"]');
+  th.classList.add('sorted');
+  var arrow = th.querySelector('.sort-arrow');
+  arrow.innerHTML = sortState.asc ? '&#9650;' : '&#9660;';
+
+  tableData.sort(function(a, b) {
+    var va = a[col], vb = b[col];
+    if (typeof va === 'string') va = va.toLowerCase();
+    if (typeof vb === 'string') vb = vb.toLowerCase();
+    if (va < vb) return sortState.asc ? -1 : 1;
+    if (va > vb) return sortState.asc ? 1 : -1;
+    return 0;
+  });
+
+  renderTable();
+}
+
+/* ================================================================
+   INIT
+   ================================================================ */
+(function init() {
+  buildLineChart();
+  buildDonutChart();
+  buildBarChart();
+  buildHeatmapChart();
+  buildGaugeChart();
+  renderTable();
+
+  window.addEventListener('resize', function() {
+    chartInstances.forEach(function(c) { c.resize(); });
+  });
+})();
+</script>
+</body>
+</html>

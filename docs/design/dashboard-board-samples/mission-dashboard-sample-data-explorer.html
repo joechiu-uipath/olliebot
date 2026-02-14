@@ -1,0 +1,812 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Data Explorer — Interactive Table Analysis</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/tabulator-tables@6.3.1/dist/css/tabulator_midnight.min.css">
+<script src="https://cdn.jsdelivr.net/npm/tabulator-tables@6.3.1/dist/js/tabulator.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.6.0/dist/echarts.min.js"></script>
+<style>
+  /* ── Reset & Base ─────────────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'Helvetica Neue', Arial, sans-serif;
+    background: #0f1117;
+    color: #e0e0e0;
+    min-height: 100vh;
+    padding: 24px 32px 48px;
+    line-height: 1.5;
+  }
+
+  /* ── Layout helpers ───────────────────────────────────────── */
+  .card {
+    background: #1a1d27;
+    border: 1px solid #2a2d37;
+    border-radius: 10px;
+    padding: 20px 24px;
+    margin-bottom: 20px;
+  }
+  .row-flex {
+    display: flex;
+    gap: 20px;
+    flex-wrap: wrap;
+  }
+  .col-grow { flex: 1 1 0; min-width: 320px; }
+
+  /* ── Typography ───────────────────────────────────────────── */
+  h1 {
+    font-size: 1.75rem;
+    font-weight: 700;
+    color: #f0f0f0;
+    margin-bottom: 4px;
+  }
+  h2 {
+    font-size: 1.15rem;
+    font-weight: 600;
+    color: #e0e0e0;
+    margin-bottom: 14px;
+  }
+  .timestamp {
+    font-size: 0.82rem;
+    color: #8b8fa3;
+    margin-bottom: 10px;
+  }
+  .synopsis {
+    font-size: 0.92rem;
+    color: #8b8fa3;
+    max-width: 820px;
+    line-height: 1.6;
+  }
+
+  /* ── Instructions banner ──────────────────────────────────── */
+  .instructions {
+    background: linear-gradient(135deg, rgba(99,102,241,0.12), rgba(34,211,238,0.08));
+    border: 1px solid rgba(99,102,241,0.35);
+    border-radius: 10px;
+    padding: 16px 22px;
+    margin-bottom: 20px;
+    font-size: 0.88rem;
+    color: #c4c8e0;
+    line-height: 1.65;
+  }
+  .instructions strong {
+    color: #6366f1;
+    font-weight: 600;
+  }
+  .instructions .hint {
+    display: inline-block;
+    background: rgba(99,102,241,0.15);
+    border-radius: 4px;
+    padding: 1px 7px;
+    margin: 0 2px;
+    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+    font-size: 0.82rem;
+    color: #a5b4fc;
+  }
+
+  /* ── Toolbar ──────────────────────────────────────────────── */
+  .toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+    margin-bottom: 16px;
+  }
+  .toolbar button {
+    background: #23263a;
+    color: #c4c8e0;
+    border: 1px solid #2a2d37;
+    border-radius: 6px;
+    padding: 7px 16px;
+    font-size: 0.84rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .toolbar button:hover {
+    background: #2e3248;
+    border-color: #6366f1;
+    color: #e0e0e0;
+  }
+  .toolbar button.active {
+    background: rgba(99,102,241,0.18);
+    border-color: #6366f1;
+    color: #a5b4fc;
+  }
+  .toolbar .search-box {
+    margin-left: auto;
+    position: relative;
+  }
+  .toolbar .search-box input {
+    background: #23263a;
+    color: #e0e0e0;
+    border: 1px solid #2a2d37;
+    border-radius: 6px;
+    padding: 7px 14px 7px 34px;
+    font-size: 0.84rem;
+    width: 260px;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+  .toolbar .search-box input:focus {
+    border-color: #6366f1;
+  }
+  .toolbar .search-box input::placeholder { color: #5a5e72; }
+  .toolbar .search-box::before {
+    content: "\1F50D";
+    position: absolute;
+    left: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 0.82rem;
+    opacity: 0.5;
+    pointer-events: none;
+  }
+
+  /* ── Tabulator theme overrides (match #1a1d27 dark BI) ───── */
+  .tabulator {
+    background-color: #1a1d27 !important;
+    border: 1px solid #2a2d37 !important;
+    border-radius: 8px !important;
+    font-size: 0.84rem !important;
+    color: #e0e0e0 !important;
+  }
+  .tabulator .tabulator-header {
+    background-color: #1e2130 !important;
+    border-bottom: 2px solid #2a2d37 !important;
+    color: #c4c8e0 !important;
+  }
+  .tabulator .tabulator-header .tabulator-col {
+    background-color: #1e2130 !important;
+    border-right: 1px solid #2a2d37 !important;
+  }
+  .tabulator .tabulator-header .tabulator-col .tabulator-col-content {
+    padding: 8px 10px !important;
+  }
+  .tabulator .tabulator-header .tabulator-col .tabulator-col-title {
+    color: #c4c8e0 !important;
+    font-weight: 600 !important;
+  }
+  .tabulator .tabulator-header .tabulator-col.tabulator-sortable .tabulator-col-title {
+    padding-right: 20px !important;
+  }
+  .tabulator .tabulator-header .tabulator-col .tabulator-header-filter input,
+  .tabulator .tabulator-header .tabulator-col .tabulator-header-filter select {
+    background: #14161e !important;
+    color: #e0e0e0 !important;
+    border: 1px solid #2a2d37 !important;
+    border-radius: 4px !important;
+    padding: 3px 6px !important;
+    font-size: 0.78rem !important;
+    outline: none !important;
+  }
+  .tabulator .tabulator-header .tabulator-col .tabulator-header-filter input:focus,
+  .tabulator .tabulator-header .tabulator-col .tabulator-header-filter select:focus {
+    border-color: #6366f1 !important;
+  }
+  .tabulator .tabulator-tableholder {
+    background: #1a1d27 !important;
+  }
+  .tabulator .tabulator-row {
+    background-color: #1a1d27 !important;
+    border-bottom: 1px solid #22253000 !important;
+    color: #e0e0e0 !important;
+  }
+  .tabulator .tabulator-row:nth-child(even) {
+    background-color: #1e2130 !important;
+  }
+  .tabulator .tabulator-row:hover {
+    background-color: rgba(99,102,241,0.08) !important;
+  }
+  .tabulator .tabulator-row.tabulator-selected {
+    background-color: rgba(99,102,241,0.16) !important;
+  }
+  .tabulator .tabulator-row .tabulator-cell {
+    border-right: 1px solid #22253a !important;
+    padding: 7px 10px !important;
+  }
+  .tabulator .tabulator-row .tabulator-frozen {
+    background-color: inherit !important;
+  }
+  .tabulator .tabulator-footer {
+    background-color: #1e2130 !important;
+    border-top: 2px solid #2a2d37 !important;
+    color: #8b8fa3 !important;
+    padding: 6px 10px !important;
+  }
+  .tabulator .tabulator-footer .tabulator-page {
+    background: #23263a !important;
+    color: #c4c8e0 !important;
+    border: 1px solid #2a2d37 !important;
+    border-radius: 4px !important;
+    padding: 3px 10px !important;
+    margin: 0 2px !important;
+    font-size: 0.8rem !important;
+  }
+  .tabulator .tabulator-footer .tabulator-page:hover {
+    background: #2e3248 !important;
+    border-color: #6366f1 !important;
+  }
+  .tabulator .tabulator-footer .tabulator-page.active {
+    background: rgba(99,102,241,0.22) !important;
+    border-color: #6366f1 !important;
+    color: #a5b4fc !important;
+    font-weight: 600 !important;
+  }
+  .tabulator .tabulator-footer .tabulator-page-size {
+    background: #23263a !important;
+    color: #c4c8e0 !important;
+    border: 1px solid #2a2d37 !important;
+    border-radius: 4px !important;
+    font-size: 0.8rem !important;
+  }
+  /* Group headers */
+  .tabulator .tabulator-row.tabulator-group {
+    background: #161825 !important;
+    border-bottom: 1px solid #2a2d37 !important;
+    color: #a5b4fc !important;
+    font-weight: 600 !important;
+    padding: 8px 14px !important;
+    font-size: 0.88rem !important;
+    min-height: 0 !important;
+  }
+  .tabulator .tabulator-row.tabulator-group:hover {
+    background: #1c1f32 !important;
+    cursor: pointer;
+  }
+  .tabulator .tabulator-row.tabulator-group span {
+    color: #8b8fa3 !important;
+    font-weight: 400 !important;
+    margin-left: 8px;
+  }
+  /* Calcs row */
+  .tabulator .tabulator-row.tabulator-calcs {
+    background: #161825 !important;
+    border-top: 2px solid #2a2d37 !important;
+    font-weight: 600 !important;
+    color: #22d3ee !important;
+  }
+  .tabulator .tabulator-row.tabulator-calcs .tabulator-cell {
+    border-right-color: #22253a !important;
+  }
+  /* Column resize handle */
+  .tabulator .tabulator-header .tabulator-col .tabulator-col-resize-handle {
+    width: 6px !important;
+  }
+  /* Sort arrow overrides */
+  .tabulator .tabulator-header .tabulator-col.tabulator-sortable[aria-sort="ascending"] .tabulator-col-sorter .tabulator-arrow {
+    border-bottom-color: #6366f1 !important;
+  }
+  .tabulator .tabulator-header .tabulator-col.tabulator-sortable[aria-sort="descending"] .tabulator-col-sorter .tabulator-arrow {
+    border-top-color: #6366f1 !important;
+  }
+
+  /* ── Custom cell formatters ───────────────────────────────── */
+  .cell-mono {
+    font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+    font-size: 0.8rem;
+    color: #8b8fa3;
+  }
+  .badge {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 12px;
+    font-size: 0.76rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .badge-completed { background: rgba(16,185,129,0.15); color: #10b981; }
+  .badge-error     { background: rgba(244,63,94,0.15);  color: #f43f5e; }
+  .badge-timeout   { background: rgba(245,158,11,0.15); color: #f59e0b; }
+
+  .duration-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+  }
+  .duration-bar .bar-track {
+    flex: 1;
+    height: 6px;
+    background: #23263a;
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .duration-bar .bar-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.3s;
+  }
+  .duration-bar .bar-label {
+    font-size: 0.8rem;
+    min-width: 52px;
+    text-align: right;
+    font-family: 'SFMono-Regular', Consolas, monospace;
+  }
+
+  .progress-bar-cell {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .progress-bar-cell .track {
+    flex: 1;
+    height: 6px;
+    background: #23263a;
+    border-radius: 3px;
+    overflow: hidden;
+  }
+  .progress-bar-cell .fill {
+    height: 100%;
+    border-radius: 3px;
+    background: #10b981;
+  }
+  .progress-bar-cell .label {
+    font-size: 0.8rem;
+    min-width: 42px;
+    text-align: right;
+    font-family: 'SFMono-Regular', Consolas, monospace;
+    color: #e0e0e0;
+  }
+
+  /* ── Bottom grid: summary + chart ─────────────────────────── */
+  .bottom-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+  }
+  @media (max-width: 960px) {
+    .bottom-grid { grid-template-columns: 1fr; }
+  }
+  #chart-container {
+    width: 100%;
+    height: 340px;
+  }
+
+  /* ── Scrollbar styling ────────────────────────────────────── */
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: #0f1117; }
+  ::-webkit-scrollbar-thumb { background: #2a2d37; border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: #3a3d4a; }
+</style>
+</head>
+<body>
+
+<!-- ── Header ───────────────────────────────────────────────── -->
+<div class="card" style="margin-bottom:16px;">
+  <h1>Data Explorer &mdash; Interactive Table Analysis</h1>
+  <div class="timestamp" id="timestamp"></div>
+  <p class="synopsis">Full-featured data exploration using Tabulator. Sort, filter, group, resize columns, and export data interactively.</p>
+</div>
+
+<!-- ── Instructions ─────────────────────────────────────────── -->
+<div class="instructions">
+  <strong>Interactivity Guide:</strong>
+  <span class="hint">Click column headers</span> to sort. &nbsp;
+  <span class="hint">Type in header filter inputs</span> to filter. &nbsp;
+  <span class="hint">Drag column borders</span> to resize. &nbsp;
+  <span class="hint">Drag column headers</span> to reorder. &nbsp;
+  <span class="hint">Click group headers</span> to collapse/expand. &nbsp;
+  <span class="hint">Use the toolbar buttons</span> to export data.
+</div>
+
+<!-- ── Toolbar ──────────────────────────────────────────────── -->
+<div class="toolbar">
+  <button id="btn-csv" title="Export table as CSV">Export CSV</button>
+  <button id="btn-json" title="Export table as JSON">Export JSON</button>
+  <button id="btn-toggle-groups" title="Expand or collapse all groups">Collapse All Groups</button>
+  <div class="search-box">
+    <input type="text" id="global-search" placeholder="Search all columns...">
+  </div>
+</div>
+
+<!-- ── Main table ───────────────────────────────────────────── -->
+<div class="card" style="padding:0; overflow:hidden;">
+  <div id="main-table"></div>
+</div>
+
+<!-- ── Bottom section: summary table + chart ────────────────── -->
+<div class="bottom-grid">
+  <div class="card">
+    <h2>Agent Summary</h2>
+    <div id="summary-table"></div>
+  </div>
+  <div class="card">
+    <h2>Calls by Agent</h2>
+    <div id="chart-container"></div>
+  </div>
+</div>
+
+<script>
+// ── Timestamp ──────────────────────────────────────────────────
+document.getElementById("timestamp").textContent =
+  "Generated " + new Date().toLocaleString("en-US", {
+    weekday:"long", year:"numeric", month:"long", day:"numeric",
+    hour:"2-digit", minute:"2-digit", second:"2-digit"
+  });
+
+// ── Data generation ────────────────────────────────────────────
+const agents = [
+  { name: "Orchestrator",  emoji: "\uD83C\uDFAF" },
+  { name: "Coder",         emoji: "\uD83D\uDCBB" },
+  { name: "Reviewer",      emoji: "\uD83D\uDD0D" },
+  { name: "Planner",       emoji: "\uD83D\uDCCB" },
+  { name: "Researcher",    emoji: "\uD83D\uDCDA" },
+  { name: "Deployer",      emoji: "\uD83D\uDE80" }
+];
+const models = ["claude-opus-4-6", "claude-sonnet-4-5", "claude-haiku-4-5"];
+const workloads = ["main", "fast", "embedding"];
+const statuses = ["completed", "completed", "completed", "completed", "completed", "completed", "completed", "error", "timeout"];
+const stopReasons = ["end_turn", "end_turn", "end_turn", "max_tokens", "stop_sequence", "tool_use", "end_turn"];
+
+function seededRandom(seed) {
+  let s = seed;
+  return function() {
+    s = (s * 16807 + 0) % 2147483647;
+    return (s - 1) / 2147483646;
+  };
+}
+const rng = seededRandom(42);
+
+function randInt(min, max) { return Math.floor(rng() * (max - min + 1)) + min; }
+function pick(arr) { return arr[randInt(0, arr.length - 1)]; }
+
+function generateTimestamp(index) {
+  const base = new Date("2026-02-13T08:00:00Z");
+  base.setMinutes(base.getMinutes() + index * randInt(2, 18));
+  base.setSeconds(randInt(0, 59));
+  return base.toISOString().replace("T", " ").slice(0, 19);
+}
+
+const records = [];
+for (let i = 1; i <= 50; i++) {
+  const agent = pick(agents);
+  const model = pick(models);
+  const workload = pick(workloads);
+  const inputTokens = model === "claude-opus-4-6" ? randInt(800, 9200) :
+                      model === "claude-sonnet-4-5" ? randInt(400, 5500) :
+                      randInt(100, 2200);
+  const outputTokens = model === "claude-opus-4-6" ? randInt(200, 4800) :
+                       model === "claude-sonnet-4-5" ? randInt(100, 2800) :
+                       randInt(50, 900);
+  const duration = model === "claude-opus-4-6" ? randInt(350, 4200) :
+                   model === "claude-sonnet-4-5" ? randInt(180, 2600) :
+                   randInt(60, 800);
+  const costPer1k = model === "claude-opus-4-6" ? 0.015 :
+                    model === "claude-sonnet-4-5" ? 0.003 :
+                    0.00025;
+  const outputCostPer1k = model === "claude-opus-4-6" ? 0.075 :
+                          model === "claude-sonnet-4-5" ? 0.015 :
+                          0.00125;
+  const cost = parseFloat(((inputTokens / 1000) * costPer1k + (outputTokens / 1000) * outputCostPer1k).toFixed(4));
+  const status = pick(statuses);
+  const stopReason = status === "error" ? "error" : status === "timeout" ? "timeout" : pick(stopReasons);
+
+  records.push({
+    id: i,
+    timestamp: generateTimestamp(i),
+    agent: agent.name,
+    agentEmoji: agent.emoji,
+    model: model,
+    workload: workload,
+    inputTokens: inputTokens,
+    outputTokens: outputTokens,
+    duration: duration,
+    cost: cost,
+    status: status,
+    stopReason: stopReason
+  });
+}
+
+// ── Main Tabulator table ───────────────────────────────────────
+const mainTable = new Tabulator("#main-table", {
+  data: records,
+  height: "560px",
+  layout: "fitColumns",
+  movableColumns: true,
+  resizableColumns: true,
+  selectable: 1,
+  pagination: true,
+  paginationSize: 15,
+  paginationSizeSelector: [10, 15, 25, 50],
+  initialSort: [{ column: "timestamp", dir: "desc" }],
+  groupBy: "agent",
+  groupStartOpen: true,
+  groupToggleElement: "header",
+  groupHeader: function(value, count) {
+    const a = agents.find(x => x.name === value);
+    const emoji = a ? a.emoji : "";
+    return emoji + " " + value + " <span>(" + count + " records)</span>";
+  },
+  columnCalcs: "both",
+  columns: [
+    {
+      title: "ID", field: "id", width: 62, frozen: true, hozAlign: "center",
+      headerSort: true,
+      formatter: function(cell) {
+        return "<span class='cell-mono'>" + String(cell.getValue()).padStart(3, "0") + "</span>";
+      }
+    },
+    {
+      title: "Timestamp", field: "timestamp", width: 175, headerSort: true,
+      headerFilter: "input",
+      formatter: function(cell) {
+        return "<span style='font-size:0.82rem;'>" + cell.getValue() + "</span>";
+      }
+    },
+    {
+      title: "Agent", field: "agent", width: 140, headerSort: true,
+      headerFilter: "list",
+      headerFilterParams: { values: agents.map(a => a.name), clearable: true },
+      formatter: function(cell) {
+        const row = cell.getRow().getData();
+        return row.agentEmoji + " " + cell.getValue();
+      }
+    },
+    {
+      title: "Model", field: "model", width: 170, headerSort: true,
+      headerFilter: "list",
+      headerFilterParams: { values: models, clearable: true },
+      formatter: function(cell) {
+        const v = cell.getValue();
+        const colors = {
+          "claude-opus-4-6": "#6366f1",
+          "claude-sonnet-4-5": "#22d3ee",
+          "claude-haiku-4-5": "#10b981"
+        };
+        return "<span style='color:" + (colors[v] || "#e0e0e0") + "; font-size:0.82rem;'>" + v + "</span>";
+      }
+    },
+    {
+      title: "Workload", field: "workload", width: 115, headerSort: true,
+      headerFilter: "list",
+      headerFilterParams: { values: workloads, clearable: true }
+    },
+    {
+      title: "Input Tokens", field: "inputTokens", width: 125, hozAlign: "right",
+      headerSort: true, headerFilter: "input",
+      formatter: function(cell) {
+        return cell.getValue().toLocaleString();
+      },
+      bottomCalc: "sum",
+      bottomCalcFormatter: function(cell) {
+        return "\u03A3 " + cell.getValue().toLocaleString();
+      }
+    },
+    {
+      title: "Output Tokens", field: "outputTokens", width: 130, hozAlign: "right",
+      headerSort: true, headerFilter: "input",
+      formatter: function(cell) {
+        return cell.getValue().toLocaleString();
+      },
+      bottomCalc: "sum",
+      bottomCalcFormatter: function(cell) {
+        return "\u03A3 " + cell.getValue().toLocaleString();
+      }
+    },
+    {
+      title: "Duration (ms)", field: "duration", width: 175, hozAlign: "right",
+      headerSort: true, headerFilter: "input",
+      formatter: function(cell) {
+        const v = cell.getValue();
+        const max = 4500;
+        const pct = Math.min(v / max * 100, 100);
+        const color = v < 500 ? "#10b981" : v <= 2000 ? "#f59e0b" : "#f43f5e";
+        return "<div class='duration-bar'>" +
+          "<div class='bar-track'><div class='bar-fill' style='width:" + pct + "%;background:" + color + ";'></div></div>" +
+          "<div class='bar-label' style='color:" + color + ";'>" + v.toLocaleString() + "</div></div>";
+      },
+      bottomCalc: "avg",
+      bottomCalcFormatter: function(cell) {
+        return "\u03BC " + Math.round(cell.getValue()).toLocaleString() + " ms";
+      }
+    },
+    {
+      title: "Cost ($)", field: "cost", width: 105, hozAlign: "right",
+      headerSort: true, headerFilter: "input",
+      formatter: function(cell) {
+        return "$" + cell.getValue().toFixed(4);
+      },
+      bottomCalc: "sum",
+      bottomCalcFormatter: function(cell) {
+        return "\u03A3 $" + cell.getValue().toFixed(4);
+      }
+    },
+    {
+      title: "Status", field: "status", width: 115, hozAlign: "center",
+      headerSort: true,
+      headerFilter: "list",
+      headerFilterParams: { values: ["completed", "error", "timeout"], clearable: true },
+      formatter: function(cell) {
+        const v = cell.getValue();
+        const cls = v === "completed" ? "badge-completed" : v === "error" ? "badge-error" : "badge-timeout";
+        return "<span class='badge " + cls + "'>" + v + "</span>";
+      }
+    },
+    {
+      title: "Stop Reason", field: "stopReason", width: 130, headerSort: true,
+      headerFilter: "input",
+      formatter: function(cell) {
+        return "<span style='font-size:0.82rem; color:#8b8fa3;'>" + cell.getValue() + "</span>";
+      }
+    }
+  ]
+});
+
+// ── Toolbar actions ────────────────────────────────────────────
+document.getElementById("btn-csv").addEventListener("click", function() {
+  mainTable.download("csv", "llm-call-records.csv");
+});
+
+document.getElementById("btn-json").addEventListener("click", function() {
+  mainTable.download("json", "llm-call-records.json");
+});
+
+let groupsExpanded = true;
+const toggleBtn = document.getElementById("btn-toggle-groups");
+toggleBtn.addEventListener("click", function() {
+  if (groupsExpanded) {
+    mainTable.getGroups().forEach(g => g.hide());
+    toggleBtn.textContent = "Expand All Groups";
+    toggleBtn.classList.add("active");
+  } else {
+    mainTable.getGroups().forEach(g => g.show());
+    toggleBtn.textContent = "Collapse All Groups";
+    toggleBtn.classList.remove("active");
+  }
+  groupsExpanded = !groupsExpanded;
+});
+
+// Global search
+document.getElementById("global-search").addEventListener("input", function(e) {
+  const term = e.target.value.toLowerCase();
+  if (!term) {
+    mainTable.clearFilter();
+    return;
+  }
+  mainTable.setFilter(function(data) {
+    return Object.values(data).some(function(val) {
+      return String(val).toLowerCase().indexOf(term) !== -1;
+    });
+  });
+});
+
+// ── Agent summary data ─────────────────────────────────────────
+const summaryData = agents.map(function(a) {
+  const rows = records.filter(r => r.agent === a.name);
+  const total = rows.length;
+  const success = rows.filter(r => r.status === "completed").length;
+  const successRate = total > 0 ? parseFloat((success / total * 100).toFixed(1)) : 0;
+  const avgDuration = total > 0 ? Math.round(rows.reduce((s, r) => s + r.duration, 0) / total) : 0;
+  const totalCost = parseFloat(rows.reduce((s, r) => s + r.cost, 0).toFixed(4));
+  return {
+    agent: a.name,
+    agentEmoji: a.emoji,
+    totalCalls: total,
+    successRate: successRate,
+    avgDuration: avgDuration,
+    totalCost: totalCost
+  };
+});
+
+// ── Summary Tabulator table ────────────────────────────────────
+new Tabulator("#summary-table", {
+  data: summaryData,
+  layout: "fitColumns",
+  resizableColumns: true,
+  columns: [
+    {
+      title: "Agent", field: "agent", widthGrow: 1.5, headerSort: true,
+      formatter: function(cell) {
+        const row = cell.getRow().getData();
+        return row.agentEmoji + " " + cell.getValue();
+      }
+    },
+    {
+      title: "Total Calls", field: "totalCalls", hozAlign: "center", widthGrow: 1,
+      headerSort: true,
+      formatter: function(cell) {
+        return "<span style='font-weight:600; color:#e0e0e0;'>" + cell.getValue() + "</span>";
+      }
+    },
+    {
+      title: "Success Rate", field: "successRate", widthGrow: 1.8, headerSort: true,
+      formatter: function(cell) {
+        const v = cell.getValue();
+        const color = v >= 90 ? "#10b981" : v >= 70 ? "#f59e0b" : "#f43f5e";
+        return "<div class='progress-bar-cell'>" +
+          "<div class='track'><div class='fill' style='width:" + v + "%; background:" + color + ";'></div></div>" +
+          "<div class='label' style='color:" + color + ";'>" + v + "%</div></div>";
+      }
+    },
+    {
+      title: "Avg Duration", field: "avgDuration", hozAlign: "right", widthGrow: 1,
+      headerSort: true,
+      formatter: function(cell) {
+        return cell.getValue().toLocaleString() + " ms";
+      }
+    },
+    {
+      title: "Total Cost", field: "totalCost", hozAlign: "right", widthGrow: 1,
+      headerSort: true,
+      formatter: function(cell) {
+        return "$" + cell.getValue().toFixed(4);
+      }
+    }
+  ]
+});
+
+// ── ECharts bar chart ──────────────────────────────────────────
+const chartDom = document.getElementById("chart-container");
+const chart = echarts.init(chartDom);
+
+const sortedSummary = summaryData.slice().sort((a, b) => a.totalCalls - b.totalCalls);
+const agentNames = sortedSummary.map(d => d.agentEmoji + " " + d.agent);
+const agentCounts = sortedSummary.map(d => d.totalCalls);
+
+const barColors = ["#6366f1", "#22d3ee", "#10b981", "#f59e0b", "#f43f5e", "#a78bfa"];
+
+chart.setOption({
+  backgroundColor: "transparent",
+  tooltip: {
+    trigger: "axis",
+    axisPointer: { type: "shadow" },
+    backgroundColor: "#1a1d27",
+    borderColor: "#2a2d37",
+    textStyle: { color: "#e0e0e0", fontSize: 13 },
+    formatter: function(params) {
+      const d = params[0];
+      return "<strong>" + d.name + "</strong><br/>Calls: <span style='color:#22d3ee;font-weight:600;'>" + d.value + "</span>";
+    }
+  },
+  grid: {
+    left: 130,
+    right: 40,
+    top: 20,
+    bottom: 30
+  },
+  xAxis: {
+    type: "value",
+    axisLine: { lineStyle: { color: "#2a2d37" } },
+    axisTick: { show: false },
+    axisLabel: { color: "#8b8fa3", fontSize: 12 },
+    splitLine: { lineStyle: { color: "#22253a", type: "dashed" } }
+  },
+  yAxis: {
+    type: "category",
+    data: agentNames,
+    axisLine: { lineStyle: { color: "#2a2d37" } },
+    axisTick: { show: false },
+    axisLabel: { color: "#c4c8e0", fontSize: 13 }
+  },
+  series: [{
+    type: "bar",
+    data: agentCounts.map(function(v, i) {
+      return {
+        value: v,
+        itemStyle: {
+          color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [
+            { offset: 0, color: barColors[i % barColors.length] },
+            { offset: 1, color: barColors[i % barColors.length] + "99" }
+          ]),
+          borderRadius: [0, 4, 4, 0]
+        }
+      };
+    }),
+    barWidth: 22,
+    label: {
+      show: true,
+      position: "right",
+      color: "#c4c8e0",
+      fontSize: 13,
+      fontWeight: 600
+    }
+  }]
+});
+
+window.addEventListener("resize", function() { chart.resize(); });
+</script>
+</body>
+</html>

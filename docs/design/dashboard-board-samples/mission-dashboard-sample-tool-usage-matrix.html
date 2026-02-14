@@ -1,0 +1,745 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tool Usage Matrix — Agent × Tool Interaction Analysis</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.6.0/dist/echarts.min.js"></script>
+<style>
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+  :root {
+    --bg: #0f1117;
+    --card: #1a1d27;
+    --border: #2a2d37;
+    --text: #e0e0e0;
+    --muted: #8b8fa3;
+    --accent-native: #6366f1;
+    --accent-mcp: #10b981;
+    --accent-user: #f59e0b;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    line-height: 1.6;
+    padding: 24px;
+    min-height: 100vh;
+  }
+
+  .dashboard {
+    max-width: 1440px;
+    margin: 0 auto;
+  }
+
+  /* Header */
+  .header {
+    margin-bottom: 28px;
+  }
+  .header h1 {
+    font-size: 1.65rem;
+    font-weight: 700;
+    color: var(--text);
+    letter-spacing: -0.02em;
+  }
+  .header-meta {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-top: 6px;
+    flex-wrap: wrap;
+  }
+  .timestamp {
+    font-size: 0.8rem;
+    color: var(--muted);
+    background: var(--card);
+    border: 1px solid var(--border);
+    padding: 3px 10px;
+    border-radius: 4px;
+  }
+  .synopsis {
+    font-size: 0.88rem;
+    color: var(--muted);
+    margin-top: 8px;
+    max-width: 800px;
+  }
+
+  /* Interactivity hint */
+  .interaction-hint {
+    background: linear-gradient(135deg, rgba(99,102,241,0.08), rgba(16,185,129,0.06));
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent-native);
+    border-radius: 6px;
+    padding: 12px 18px;
+    margin-bottom: 24px;
+    font-size: 0.82rem;
+    color: var(--muted);
+  }
+  .interaction-hint strong {
+    color: var(--text);
+    font-weight: 600;
+  }
+
+  /* KPI row */
+  .kpi-row {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+  .kpi-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+    text-align: center;
+    transition: transform 0.2s, border-color 0.2s;
+  }
+  .kpi-card:hover {
+    transform: translateY(-2px);
+    border-color: var(--accent-native);
+  }
+  .kpi-label {
+    font-size: 0.75rem;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 6px;
+  }
+  .kpi-value {
+    font-size: 1.85rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+  }
+  .kpi-value.native  { color: var(--accent-native); }
+  .kpi-value.mcp     { color: var(--accent-mcp); }
+  .kpi-value.user    { color: var(--accent-user); }
+  .kpi-value.default { color: var(--text); }
+  .kpi-sub {
+    font-size: 0.72rem;
+    color: var(--muted);
+    margin-top: 2px;
+  }
+
+  /* Cards / chart containers */
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px 24px;
+    margin-bottom: 20px;
+  }
+  .card-title {
+    font-size: 0.95rem;
+    font-weight: 600;
+    margin-bottom: 14px;
+    color: var(--text);
+  }
+  .card-title .dot {
+    display: inline-block;
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    margin-right: 8px;
+    vertical-align: middle;
+  }
+
+  /* Chart sizing */
+  .chart-full   { width: 100%; height: 460px; }
+  .chart-half   { width: 100%; height: 400px; }
+
+  /* Grid layouts */
+  .grid-2 {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+  }
+  .grid-3-1 {
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    gap: 20px;
+  }
+
+  /* Responsive */
+  @media (max-width: 1024px) {
+    .kpi-row { grid-template-columns: repeat(3, 1fr); }
+    .grid-2, .grid-3-1 { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 640px) {
+    body { padding: 12px; }
+    .kpi-row { grid-template-columns: repeat(2, 1fr); }
+    .header h1 { font-size: 1.25rem; }
+  }
+</style>
+</head>
+<body>
+<div class="dashboard">
+
+  <!-- Header -->
+  <div class="header">
+    <h1>Tool Usage Matrix &mdash; Agent &times; Tool Interaction Analysis</h1>
+    <div class="header-meta">
+      <span class="timestamp">Generated 2026-02-13 09:42:18 UTC</span>
+      <span class="timestamp">Mission Window: 24 h rolling</span>
+    </div>
+    <p class="synopsis">Comprehensive view of tool utilization patterns across all agents, including success rates and execution times.</p>
+  </div>
+
+  <!-- Interactivity instructions -->
+  <div class="interaction-hint">
+    <strong>Interactive Controls:</strong> Hover heatmap cells for exact counts. Click bars to highlight agent. Legend toggles tool sources.
+  </div>
+
+  <!-- KPI Cards -->
+  <div class="kpi-row">
+    <div class="kpi-card">
+      <div class="kpi-label">Total Tool Calls</div>
+      <div class="kpi-value native">1,247</div>
+      <div class="kpi-sub">across all agents</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Unique Tools Used</div>
+      <div class="kpi-value default">18</div>
+      <div class="kpi-sub">native + mcp + user</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Avg Calls / Mission</div>
+      <div class="kpi-value mcp">52</div>
+      <div class="kpi-sub">24 missions sampled</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Tool Success Rate</div>
+      <div class="kpi-value mcp">96.8%</div>
+      <div class="kpi-sub">1,207 / 1,247 succeeded</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Avg Tool Duration</div>
+      <div class="kpi-value user">340ms</div>
+      <div class="kpi-sub">p95 = 1,120 ms</div>
+    </div>
+  </div>
+
+  <!-- Heatmap (full width) -->
+  <div class="card">
+    <div class="card-title"><span class="dot" style="background:var(--accent-native)"></span>Agent &times; Tool Usage Matrix</div>
+    <div id="heatmap" class="chart-full"></div>
+  </div>
+
+  <!-- Row: horizontal bar + donut -->
+  <div class="grid-3-1">
+    <div class="card">
+      <div class="card-title"><span class="dot" style="background:var(--accent-mcp)"></span>Top 15 Tools by Invocation Count</div>
+      <div id="barTop15" class="chart-half"></div>
+    </div>
+    <div class="card">
+      <div class="card-title"><span class="dot" style="background:var(--accent-user)"></span>Tool Calls by Source</div>
+      <div id="pieSource" class="chart-half"></div>
+    </div>
+  </div>
+
+  <!-- Row: stacked bar + dual axis -->
+  <div class="grid-2">
+    <div class="card">
+      <div class="card-title"><span class="dot" style="background:var(--accent-native)"></span>Tool Usage by Agent</div>
+      <div id="stackedBar" class="chart-half"></div>
+    </div>
+    <div class="card">
+      <div class="card-title"><span class="dot" style="background:var(--accent-mcp)"></span>Tool Success Rate vs Avg Duration</div>
+      <div id="dualAxis" class="chart-half"></div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ──────────────────────────────────────
+// Shared palette & helpers
+// ──────────────────────────────────────
+const NATIVE  = '#6366f1';
+const MCP     = '#10b981';
+const USER    = '#f59e0b';
+const BG      = '#0f1117';
+const CARD    = '#1a1d27';
+const BORDER  = '#2a2d37';
+const TEXT    = '#e0e0e0';
+const MUTED   = '#8b8fa3';
+
+const agents = ['Supervisor', 'MissionLead', 'Coder', 'Researcher', 'Reviewer', 'DataAnalyst'];
+const tools  = ['Read', 'Edit', 'Write', 'Bash', 'Grep', 'Glob', 'WebFetch', 'db_query', 'github_pr', 'screenshot', 'mcp_slack', 'run_test'];
+
+const toolSource = {
+  Read: 'native', Edit: 'native', Write: 'native', Bash: 'native',
+  Grep: 'native', Glob: 'native', WebFetch: 'native',
+  db_query: 'mcp', github_pr: 'mcp', screenshot: 'mcp', mcp_slack: 'mcp',
+  run_test: 'user'
+};
+
+function sourceColor(tool) {
+  const s = toolSource[tool];
+  return s === 'native' ? NATIVE : s === 'mcp' ? MCP : USER;
+}
+
+// Heatmap raw data [toolIndex, agentIndex, count]
+const heatRaw = [
+  // Supervisor
+  [0,0,38],[1,0,5],[2,0,3],[3,0,22],[4,0,12],[5,0,8],[6,0,4],[7,0,2],[8,0,6],[9,0,1],[10,0,14],[11,0,3],
+  // MissionLead
+  [0,1,42],[1,1,8],[2,1,6],[3,1,30],[4,1,18],[5,1,14],[6,1,10],[7,1,5],[8,1,12],[9,1,3],[10,1,18],[11,1,6],
+  // Coder
+  [0,2,86],[1,2,74],[2,2,52],[3,2,68],[4,2,45],[5,2,38],[6,2,6],[7,2,3],[8,2,22],[9,2,2],[10,2,4],[11,2,34],
+  // Researcher
+  [0,3,62],[1,3,4],[2,3,12],[3,3,18],[4,3,35],[5,3,28],[6,3,48],[7,3,32],[8,3,2],[9,3,8],[10,3,6],[11,3,2],
+  // Reviewer
+  [0,4,54],[1,4,12],[2,4,8],[3,4,14],[4,4,32],[5,4,22],[6,4,4],[7,4,1],[8,4,18],[9,4,12],[10,4,3],[11,4,16],
+  // DataAnalyst
+  [0,5,28],[1,5,6],[2,5,14],[3,5,24],[4,5,20],[5,5,16],[6,5,18],[7,5,42],[8,5,1],[9,5,4],[10,5,2],[11,5,8]
+];
+
+// Success rates per tool (for tooltips)
+const toolSuccessRate = {
+  Read: 99.2, Edit: 94.8, Write: 97.1, Bash: 93.6,
+  Grep: 99.5, Glob: 99.8, WebFetch: 88.4, db_query: 95.2,
+  github_pr: 97.6, screenshot: 91.3, mcp_slack: 98.1, run_test: 92.7
+};
+
+// Avg duration per tool
+const toolDuration = {
+  Read: 120, Edit: 280, Write: 210, Bash: 890,
+  Grep: 95, Glob: 65, WebFetch: 1420, db_query: 540,
+  github_pr: 380, screenshot: 620, mcp_slack: 190, run_test: 760
+};
+
+// ──────────────────────────────────────
+// 1. Heatmap
+// ──────────────────────────────────────
+(function() {
+  const chart = echarts.init(document.getElementById('heatmap'));
+
+  const maxVal = Math.max(...heatRaw.map(d => d[2]));
+
+  const option = {
+    backgroundColor: 'transparent',
+    tooltip: {
+      backgroundColor: '#1e2130',
+      borderColor: BORDER,
+      textStyle: { color: TEXT, fontSize: 12 },
+      formatter: function(p) {
+        const tool = tools[p.data[0]];
+        const agent = agents[p.data[1]];
+        const count = p.data[2];
+        const sr = toolSuccessRate[tool];
+        return '<b>' + agent + '</b> &rarr; <b>' + tool + '</b><br/>' +
+               'Invocations: <b style="color:' + NATIVE + '">' + count + '</b><br/>' +
+               'Success Rate: <b style="color:' + MCP + '">' + sr + '%</b>';
+      }
+    },
+    grid: { left: 110, right: 80, top: 20, bottom: 70 },
+    xAxis: {
+      type: 'category',
+      data: tools,
+      splitArea: { show: true, areaStyle: { color: ['rgba(99,102,241,0.02)', 'rgba(99,102,241,0.04)'] } },
+      axisLabel: { color: MUTED, fontSize: 11, rotate: 35 },
+      axisLine: { lineStyle: { color: BORDER } },
+      axisTick: { show: false }
+    },
+    yAxis: {
+      type: 'category',
+      data: agents,
+      axisLabel: { color: MUTED, fontSize: 11 },
+      axisLine: { lineStyle: { color: BORDER } },
+      axisTick: { show: false }
+    },
+    visualMap: {
+      min: 0,
+      max: maxVal,
+      calculable: true,
+      orient: 'horizontal',
+      left: 'center',
+      bottom: 0,
+      inRange: {
+        color: ['#1a1d27', '#312e81', '#4338ca', '#6366f1', '#818cf8', '#a5b4fc']
+      },
+      textStyle: { color: MUTED },
+      handleStyle: { borderColor: NATIVE }
+    },
+    series: [{
+      name: 'Tool Calls',
+      type: 'heatmap',
+      data: heatRaw,
+      label: {
+        show: true,
+        color: TEXT,
+        fontSize: 11,
+        fontWeight: 500
+      },
+      emphasis: {
+        itemStyle: { shadowBlur: 10, shadowColor: 'rgba(99,102,241,0.5)' }
+      },
+      itemStyle: {
+        borderWidth: 2,
+        borderColor: CARD,
+        borderRadius: 3
+      }
+    }],
+    animationDuration: 1200,
+    animationEasing: 'cubicOut'
+  };
+
+  chart.setOption(option);
+  window.addEventListener('resize', () => chart.resize());
+})();
+
+// ──────────────────────────────────────
+// 2. Top 15 Tools — Horizontal Bar
+// ──────────────────────────────────────
+(function() {
+  const chart = echarts.init(document.getElementById('barTop15'));
+
+  // Aggregate counts per tool
+  const toolTotals = {};
+  tools.forEach(t => toolTotals[t] = 0);
+  heatRaw.forEach(d => { toolTotals[tools[d[0]]] += d[2]; });
+
+  // Add some extra tools to reach 15
+  const extraTools = {
+    'NotebookEdit': { count: 24, source: 'native' },
+    'TodoWrite': { count: 18, source: 'native' },
+    'mcp_jira': { count: 15, source: 'mcp' }
+  };
+
+  let barData = tools.map(t => ({ name: t, value: toolTotals[t], source: toolSource[t] }));
+  Object.entries(extraTools).forEach(([k, v]) => {
+    barData.push({ name: k, value: v.count, source: v.source });
+  });
+  barData.sort((a, b) => a.value - b.value);  // ascending for horizontal bar
+
+  const option = {
+    backgroundColor: 'transparent',
+    tooltip: {
+      backgroundColor: '#1e2130',
+      borderColor: BORDER,
+      textStyle: { color: TEXT, fontSize: 12 },
+      formatter: function(p) {
+        const src = p.data.source;
+        const sColor = src === 'native' ? NATIVE : src === 'mcp' ? MCP : USER;
+        return '<b>' + p.name + '</b><br/>Invocations: <b style="color:' + sColor + '">' + p.value + '</b><br/>Source: ' + src;
+      }
+    },
+    grid: { left: 110, right: 70, top: 10, bottom: 20 },
+    xAxis: {
+      type: 'value',
+      axisLabel: { color: MUTED, fontSize: 11 },
+      axisLine: { lineStyle: { color: BORDER } },
+      splitLine: { lineStyle: { color: BORDER, type: 'dashed' } }
+    },
+    yAxis: {
+      type: 'category',
+      data: barData.map(d => d.name),
+      axisLabel: { color: MUTED, fontSize: 11 },
+      axisLine: { lineStyle: { color: BORDER } },
+      axisTick: { show: false }
+    },
+    series: [{
+      type: 'bar',
+      data: barData.map(d => ({
+        value: d.value,
+        source: d.source,
+        itemStyle: {
+          color: d.source === 'native' ? NATIVE : d.source === 'mcp' ? MCP : USER,
+          borderRadius: [0, 4, 4, 0]
+        }
+      })),
+      barWidth: '60%',
+      label: {
+        show: true,
+        position: 'right',
+        color: MUTED,
+        fontSize: 11,
+        fontWeight: 600,
+        formatter: '{c}'
+      },
+      emphasis: {
+        itemStyle: { shadowBlur: 8, shadowColor: 'rgba(99,102,241,0.4)' }
+      }
+    }],
+    animationDuration: 1400,
+    animationEasing: 'elasticOut'
+  };
+
+  chart.setOption(option);
+  window.addEventListener('resize', () => chart.resize());
+})();
+
+// ──────────────────────────────────────
+// 3. Pie / Donut — Tool Calls by Source
+// ──────────────────────────────────────
+(function() {
+  const chart = echarts.init(document.getElementById('pieSource'));
+
+  const option = {
+    backgroundColor: 'transparent',
+    tooltip: {
+      backgroundColor: '#1e2130',
+      borderColor: BORDER,
+      textStyle: { color: TEXT, fontSize: 12 },
+      formatter: '{b}: {c}% ({d}%)'
+    },
+    legend: {
+      orient: 'horizontal',
+      bottom: 10,
+      textStyle: { color: MUTED, fontSize: 11 },
+      itemWidth: 12,
+      itemHeight: 12,
+      itemGap: 20
+    },
+    series: [{
+      type: 'pie',
+      radius: ['48%', '72%'],
+      center: ['50%', '45%'],
+      avoidLabelOverlap: true,
+      itemStyle: {
+        borderRadius: 6,
+        borderColor: CARD,
+        borderWidth: 3
+      },
+      label: {
+        show: true,
+        color: TEXT,
+        fontSize: 12,
+        fontWeight: 600,
+        formatter: function(p) {
+          return '{name|' + p.name + '}\n{pct|' + p.value + '%}';
+        },
+        rich: {
+          name: { fontSize: 12, color: MUTED, lineHeight: 20 },
+          pct: { fontSize: 18, fontWeight: 700, color: TEXT, lineHeight: 26 }
+        }
+      },
+      labelLine: {
+        lineStyle: { color: BORDER, width: 1.5 },
+        length: 15,
+        length2: 20
+      },
+      emphasis: {
+        scaleSize: 8,
+        itemStyle: { shadowBlur: 16, shadowColor: 'rgba(99,102,241,0.35)' }
+      },
+      data: [
+        { value: 72, name: 'Native', itemStyle: { color: NATIVE } },
+        { value: 21, name: 'MCP',    itemStyle: { color: MCP } },
+        { value: 7,  name: 'User',   itemStyle: { color: USER } }
+      ]
+    }],
+    animationDuration: 1200,
+    animationEasing: 'cubicOut'
+  };
+
+  chart.setOption(option);
+  window.addEventListener('resize', () => chart.resize());
+})();
+
+// ──────────────────────────────────────
+// 4. Stacked Bar — Tool Usage by Agent
+// ──────────────────────────────────────
+(function() {
+  const chart = echarts.init(document.getElementById('stackedBar'));
+
+  // Top 8 tools by total count
+  const toolTotals = {};
+  tools.forEach(t => toolTotals[t] = 0);
+  heatRaw.forEach(d => { toolTotals[tools[d[0]]] += d[2]; });
+
+  const sorted = Object.entries(toolTotals).sort((a, b) => b[1] - a[1]);
+  const top8 = sorted.slice(0, 8).map(e => e[0]);
+  const otherTools = sorted.slice(8).map(e => e[0]);
+
+  // Build per-agent data
+  const agentToolMap = {};
+  agents.forEach(a => { agentToolMap[a] = {}; tools.forEach(t => agentToolMap[a][t] = 0); });
+  heatRaw.forEach(d => { agentToolMap[agents[d[1]]][tools[d[0]]] = d[2]; });
+
+  const stackColors = [NATIVE, '#818cf8', '#a5b4fc', MCP, '#34d399', '#6ee7b7', USER, '#fbbf24', MUTED];
+
+  const series = top8.map((tool, i) => ({
+    name: tool,
+    type: 'bar',
+    stack: 'tools',
+    barWidth: '55%',
+    emphasis: { focus: 'series' },
+    itemStyle: { color: stackColors[i], borderRadius: i === top8.length - 1 ? [3, 3, 0, 0] : 0 },
+    data: agents.map(a => agentToolMap[a][tool])
+  }));
+
+  // "Other" group
+  series.push({
+    name: 'Other',
+    type: 'bar',
+    stack: 'tools',
+    barWidth: '55%',
+    emphasis: { focus: 'series' },
+    itemStyle: { color: '#4a4e69', borderRadius: [3, 3, 0, 0] },
+    data: agents.map(a => otherTools.reduce((sum, t) => sum + agentToolMap[a][t], 0))
+  });
+
+  const option = {
+    backgroundColor: 'transparent',
+    tooltip: {
+      backgroundColor: '#1e2130',
+      borderColor: BORDER,
+      textStyle: { color: TEXT, fontSize: 12 },
+      trigger: 'axis',
+      axisPointer: { type: 'shadow' }
+    },
+    legend: {
+      bottom: 0,
+      textStyle: { color: MUTED, fontSize: 10 },
+      itemWidth: 12,
+      itemHeight: 12,
+      itemGap: 12
+    },
+    grid: { left: 50, right: 20, top: 15, bottom: 60 },
+    xAxis: {
+      type: 'category',
+      data: agents,
+      axisLabel: { color: MUTED, fontSize: 11 },
+      axisLine: { lineStyle: { color: BORDER } },
+      axisTick: { show: false }
+    },
+    yAxis: {
+      type: 'value',
+      name: 'Invocations',
+      nameTextStyle: { color: MUTED, fontSize: 10 },
+      axisLabel: { color: MUTED, fontSize: 11 },
+      axisLine: { lineStyle: { color: BORDER } },
+      splitLine: { lineStyle: { color: BORDER, type: 'dashed' } }
+    },
+    series: series,
+    animationDuration: 1200,
+    animationEasing: 'cubicOut'
+  };
+
+  chart.setOption(option);
+  window.addEventListener('resize', () => chart.resize());
+})();
+
+// ──────────────────────────────────────
+// 5. Dual-Axis — Success Rate vs Duration
+// ──────────────────────────────────────
+(function() {
+  const chart = echarts.init(document.getElementById('dualAxis'));
+
+  // Top 10 tools by total count
+  const toolTotals = {};
+  tools.forEach(t => toolTotals[t] = 0);
+  heatRaw.forEach(d => { toolTotals[tools[d[0]]] += d[2]; });
+
+  const top10 = Object.entries(toolTotals)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10)
+    .map(e => e[0]);
+
+  const successData = top10.map(t => ({
+    value: toolSuccessRate[t],
+    itemStyle: {
+      color: toolSuccessRate[t] < 90
+        ? 'rgba(239,68,68,0.85)'
+        : 'rgba(99,102,241,0.7)',
+      borderRadius: [3, 3, 0, 0]
+    }
+  }));
+
+  const durationData = top10.map(t => toolDuration[t]);
+
+  const option = {
+    backgroundColor: 'transparent',
+    tooltip: {
+      backgroundColor: '#1e2130',
+      borderColor: BORDER,
+      textStyle: { color: TEXT, fontSize: 12 },
+      trigger: 'axis',
+      axisPointer: { type: 'cross', crossStyle: { color: MUTED } },
+      formatter: function(params) {
+        let tip = '<b>' + params[0].axisValue + '</b><br/>';
+        params.forEach(p => {
+          const unit = p.seriesName === 'Success Rate' ? '%' : ' ms';
+          const color = p.seriesName === 'Success Rate' ? NATIVE : MCP;
+          tip += p.marker + ' ' + p.seriesName + ': <b style="color:' + color + '">' + p.value + unit + '</b><br/>';
+        });
+        return tip;
+      }
+    },
+    legend: {
+      bottom: 0,
+      textStyle: { color: MUTED, fontSize: 11 },
+      itemWidth: 14,
+      itemHeight: 10
+    },
+    grid: { left: 55, right: 60, top: 20, bottom: 50 },
+    xAxis: {
+      type: 'category',
+      data: top10,
+      axisLabel: { color: MUTED, fontSize: 10, rotate: 25 },
+      axisLine: { lineStyle: { color: BORDER } },
+      axisTick: { show: false },
+      axisPointer: { type: 'shadow' }
+    },
+    yAxis: [
+      {
+        type: 'value',
+        name: 'Success %',
+        nameTextStyle: { color: MUTED, fontSize: 10 },
+        min: 80,
+        max: 100,
+        interval: 5,
+        axisLabel: { color: MUTED, fontSize: 10, formatter: '{value}%' },
+        axisLine: { lineStyle: { color: NATIVE } },
+        splitLine: { lineStyle: { color: BORDER, type: 'dashed' } }
+      },
+      {
+        type: 'value',
+        name: 'Duration (ms)',
+        nameTextStyle: { color: MUTED, fontSize: 10 },
+        axisLabel: { color: MUTED, fontSize: 10, formatter: '{value}ms' },
+        axisLine: { lineStyle: { color: MCP } },
+        splitLine: { show: false }
+      }
+    ],
+    series: [
+      {
+        name: 'Success Rate',
+        type: 'bar',
+        barWidth: '45%',
+        data: successData,
+        yAxisIndex: 0
+      },
+      {
+        name: 'Avg Duration',
+        type: 'line',
+        yAxisIndex: 1,
+        smooth: true,
+        symbol: 'circle',
+        symbolSize: 8,
+        lineStyle: { color: MCP, width: 2.5 },
+        itemStyle: { color: MCP, borderColor: CARD, borderWidth: 2 },
+        areaStyle: {
+          color: {
+            type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
+            colorStops: [
+              { offset: 0, color: 'rgba(16,185,129,0.25)' },
+              { offset: 1, color: 'rgba(16,185,129,0.02)' }
+            ]
+          }
+        },
+        data: durationData
+      }
+    ],
+    animationDuration: 1400,
+    animationEasing: 'cubicOut'
+  };
+
+  chart.setOption(option);
+  window.addEventListener('resize', () => chart.resize());
+})();
+</script>
+</body>
+</html>

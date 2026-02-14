@@ -4,7 +4,7 @@ import { createServer, type Server } from 'http';
 import { WebSocketServer } from 'ws';
 import { setupVoiceProxy } from './voice-proxy.js';
 import type { SupervisorAgent } from '../agents/types.js';
-import { getAgentRegistry } from '../agents/index.js';
+import { getAgentRegistry, MissionLeadAgent } from '../agents/index.js';
 import { WebSocketChannel } from '../channels/index.js';
 import { getDb } from '../db/index.js';
 import { isWellKnownConversation, getWellKnownConversationMeta, WellKnownConversations } from '../db/well-known-conversations.js';
@@ -18,6 +18,10 @@ import type { BrowserSessionManager } from '../browser/index.js';
 import type { DesktopSessionManager } from '../desktop/index.js';
 import type { TaskManager } from '../tasks/index.js';
 import { type RAGProjectService, createRAGProjectRoutes, type IndexingProgress } from '../rag-projects/index.js';
+import type { MissionManager } from '../missions/index.js';
+import { setupMissionRoutes } from './mission-routes.js';
+import { getDashboardStore, SnapshotEngine, RenderEngine, setupDashboardRoutes } from '../dashboard/index.js';
+import { MissionUpdateDashboardTool } from '../tools/native/mission-update-dashboard.js';
 import { getMessageEventService, setMessageEventServiceChannel } from '../services/message-event-service.js';
 import { getUserSettingsService } from '../settings/index.js';
 import { OllieBotMCPServer } from '../mcp-server/index.js';
@@ -34,6 +38,7 @@ export interface ServerConfig {
   browserManager?: BrowserSessionManager;
   desktopManager?: DesktopSessionManager;
   taskManager?: TaskManager;
+  missionManager?: MissionManager;
   ragProjectService?: RAGProjectService;
   traceStore?: TraceStore;
   // LLM configuration for model capabilities endpoint
@@ -75,6 +80,8 @@ export class AssistantServer {
   private browserManager?: BrowserSessionManager;
   private desktopManager?: DesktopSessionManager;
   private taskManager?: TaskManager;
+  private missionManager?: MissionManager;
+  private missionLeadAgent?: MissionLeadAgent;
   private ragProjectService?: RAGProjectService;
   private traceStore?: TraceStore;
   private mainProvider?: string;
@@ -105,6 +112,7 @@ export class AssistantServer {
     this.browserManager = config.browserManager;
     this.desktopManager = config.desktopManager;
     this.taskManager = config.taskManager;
+    this.missionManager = config.missionManager;
     this.ragProjectService = config.ragProjectService;
     this.traceStore = config.traceStore;
     this.mainProvider = config.mainProvider;
@@ -701,6 +709,7 @@ export class AssistantServer {
             toolError: m.metadata?.error,
             toolParameters: m.metadata?.parameters,
             toolResult: m.metadata?.result,
+            toolFiles: m.metadata?.files,
             // Delegation metadata (legacy - agentType above is preferred)
             delegationAgentId: m.metadata?.agentId,
             delegationAgentType: m.metadata?.agentType,
@@ -770,10 +779,10 @@ export class AssistantServer {
         const conversation = {
           id,
           title: title || 'New Conversation',
-          channel: channel || 'web',
           createdAt: now,
           updatedAt: now,
           deletedAt: null,
+          metadata: channel ? { channel } : undefined,
         };
 
         db.conversations.create(conversation);
@@ -889,6 +898,7 @@ export class AssistantServer {
           toolError: m.metadata?.error,
           toolParameters: m.metadata?.parameters,
           toolResult: m.metadata?.result,
+          toolFiles: m.metadata?.files,
           // Delegation metadata
           delegationAgentId: m.metadata?.agentId,
           delegationAgentType: m.metadata?.agentType,
@@ -935,6 +945,33 @@ export class AssistantServer {
     // Get active tasks
     this.app.get('/api/tasks', (_req: Request, res: Response) => {
       res.json(this.taskManager?.getTasksForApi() || []);
+    });
+
+    // Toggle task enabled/disabled status
+    this.app.patch('/api/tasks/:id', (req: Request, res: Response) => {
+      const taskId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+      const { enabled } = req.body || {};
+
+      if (!this.taskManager) {
+        res.status(500).json({ error: 'Task manager not initialized' });
+        return;
+      }
+
+      if (typeof enabled !== 'boolean') {
+        res.status(400).json({ error: 'enabled must be a boolean' });
+        return;
+      }
+
+      const success = this.taskManager.setTaskEnabled(taskId, enabled);
+      if (!success) {
+        res.status(404).json({ error: 'Task not found' });
+        return;
+      }
+
+      // Return updated task info
+      const tasks = this.taskManager.getTasksForApi();
+      const task = tasks.find(t => t.id === taskId);
+      res.json(task || { id: taskId, enabled });
     });
 
     // Run a task immediately
@@ -1014,6 +1051,38 @@ export class AssistantServer {
         channel: this.wsChannel,
       });
       console.log('[Server] Evaluation routes enabled');
+    }
+
+    // Setup mission routes (if missionManager is available)
+    if (this.missionManager) {
+      setupMissionRoutes(this.app, {
+        missionManager: this.missionManager,
+        llmService: this.llmService,
+      });
+    }
+
+    // Setup dashboard routes (if llmService and traceStore are available)
+    if (this.llmService && this.traceStore) {
+      const dashboardStore = getDashboardStore();
+      dashboardStore.init();
+      const snapshotEngine = new SnapshotEngine(this.traceStore);
+      const renderEngine = new RenderEngine(this.llmService, dashboardStore);
+      setupDashboardRoutes(this.app, {
+        dashboardStore,
+        snapshotEngine,
+        renderEngine,
+      });
+
+      // Register dashboard update tool (requires missionManager + dashboard components)
+      if (this.missionManager && this.toolRunner) {
+        this.toolRunner.registerNativeTool(new MissionUpdateDashboardTool({
+          missionManager: this.missionManager,
+          dashboardStore,
+          renderEngine,
+          snapshotEngine,
+        }));
+        console.log('[Server] Dashboard update tool registered (mission_update_dashboard)');
+      }
     }
 
     // REST endpoints for browser session management
@@ -1179,6 +1248,73 @@ export class AssistantServer {
     // Register web channel with supervisor
     this.supervisor.registerChannel(this.wsChannel);
 
+    // Create Mission Lead agent if mission manager and LLM service are available
+    if (this.missionManager && this.llmService) {
+      const registry = getAgentRegistry();
+      this.missionLeadAgent = new MissionLeadAgent(this.llmService, registry);
+
+      // Share the same tool infrastructure as supervisor
+      if (this.toolRunner) this.missionLeadAgent.setToolRunner(this.toolRunner);
+      if (this.skillManager) this.missionLeadAgent.setSkillManager(this.skillManager);
+
+      // Set mission-specific dependency
+      this.missionLeadAgent.setMissionManager(this.missionManager);
+
+      // Register channel for sending (does NOT bind onMessage — our router handles that)
+      this.missionLeadAgent.registerChannel(this.wsChannel);
+
+      // Register with global registry and initialize
+      registry.registerAgent(this.missionLeadAgent);
+      await this.missionLeadAgent.init();
+
+      console.log('[Server] Mission Lead agent initialized');
+
+      // Listen for mission cycle events and generate dashboards
+      this.missionManager.on('mission:cycle:due', async ({ mission }) => {
+        console.log(`[Server] Mission cycle triggered for "${mission.name}"`);
+        try {
+          await this.generateMissionDashboard(mission.slug);
+          // Update lastCycleAt
+          this.missionManager!.updateMission(mission.slug, {});
+          console.log(`[Server] Mission cycle completed for "${mission.name}"`);
+        } catch (error) {
+          console.error(`[Server] Mission cycle failed for "${mission.name}":`, error);
+        }
+      });
+    }
+
+    // Install message routing: mission conversations → MissionLeadAgent, else → Supervisor
+    if (this.missionLeadAgent) {
+      const missionLead = this.missionLeadAgent;
+      const supervisor = this.supervisor;
+      const conversationChannelCache = new Map<string, string | null>();
+
+      this.wsChannel.onMessage(async (message) => {
+        const conversationId = message.metadata?.conversationId as string | undefined;
+
+        if (conversationId) {
+          // Check cache first
+          let channel = conversationChannelCache.get(conversationId);
+          if (channel === undefined) {
+            // Cache miss — look up conversation metadata
+            const db = getDb();
+            const conv = db.conversations.findById(conversationId);
+            channel = (conv?.metadata?.channel as string) ?? null;
+            conversationChannelCache.set(conversationId, channel);
+          }
+
+          if (channel === 'mission' || channel === 'pillar') {
+            console.log(`[Router] Routing to Mission Lead (channel=${channel})`);
+            await missionLead.handleMessage(message);
+            return;
+          }
+        }
+
+        // Default: route to supervisor
+        await supervisor.handleMessage(message);
+      });
+    }
+
     // Attach channel to browser manager if present (for event broadcasting)
     if (this.browserManager) {
       this.browserManager.attachChannel(this.wsChannel);
@@ -1238,6 +1374,7 @@ export class AssistantServer {
         toolRunner: this.toolRunner,
         mcpClient: this.mcpClient,
         logBuffer: this.logBuffer,
+        traceStore: this.traceStore,
         startTime: new Date(),
         getClientCount: () => this.wsChannel.getConnectedClients(),
         runtimeConfig: {
@@ -1284,5 +1421,306 @@ export class AssistantServer {
         });
       });
     });
+  }
+
+  /**
+   * Generate a mission dashboard HTML file from current mission data.
+   */
+  private async generateMissionDashboard(missionSlug: string): Promise<void> {
+    if (!this.missionManager) return;
+
+    const mission = this.missionManager.getMissionBySlug(missionSlug);
+    if (!mission) {
+      console.error(`[Dashboard] Mission not found: ${missionSlug}`);
+      return;
+    }
+
+    const pillars = this.missionManager.getPillarsByMission(mission.id);
+    const pillarData = pillars.map(p => {
+      const metrics = this.missionManager!.getMetricsByPillar(p.id);
+      const todos = this.missionManager!.getTodosByPillar(p.id);
+      return {
+        name: p.name,
+        slug: p.slug,
+        description: p.description,
+        metrics: metrics.map(m => ({
+          name: m.name,
+          current: m.current,
+          target: typeof m.target === 'string' ? JSON.parse(m.target) : m.target,
+          status: m.status,
+          trend: m.trend,
+          unit: m.unit,
+          type: m.type,
+        })),
+        todosByStatus: {
+          pending: todos.filter(t => t.status === 'pending').length,
+          in_progress: todos.filter(t => t.status === 'in_progress').length,
+          completed: todos.filter(t => t.status === 'completed').length,
+          backlog: todos.filter(t => t.status === 'backlog').length,
+        },
+      };
+    });
+
+    // Generate HTML dashboard
+    const html = this.renderMissionDashboardHtml(mission, pillarData);
+
+    // Ensure directory exists - derive from existing dashboard path method
+    const missionDashboardPath = this.missionManager.getMissionDashboardPath(missionSlug);
+    const { mkdirSync, writeFileSync } = await import('fs');
+    const { dirname } = await import('path');
+    const dashboardDir = dirname(missionDashboardPath);
+    mkdirSync(dashboardDir, { recursive: true });
+
+    // Write mission dashboard
+    const dashboardPath = `${dashboardDir}/mission.html`;
+    writeFileSync(dashboardPath, html, 'utf-8');
+    console.log(`[Dashboard] Generated mission dashboard: ${dashboardPath}`);
+
+    // Also generate pillar dashboards
+    for (const pillar of pillarData) {
+      const pillarHtml = this.renderPillarDashboardHtml(mission, pillar);
+      const pillarPath = `${dashboardDir}/${pillar.slug}.html`;
+      writeFileSync(pillarPath, pillarHtml, 'utf-8');
+      console.log(`[Dashboard] Generated pillar dashboard: ${pillarPath}`);
+    }
+  }
+
+  private renderMissionDashboardHtml(mission: { name: string; description: string; status: string }, pillars: Array<{ name: string; slug: string; metrics: Array<{ name: string; current: number | null; status: string; trend: string; unit: string; type: string }>; todosByStatus: { pending: number; in_progress: number; completed: number; backlog: number } }>): string {
+    const timestamp = new Date().toLocaleString();
+
+    // Format duration values from seconds to human-readable
+    const formatDuration = (seconds: number): string => {
+      if (seconds >= 3600) {
+        const hours = seconds / 3600;
+        return hours % 1 === 0 ? `${hours}` : hours.toFixed(1);
+      }
+      if (seconds >= 60) {
+        const mins = seconds / 60;
+        return mins % 1 === 0 ? `${mins}` : mins.toFixed(1);
+      }
+      return `${seconds}`;
+    };
+
+    const formatMetricValue = (m: { current: number | null; type: string }): string => {
+      if (m.current === null) return '—';
+      if (m.type === 'duration') return formatDuration(m.current);
+      return String(m.current);
+    };
+
+    const totalMetrics = pillars.reduce((sum, p) => sum + p.metrics.length, 0);
+    const onTargetCount = pillars.reduce((sum, p) => sum + p.metrics.filter(m => m.status === 'on_target').length, 0);
+    const totalTodos = pillars.reduce((sum, p) => sum + p.todosByStatus.pending + p.todosByStatus.in_progress + p.todosByStatus.completed + p.todosByStatus.backlog, 0);
+    const activeTodos = pillars.reduce((sum, p) => sum + p.todosByStatus.in_progress, 0);
+
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${mission.name} - Dashboard</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { overflow-x: hidden; }
+    body { background: #0f1117; color: #e0e0e0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 24px; max-width: 100%; overflow-x: hidden; }
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: #1a1d24; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb { background: #3a3d44; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #4a4d54; }
+    .header { margin-bottom: 24px; }
+    .header h1 { font-size: 24px; margin-bottom: 8px; }
+    .header .meta { color: #888; font-size: 14px; }
+    .status { display: inline-block; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 600; text-transform: uppercase; }
+    .status.active { background: #22c55e33; color: #22c55e; }
+    .status.paused { background: #eab30833; color: #eab308; }
+    .kpi-row { display: flex; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }
+    .kpi-card { background: #1a1d24; border-radius: 8px; padding: 16px 20px; min-width: 150px; flex: 1; }
+    .kpi-card .label { font-size: 12px; color: #888; margin-bottom: 4px; }
+    .kpi-card .value { font-size: 28px; font-weight: 600; }
+    .kpi-card .value.green { color: #22c55e; }
+    .kpi-card .value.yellow { color: #eab308; }
+    .kpi-card .value.red { color: #ef4444; }
+    .pillars { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+    .pillar-card { background: #1a1d24; border-radius: 8px; padding: 20px; }
+    .pillar-card h3 { font-size: 16px; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+    .health-dot { width: 10px; height: 10px; border-radius: 50%; }
+    .health-dot.green { background: #22c55e; }
+    .health-dot.yellow { background: #eab308; }
+    .health-dot.red { background: #ef4444; }
+    .health-dot.unknown { background: #666; }
+    .metrics-list { margin-bottom: 12px; }
+    .metric-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #2a2d34; font-size: 13px; }
+    .metric-row:last-child { border-bottom: none; }
+    .metric-name { color: #aaa; }
+    .metric-value { font-weight: 500; }
+    .trend { font-size: 12px; }
+    .trend.improving { color: #22c55e; }
+    .trend.degrading { color: #ef4444; }
+    .trend.stable { color: #888; }
+    .todos-summary { font-size: 13px; color: #888; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>${mission.name} <span class="status ${mission.status}">${mission.status}</span></h1>
+    <p class="meta">Generated: ${timestamp}</p>
+    <p style="margin-top: 8px; color: #aaa;">${mission.description || ''}</p>
+  </div>
+
+  <div class="kpi-row">
+    <div class="kpi-card">
+      <div class="label">Pillars</div>
+      <div class="value">${pillars.length}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">Total Metrics</div>
+      <div class="value">${totalMetrics}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">On Target</div>
+      <div class="value ${onTargetCount === totalMetrics ? 'green' : onTargetCount > 0 ? 'yellow' : 'red'}">${onTargetCount}/${totalMetrics}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">Active TODOs</div>
+      <div class="value">${activeTodos}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">Total TODOs</div>
+      <div class="value">${totalTodos}</div>
+    </div>
+  </div>
+
+  <div class="pillars">
+    ${pillars.map(p => {
+      const improving = p.metrics.filter(m => m.trend === 'improving').length;
+      const degrading = p.metrics.filter(m => m.trend === 'degrading').length;
+      const health = degrading > p.metrics.length / 2 ? 'red' : improving >= p.metrics.length / 2 ? 'green' : p.metrics.length === 0 ? 'unknown' : 'yellow';
+      return `
+    <div class="pillar-card">
+      <h3><span class="health-dot ${health}"></span> ${p.name}</h3>
+      <div class="metrics-list">
+        ${p.metrics.slice(0, 4).map(m => `
+        <div class="metric-row">
+          <span class="metric-name">${m.name}</span>
+          <span class="metric-value">${formatMetricValue(m)} <span class="trend ${m.trend}">${m.trend === 'improving' ? '↗' : m.trend === 'degrading' ? '↘' : m.trend === 'stable' ? '→' : '?'}</span></span>
+        </div>`).join('')}
+      </div>
+      <div class="todos-summary">TODOs: ${p.todosByStatus.in_progress} active, ${p.todosByStatus.pending} pending</div>
+    </div>`;
+    }).join('')}
+  </div>
+</body>
+</html>`;
+  }
+
+  private renderPillarDashboardHtml(mission: { name: string }, pillar: { name: string; description?: string; metrics: Array<{ name: string; current: number | null; target: { operator?: string; value?: number }; status: string; trend: string; unit: string; type: string }>; todosByStatus: { pending: number; in_progress: number; completed: number; backlog: number } }): string {
+    const timestamp = new Date().toLocaleString();
+    const formatTarget = (t: { operator?: string; value?: number }) => t?.operator && t?.value !== undefined ? `${t.operator} ${t.value}` : '—';
+
+    // Format duration values from seconds to human-readable
+    const formatDuration = (seconds: number): string => {
+      if (seconds >= 3600) {
+        const hours = seconds / 3600;
+        return hours % 1 === 0 ? `${hours}` : hours.toFixed(1);
+      }
+      if (seconds >= 60) {
+        const mins = seconds / 60;
+        return mins % 1 === 0 ? `${mins}` : mins.toFixed(1);
+      }
+      return `${seconds}`;
+    };
+
+    const formatMetricValue = (m: { current: number | null; type: string; unit: string }): string => {
+      if (m.current === null) return '—';
+      if (m.type === 'duration') return formatDuration(m.current);
+      return String(m.current);
+    };
+
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${pillar.name} - ${mission.name}</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { overflow-x: hidden; }
+    body { background: #0f1117; color: #e0e0e0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 24px; max-width: 100%; overflow-x: hidden; }
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: #1a1d24; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb { background: #3a3d44; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #4a4d54; }
+    .header { margin-bottom: 24px; }
+    .header h1 { font-size: 24px; margin-bottom: 4px; }
+    .header .breadcrumb { color: #888; font-size: 14px; margin-bottom: 8px; }
+    .header .description { color: #aaa; }
+    table { width: 100%; border-collapse: collapse; background: #1a1d24; border-radius: 8px; overflow: hidden; margin-bottom: 24px; }
+    th, td { padding: 12px 16px; text-align: left; border-bottom: 1px solid #2a2d34; }
+    th { background: #22252d; font-weight: 600; font-size: 12px; text-transform: uppercase; color: #888; }
+    .status-badge { padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+    .status-badge.on_target { background: #22c55e33; color: #22c55e; }
+    .status-badge.warning { background: #eab30833; color: #eab308; }
+    .status-badge.off_target { background: #ef444433; color: #ef4444; }
+    .status-badge.unknown { background: #66666633; color: #888; }
+    .trend { font-size: 14px; }
+    .trend.improving { color: #22c55e; }
+    .trend.degrading { color: #ef4444; }
+    .trend.stable { color: #888; }
+    .trend.unknown { color: #666; }
+    .kpi-row { display: flex; gap: 16px; margin-bottom: 24px; }
+    .kpi-card { background: #1a1d24; border-radius: 8px; padding: 16px 20px; min-width: 120px; }
+    .kpi-card .label { font-size: 12px; color: #888; margin-bottom: 4px; }
+    .kpi-card .value { font-size: 24px; font-weight: 600; }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="breadcrumb">${mission.name} / Pillar</div>
+    <h1>${pillar.name}</h1>
+    <p class="description">${pillar.description || ''}</p>
+    <p style="color: #666; font-size: 12px; margin-top: 8px;">Generated: ${timestamp}</p>
+  </div>
+
+  <div class="kpi-row">
+    <div class="kpi-card">
+      <div class="label">Total Metrics</div>
+      <div class="value">${pillar.metrics.length}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">Active TODOs</div>
+      <div class="value">${pillar.todosByStatus.in_progress}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">Pending</div>
+      <div class="value">${pillar.todosByStatus.pending}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">Completed</div>
+      <div class="value">${pillar.todosByStatus.completed}</div>
+    </div>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Metric</th>
+        <th>Current</th>
+        <th>Target</th>
+        <th>Status</th>
+        <th>Trend</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${pillar.metrics.map(m => `
+      <tr>
+        <td>${m.name}</td>
+        <td>${formatMetricValue(m)}${m.unit ? ' ' + m.unit : ''}</td>
+        <td>${formatTarget(m.target)}</td>
+        <td><span class="status-badge ${m.status}">${m.status.replace('_', ' ')}</span></td>
+        <td><span class="trend ${m.trend}">${m.trend === 'improving' ? '↗ Improving' : m.trend === 'degrading' ? '↘ Degrading' : m.trend === 'stable' ? '→ Stable' : '? Unknown'}</span></td>
+      </tr>`).join('')}
+    </tbody>
+  </table>
+</body>
+</html>`;
   }
 }

@@ -164,7 +164,12 @@ export abstract class AbstractAgent implements BaseAgent {
    */
   /**
    * Get tools available to the LLM.
-   * @param allowedTools - Optional whitelist of tool names. If provided, only these tools are returned.
+   *
+   * Tool filtering applies BOTH checks:
+   * 1. Agent's canAccessTools capability (base permissions)
+   * 2. allowedTools whitelist if provided (per-request restriction for scheduled tasks)
+   *
+   * @param allowedTools - Optional additional restriction (e.g., for scheduled tasks)
    */
   protected getToolsForLLM(allowedTools?: string[]): LLMTool[] {
     if (!this.toolRunner) {
@@ -173,13 +178,7 @@ export abstract class AbstractAgent implements BaseAgent {
 
     const tools = this.toolRunner.getToolsForLLM();
 
-    // If allowedTools whitelist is provided, filter to only those tools
-    if (allowedTools && allowedTools.length > 0) {
-      const normalizedAllowed = allowedTools.map(t => this.normalizeToolName(t));
-      return tools.filter(tool => normalizedAllowed.includes(tool.name));
-    }
-
-    // Use agent's capability patterns
+    // First, filter by agent's capability patterns (always required)
     const patterns = this.capabilities.canAccessTools;
     if (patterns.length === 0) {
       return [];
@@ -188,7 +187,7 @@ export abstract class AbstractAgent implements BaseAgent {
     const inclusions = patterns.filter(p => !p.startsWith('!'));
     const exclusions = patterns.filter(p => p.startsWith('!')).map(p => p.slice(1));
 
-    return tools.filter((tool) => {
+    let filteredTools = tools.filter((tool) => {
       // Check exclusions first
       if (exclusions.some(p => this.matchesToolPattern(tool.name, p))) {
         return false;
@@ -200,6 +199,15 @@ export abstract class AbstractAgent implements BaseAgent {
       }
       return inclusions.some(p => this.matchesToolPattern(tool.name, p));
     });
+
+    // If allowedTools whitelist is provided (scheduled tasks), further restrict
+    // This can only narrow down the set, not expand it
+    if (allowedTools && allowedTools.length > 0) {
+      const normalizedAllowed = allowedTools.map(t => this.normalizeToolName(t));
+      filteredTools = filteredTools.filter(tool => normalizedAllowed.includes(tool.name));
+    }
+
+    return filteredTools;
   }
 
   /** Normalize tool name: convert mcp.server.tool → mcp.server__tool */
@@ -214,10 +222,46 @@ export abstract class AbstractAgent implements BaseAgent {
   }
 
   /** Check if tool name matches a pattern (* = all, prefix* = prefix match) */
-  private matchesToolPattern(toolName: string, pattern: string): boolean {
+  protected matchesToolPattern(toolName: string, pattern: string): boolean {
     if (pattern === '*') return true;
     if (pattern.endsWith('*')) return toolName.startsWith(pattern.slice(0, -1));
     return toolName === pattern || toolName.includes(pattern);
+  }
+
+  /**
+   * Check if this agent has access to a specific tool.
+   * Used by buildSystemPrompt to conditionally include prompt sections.
+   *
+   * Tool access requires passing BOTH checks:
+   * 1. Agent's canAccessTools capability (base permissions)
+   * 2. allowedTools whitelist if provided (per-request restriction for scheduled tasks)
+   *
+   * @param toolName - The tool name to check
+   * @param allowedTools - Optional additional restriction (e.g., for scheduled tasks)
+   */
+  protected hasToolAccess(toolName: string, allowedTools?: string[]): boolean {
+    // First, check against agent's capability patterns (always required)
+    const patterns = this.capabilities.canAccessTools;
+    if (patterns.length === 0) return false;
+
+    // Check exclusions first
+    const exclusions = patterns.filter(p => p.startsWith('!')).map(p => p.slice(1));
+    if (exclusions.some(p => this.matchesToolPattern(toolName, p))) {
+      return false;
+    }
+
+    // Check inclusions
+    const inclusions = patterns.filter(p => !p.startsWith('!'));
+    const hasCapability = inclusions.some(p => this.matchesToolPattern(toolName, p));
+    if (!hasCapability) return false;
+
+    // If allowedTools whitelist is provided (scheduled tasks), also check against it
+    // This can only further restrict, not expand access
+    if (allowedTools && allowedTools.length > 0) {
+      return allowedTools.some(t => t === toolName || t.includes(toolName));
+    }
+
+    return true;
   }
 
   registerChannel(channel: Channel): void {
@@ -356,14 +400,8 @@ export abstract class AbstractAgent implements BaseAgent {
       prompt += `\n\n${additionalContext}`;
     }
 
-    // Helper to check if a tool is in the allowed tools list
-    const hasToolAccess = (toolName: string): boolean => {
-      if (!allowedTools) return true; // No filter = full access
-      return allowedTools.some(t => t === toolName || t.includes(toolName));
-    };
-
     if (this.memoryService) {
-      if (hasToolAccess('remember')) {
+      if (this.hasToolAccess('remember', allowedTools)) {
         // Skip if allowedTools is provided and doesn't include remember
         prompt += this.memoryService.getMemoryToolInstructions();
       }
@@ -378,8 +416,8 @@ export abstract class AbstractAgent implements BaseAgent {
     // No citation guidelines needed in system prompt
 
     // Add skill information per Agent Skills spec (progressive disclosure)
-    // Skip if allowedTools is provided and doesn't include read_agent_skill
-    if (this.skillManager && hasToolAccess('read_agent_skill')) {
+    // Skip if agent doesn't have access to read_agent_skill
+    if (this.skillManager && this.hasToolAccess('read_agent_skill', allowedTools)) {
       // Determine filtering: allowedSkills (whitelist) takes precedence over excludedSkillSources
       const excludeSources = this.excludedSkillSources.length > 0 ? this.excludedSkillSources : undefined;
       const allowedIds = this.allowedSkills;
@@ -393,8 +431,8 @@ export abstract class AbstractAgent implements BaseAgent {
     }
 
     // Add RAG knowledge base information (if cached and agent has access)
-    // Skip if allowedTools is provided and doesn't include query_rag_project
-    if (this.ragDataCache && hasToolAccess('query_rag_project')) {
+    // Skip if agent doesn't have access to query_rag_project
+    if (this.ragDataCache && this.hasToolAccess('query_rag_project', allowedTools)) {
       prompt += `\n\n${this.ragDataCache}`;
     }
 
@@ -481,6 +519,7 @@ export interface AgentRegistry {
   getSpecialistTemplate(type: string): SpecialistTemplate | undefined;
   findSpecialistTypeByName(name: string): string | undefined;
   loadAgentPrompt(type: string): string;
+  loadAgentConfig(type: string): Record<string, unknown> | null;
   getToolAccessForSpecialist(type: string): string[];
   getAllowedSkillsForSpecialist(type: string): string[] | null;
   // Delegation methods

@@ -379,7 +379,8 @@ Respond with ONLY a JSON object (no markdown):
     try {
       const result = await this.llmService.quickGenerate(
         [{ role: 'user', content: prompt }],
-        { maxTokens: 150 }
+        { maxTokens: 150 },
+        'Evaluation Scorer'
       );
 
       // Extract JSON from response - try multiple methods

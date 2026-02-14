@@ -1,0 +1,796 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Token Budget Tracker — Spend vs Allocation</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.6.0/dist/echarts.min.js"></script>
+<style>
+  *,*::before,*::after{margin:0;padding:0;box-sizing:border-box}
+  body{
+    background:#0f1117;
+    color:#e0e0e0;
+    font-family:'Segoe UI',system-ui,-apple-system,sans-serif;
+    line-height:1.6;
+    padding:24px 32px 48px;
+    min-height:100vh;
+  }
+
+  /* ── Header ── */
+  .header{margin-bottom:28px}
+  .header h1{
+    font-size:1.75rem;font-weight:700;letter-spacing:-.3px;
+    background:linear-gradient(90deg,#e0e0e0 60%,#6366f1);
+    -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+  }
+  .header .timestamp{color:#8b8fa3;font-size:.82rem;margin-top:4px}
+  .header .synopsis{
+    color:#8b8fa3;font-size:.88rem;margin-top:8px;
+    max-width:820px;line-height:1.55;
+  }
+
+  /* ── Interactivity bar ── */
+  .interact-bar{
+    background:#1a1d27;border:1px solid #2a2d37;border-radius:8px;
+    padding:10px 18px;margin-bottom:24px;display:flex;
+    align-items:center;gap:8px;font-size:.8rem;color:#8b8fa3;
+  }
+  .interact-bar .icon{
+    display:inline-flex;align-items:center;justify-content:center;
+    width:22px;height:22px;border-radius:50%;
+    background:#6366f1;color:#fff;font-size:.7rem;flex-shrink:0;
+  }
+
+  /* ── Grid ── */
+  .grid-4{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:24px}
+  .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:24px}
+  .grid-full{margin-bottom:24px}
+
+  /* ── Card ── */
+  .card{
+    background:#1a1d27;border:1px solid #2a2d37;border-radius:10px;
+    padding:20px 22px;position:relative;overflow:hidden;
+  }
+  .card-title{font-size:.78rem;color:#8b8fa3;text-transform:uppercase;letter-spacing:.6px;margin-bottom:14px;font-weight:600}
+  .chart-box{width:100%;height:400px}
+  .chart-box-tall{width:100%;height:480px}
+  .chart-box-short{width:100%;height:360px}
+
+  /* ── KPI Card ── */
+  .kpi{text-align:center;padding:22px 16px}
+  .kpi .label{font-size:.75rem;color:#8b8fa3;text-transform:uppercase;letter-spacing:.7px;margin-bottom:6px;font-weight:600}
+  .kpi .value{font-size:2rem;font-weight:700;letter-spacing:-.5px}
+  .kpi .sub{font-size:.82rem;margin-top:4px}
+  .kpi .bar-track{
+    height:4px;border-radius:2px;background:#2a2d37;margin-top:12px;overflow:hidden;
+  }
+  .kpi .bar-fill{height:100%;border-radius:2px;transition:width .6s ease}
+  .green{color:#10b981}.amber{color:#f59e0b}.red{color:#f43f5e}
+  .bg-green{background:#10b981}.bg-amber{background:#f59e0b}.bg-red{background:#f43f5e}
+  .border-green{border-color:#10b981 !important}
+  .border-amber{border-color:#f59e0b !important}
+  .border-red{border-color:#f43f5e !important}
+  .kpi.highlight{border-top:3px solid}
+
+  @media(max-width:1100px){.grid-4{grid-template-columns:repeat(2,1fr)}}
+  @media(max-width:700px){.grid-4,.grid-2{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+
+<!-- ════════ Header ════════ -->
+<div class="header">
+  <h1>Token Budget Tracker — Spend vs Allocation</h1>
+  <div class="timestamp">Last refreshed: 2026-02-13 14:32 UTC &nbsp;|&nbsp; Billing cycle: Feb 1 – Feb 28, 2026</div>
+  <p class="synopsis">Monitors token consumption against allocated budgets per team, project, and model to prevent cost overruns.</p>
+</div>
+
+<!-- ════════ Interactivity instructions ════════ -->
+<div class="interact-bar">
+  <span class="icon">i</span>
+  Hover progress bars for exact figures. Click budget category to drill down. Data zoom on trend charts.
+</div>
+
+<!-- ════════ KPI Cards ════════ -->
+<div class="grid-4">
+  <div class="card kpi highlight border-green" style="border-top-color:#6366f1">
+    <div class="label">Monthly Budget</div>
+    <div class="value" style="color:#6366f1">$500.00</div>
+    <div class="sub" style="color:#8b8fa3">Feb 2026 allocation</div>
+    <div class="bar-track"><div class="bar-fill" style="width:100%;background:#6366f1"></div></div>
+  </div>
+  <div class="card kpi highlight border-green">
+    <div class="label">Spent This Month</div>
+    <div class="value green">$312.45</div>
+    <div class="sub green">62.5% of budget</div>
+    <div class="bar-track"><div class="bar-fill bg-green" style="width:62.5%"></div></div>
+  </div>
+  <div class="card kpi highlight border-amber">
+    <div class="label">Projected End-of-Month</div>
+    <div class="value amber">$487.20</div>
+    <div class="sub amber">97.4% — near budget</div>
+    <div class="bar-track"><div class="bar-fill bg-amber" style="width:97.4%"></div></div>
+  </div>
+  <div class="card kpi highlight border-green">
+    <div class="label">Days Remaining</div>
+    <div class="value" style="color:#22d3ee">15</div>
+    <div class="sub" style="color:#8b8fa3">of 28 in cycle</div>
+    <div class="bar-track"><div class="bar-fill" style="width:46.4%;background:#22d3ee"></div></div>
+  </div>
+</div>
+
+<!-- ════════ Budget Progress Bars ════════ -->
+<div class="grid-full">
+  <div class="card">
+    <div class="card-title">Budget Progress by Category</div>
+    <div id="chartBudgetBars" class="chart-box"></div>
+  </div>
+</div>
+
+<!-- ════════ Daily Spend vs Budget Pace ════════ -->
+<div class="grid-full">
+  <div class="card">
+    <div class="card-title">Daily Spend vs Budget Pace (30 Days)</div>
+    <div id="chartDailySpend" class="chart-box-tall"></div>
+  </div>
+</div>
+
+<!-- ════════ Waterfall + Pie row ════════ -->
+<div class="grid-2">
+  <div class="card">
+    <div class="card-title">This Week's Cost Build-up</div>
+    <div id="chartWaterfall" class="chart-box"></div>
+  </div>
+  <div class="card">
+    <div class="card-title">Budget Allocation vs Actual Usage</div>
+    <div id="chartPie" class="chart-box"></div>
+  </div>
+</div>
+
+<!-- ════════ Top 10 Expensive Missions ════════ -->
+<div class="grid-full">
+  <div class="card">
+    <div class="card-title">Top 10 Most Expensive Missions</div>
+    <div id="chartTopMissions" class="chart-box"></div>
+  </div>
+</div>
+
+<script>
+/* ══════════════════════════════════════════
+   Shared palette & utilities
+   ══════════════════════════════════════════ */
+const GREEN  = '#10b981';
+const AMBER  = '#f59e0b';
+const RED    = '#f43f5e';
+const INDIGO = '#6366f1';
+const CYAN   = '#22d3ee';
+const CARD   = '#1a1d27';
+const BORDER = '#2a2d37';
+const TEXT   = '#e0e0e0';
+const MUTED  = '#8b8fa3';
+
+function statusColor(pct) {
+  if (pct < 70) return GREEN;
+  if (pct <= 90) return AMBER;
+  return RED;
+}
+
+function init(id) {
+  return echarts.init(document.getElementById(id), null, { renderer: 'canvas' });
+}
+
+/* ══════════════════════════════════════════
+   1 — Budget Progress Bars
+   ══════════════════════════════════════════ */
+;(function() {
+  const chart = init('chartBudgetBars');
+  const cats = [
+    { name: 'Dev Team',            used:  68.30, budget: 100 },
+    { name: 'Research Team',       used:  82.15, budget:  90 },
+    { name: 'Image Gen',           used:  18.50, budget:  20 },
+    { name: 'Embeddings',          used:  12.00, budget:  40 },
+    { name: 'Fast LLM (Haiku)',    used:  41.50, budget:  60 },
+    { name: 'Main LLM (Opus)',     used:  90.00, budget: 190 },
+  ];
+
+  const names = cats.map(c => c.name);
+  const usedData = cats.map(c => {
+    const pct = (c.used / c.budget * 100);
+    return {
+      value: c.used,
+      pct: pct,
+      budget: c.budget,
+      itemStyle: { color: statusColor(pct) }
+    };
+  });
+  const budgetData = cats.map(c => c.budget);
+
+  chart.setOption({
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'shadow' },
+      backgroundColor: '#1a1d27',
+      borderColor: BORDER,
+      textStyle: { color: TEXT, fontSize: 12 },
+      formatter: function(params) {
+        const idx = params[0].dataIndex;
+        const c = cats[idx];
+        const pct = (c.used / c.budget * 100).toFixed(1);
+        let status = pct < 70 ? 'Under budget' : pct <= 90 ? 'Near budget' : 'Over budget';
+        let dot = pct < 70 ? GREEN : pct <= 90 ? AMBER : RED;
+        return `<div style="font-weight:600;margin-bottom:4px">${c.name}</div>
+                <span style="color:${dot}">\u25cf</span> ${status} (${pct}%)<br/>
+                Used: <b>$${c.used.toFixed(2)}</b> / $${c.budget.toFixed(2)}<br/>
+                Remaining: <b>$${(c.budget - c.used).toFixed(2)}</b>`;
+      }
+    },
+    grid: { left: 140, right: 80, top: 20, bottom: 20 },
+    xAxis: {
+      type: 'value',
+      max: function(value) { return Math.ceil(value.max * 1.1 / 10) * 10; },
+      axisLabel: { color: MUTED, formatter: '${value}' },
+      splitLine: { lineStyle: { color: BORDER, type: 'dashed' } },
+      axisLine: { show: false }
+    },
+    yAxis: {
+      type: 'category',
+      data: names,
+      axisLabel: { color: TEXT, fontSize: 12 },
+      axisLine: { show: false },
+      axisTick: { show: false }
+    },
+    series: [
+      {
+        name: 'Used',
+        type: 'bar',
+        data: usedData,
+        barWidth: 22,
+        z: 3,
+        label: {
+          show: true,
+          position: 'insideRight',
+          color: '#fff',
+          fontSize: 11,
+          fontWeight: 600,
+          formatter: function(p) {
+            return '$' + p.value.toFixed(2) + ' (' + p.data.pct.toFixed(1) + '%)';
+          }
+        },
+        itemStyle: { borderRadius: [0, 4, 4, 0] }
+      },
+      {
+        name: 'Budget',
+        type: 'bar',
+        data: budgetData,
+        barWidth: 22,
+        barGap: '-100%',
+        z: 1,
+        itemStyle: { color: 'rgba(99,102,241,0.15)', borderRadius: [0, 4, 4, 0] },
+        label: {
+          show: true,
+          position: 'right',
+          color: MUTED,
+          fontSize: 11,
+          formatter: function(p) { return '$' + p.value; }
+        }
+      },
+      {
+        name: 'Budget Marker',
+        type: 'scatter',
+        symbol: 'triangle',
+        symbolSize: [8, 14],
+        symbolRotate: 90,
+        z: 5,
+        data: cats.map(function(c, i) {
+          return { value: [c.budget, i], itemStyle: { color: INDIGO } };
+        }),
+        tooltip: { show: false }
+      }
+    ]
+  });
+  window.addEventListener('resize', function() { chart.resize(); });
+})();
+
+
+/* ══════════════════════════════════════════
+   2 — Daily Spend vs Budget Pace (30 days)
+   ══════════════════════════════════════════ */
+;(function() {
+  const chart = init('chartDailySpend');
+
+  // Generate 30 day labels (Feb 1-28, we show days 1-28+)
+  const days = [];
+  for (let d = 1; d <= 28; d++) days.push('Feb ' + d);
+
+  const dailyBudget = 500 / 28;
+  const budgetPace = days.map(function(_, i) { return +((i + 1) * dailyBudget).toFixed(2); });
+
+  // Realistic cumulative spend — slightly under pace first half, catching up
+  const dailyActual = [
+    12.10, 15.40, 18.70, 10.20, 22.30, 8.50, 14.80,
+    26.10, 19.90, 31.20, 16.40, 20.10, 28.50, 0,
+    0, 24.80, 18.30, 22.60, 14.90, 27.40, 19.70,
+    16.20, 0, 0, 20.50, 18.90, 23.10, 15.30
+  ];
+  const cumActual = [];
+  let runTotal = 0;
+  for (let i = 0; i < dailyActual.length; i++) {
+    runTotal += dailyActual[i];
+    cumActual.push(+(runTotal).toFixed(2));
+  }
+
+  // Today index (day 13 = Feb 13, 0-based index 12)
+  const todayIdx = 12;
+
+  // Split actual into past (solid) and future (null)
+  const pastActual = cumActual.map(function(v, i) { return i <= todayIdx ? v : null; });
+
+  // Build area data — green when under, red when over
+  const areaUnder = [];
+  const areaOver  = [];
+  for (let i = 0; i <= todayIdx; i++) {
+    if (cumActual[i] <= budgetPace[i]) {
+      areaUnder.push(cumActual[i]);
+      areaOver.push(null);
+    } else {
+      areaUnder.push(null);
+      areaOver.push(cumActual[i]);
+    }
+  }
+
+  chart.setOption({
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: '#1a1d27',
+      borderColor: BORDER,
+      textStyle: { color: TEXT, fontSize: 12 },
+      formatter: function(params) {
+        let tip = '<div style="font-weight:600;margin-bottom:4px">' + params[0].axisValue + '</div>';
+        params.forEach(function(p) {
+          if (p.value != null && p.seriesName !== 'Under Pace' && p.seriesName !== 'Over Pace') {
+            tip += '<span style="color:' + p.color + '">\u25cf</span> ' +
+                   p.seriesName + ': <b>$' + p.value.toFixed(2) + '</b><br/>';
+          }
+        });
+        return tip;
+      }
+    },
+    legend: {
+      data: ['Cumulative Spend', 'Budget Pace'],
+      top: 8,
+      textStyle: { color: MUTED, fontSize: 12 }
+    },
+    grid: { left: 65, right: 40, top: 50, bottom: 70 },
+    dataZoom: [
+      { type: 'inside', start: 0, end: 100 },
+      {
+        type: 'slider', start: 0, end: 100, bottom: 10, height: 24,
+        borderColor: BORDER, fillerColor: 'rgba(99,102,241,0.15)',
+        textStyle: { color: MUTED },
+        handleStyle: { color: INDIGO }
+      }
+    ],
+    xAxis: {
+      type: 'category',
+      data: days,
+      axisLabel: { color: MUTED, fontSize: 11, rotate: 45 },
+      axisLine: { lineStyle: { color: BORDER } },
+      axisTick: { lineStyle: { color: BORDER } }
+    },
+    yAxis: {
+      type: 'value',
+      axisLabel: { color: MUTED, formatter: '${value}' },
+      splitLine: { lineStyle: { color: BORDER, type: 'dashed' } },
+      axisLine: { show: false }
+    },
+    series: [
+      {
+        name: 'Budget Pace',
+        type: 'line',
+        data: budgetPace,
+        lineStyle: { color: INDIGO, type: 'dashed', width: 2 },
+        itemStyle: { color: INDIGO },
+        symbol: 'none',
+        z: 2
+      },
+      {
+        name: 'Cumulative Spend',
+        type: 'line',
+        data: pastActual,
+        lineStyle: { color: CYAN, width: 2.5 },
+        itemStyle: { color: CYAN },
+        symbol: 'circle',
+        symbolSize: 4,
+        z: 3,
+        areaStyle: {
+          color: {
+            type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
+            colorStops: [
+              { offset: 0, color: 'rgba(16,185,129,0.25)' },
+              { offset: 1, color: 'rgba(16,185,129,0.02)' }
+            ]
+          }
+        },
+        markLine: {
+          silent: true,
+          symbol: 'none',
+          data: [{
+            xAxis: todayIdx,
+            lineStyle: { color: RED, type: 'solid', width: 2 },
+            label: {
+              formatter: 'Today',
+              color: RED,
+              fontSize: 12,
+              fontWeight: 600,
+              position: 'insideStartTop'
+            }
+          }]
+        },
+        markPoint: {
+          data: [{
+            name: 'Current',
+            coord: [todayIdx, cumActual[todayIdx]],
+            symbol: 'circle',
+            symbolSize: 12,
+            itemStyle: { color: CYAN, borderColor: '#fff', borderWidth: 2 },
+            label: {
+              show: true,
+              position: 'top',
+              color: CYAN,
+              fontWeight: 600,
+              formatter: '$' + cumActual[todayIdx].toFixed(2)
+            }
+          }]
+        }
+      },
+      /* Shading for over-pace regions */
+      {
+        name: 'Over Pace',
+        type: 'line',
+        data: (function() {
+          var d = [];
+          for (var i = 0; i <= todayIdx; i++) {
+            d.push(cumActual[i] > budgetPace[i] ? cumActual[i] : budgetPace[i]);
+          }
+          return d;
+        })(),
+        lineStyle: { width: 0 },
+        symbol: 'none',
+        areaStyle: {
+          color: 'rgba(244,63,94,0.10)',
+          origin: (function() { return undefined; })()
+        },
+        z: 1,
+        silent: true
+      }
+    ]
+  });
+  window.addEventListener('resize', function() { chart.resize(); });
+})();
+
+
+/* ══════════════════════════════════════════
+   3 — Waterfall: This Week's Cost Build-up
+   ══════════════════════════════════════════ */
+;(function() {
+  const chart = init('chartWaterfall');
+
+  const dayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun', 'Total'];
+  const dayCosts = [28.50, 22.60, 14.90, 27.40, 19.70, 0, 0];
+  const weekTotal = dayCosts.reduce(function(a, b) { return a + b; }, 0);
+
+  const dayColors = ['#6366f1', '#818cf8', '#22d3ee', '#10b981', '#f59e0b', '#4b5563', '#4b5563', CYAN];
+
+  // Waterfall: invisible base + visible bar
+  const baseData = [];
+  const valData  = [];
+  let running = 0;
+  for (let i = 0; i < dayCosts.length; i++) {
+    baseData.push(running);
+    valData.push(dayCosts[i]);
+    running += dayCosts[i];
+  }
+  // Total bar: starts from 0
+  baseData.push(0);
+  valData.push(weekTotal);
+
+  // Running total line data
+  const runningLine = [];
+  let rt = 0;
+  for (let i = 0; i < dayCosts.length; i++) {
+    rt += dayCosts[i];
+    runningLine.push(rt);
+  }
+  runningLine.push(weekTotal);
+
+  chart.setOption({
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: '#1a1d27',
+      borderColor: BORDER,
+      textStyle: { color: TEXT, fontSize: 12 },
+      formatter: function(params) {
+        const idx = params[0].dataIndex;
+        const day = dayNames[idx];
+        if (idx === 7) {
+          return '<b>Weekly Total</b><br/>$' + weekTotal.toFixed(2);
+        }
+        return '<b>' + day + '</b><br/>Cost: $' + dayCosts[idx].toFixed(2) +
+               '<br/>Running total: $' + runningLine[idx].toFixed(2);
+      }
+    },
+    grid: { left: 60, right: 30, top: 40, bottom: 30 },
+    xAxis: {
+      type: 'category',
+      data: dayNames,
+      axisLabel: { color: TEXT, fontSize: 12, fontWeight: 600 },
+      axisLine: { lineStyle: { color: BORDER } },
+      axisTick: { show: false }
+    },
+    yAxis: {
+      type: 'value',
+      axisLabel: { color: MUTED, formatter: '${value}' },
+      splitLine: { lineStyle: { color: BORDER, type: 'dashed' } },
+      axisLine: { show: false }
+    },
+    series: [
+      {
+        name: 'Base',
+        type: 'bar',
+        stack: 'waterfall',
+        data: baseData.map(function(v) {
+          return { value: v, itemStyle: { color: 'transparent' } };
+        }),
+        barWidth: 32,
+        tooltip: { show: false }
+      },
+      {
+        name: 'Cost',
+        type: 'bar',
+        stack: 'waterfall',
+        data: valData.map(function(v, i) {
+          return {
+            value: v,
+            itemStyle: {
+              color: dayColors[i],
+              borderRadius: [4, 4, 0, 0]
+            }
+          };
+        }),
+        barWidth: 32,
+        label: {
+          show: true,
+          position: 'top',
+          color: TEXT,
+          fontSize: 11,
+          fontWeight: 600,
+          formatter: function(p) {
+            if (p.value === 0) return '';
+            return '$' + p.value.toFixed(2);
+          }
+        }
+      },
+      {
+        name: 'Running Total',
+        type: 'line',
+        data: runningLine,
+        lineStyle: { color: RED, width: 2, type: 'dashed' },
+        itemStyle: { color: RED },
+        symbol: 'circle',
+        symbolSize: 6,
+        z: 5,
+        label: {
+          show: false
+        }
+      }
+    ]
+  });
+  window.addEventListener('resize', function() { chart.resize(); });
+})();
+
+
+/* ══════════════════════════════════════════
+   4 — Pie: Budget Allocation vs Actual Usage
+   ══════════════════════════════════════════ */
+;(function() {
+  const chart = init('chartPie');
+
+  const categories = [
+    { name: 'Main LLM (Opus)',  budget: 190, actual:  90.00, color: '#6366f1' },
+    { name: 'Fast LLM (Haiku)', budget:  60, actual:  41.50, color: '#818cf8' },
+    { name: 'Embeddings',       budget:  40, actual:  12.00, color: '#22d3ee' },
+    { name: 'Image Gen',        budget:  20, actual:  18.50, color: '#f59e0b' },
+    { name: 'Research Team',    budget:  90, actual:  82.15, color: '#10b981' },
+    { name: 'Dev Team',         budget: 100, actual:  68.30, color: '#f43f5e' }
+  ];
+
+  chart.setOption({
+    tooltip: {
+      trigger: 'item',
+      backgroundColor: '#1a1d27',
+      borderColor: BORDER,
+      textStyle: { color: TEXT, fontSize: 12 },
+      formatter: function(p) {
+        return '<b>' + p.name + '</b><br/>' +
+               p.seriesName + ': $' + p.value.toFixed(2) +
+               ' (' + p.percent.toFixed(1) + '%)';
+      }
+    },
+    legend: {
+      orient: 'vertical',
+      right: 10,
+      top: 'center',
+      textStyle: { color: MUTED, fontSize: 11 },
+      itemWidth: 12,
+      itemHeight: 12,
+      itemGap: 10
+    },
+    series: [
+      {
+        name: 'Actual Spend',
+        type: 'pie',
+        radius: ['20%', '42%'],
+        center: ['40%', '50%'],
+        label: {
+          show: true,
+          position: 'inside',
+          color: '#fff',
+          fontSize: 10,
+          fontWeight: 600,
+          formatter: function(p) { return '$' + p.value.toFixed(0); }
+        },
+        data: categories.map(function(c) {
+          return {
+            name: c.name,
+            value: c.actual,
+            itemStyle: {
+              color: {
+                type: 'linear', x: 0, y: 0, x2: 1, y2: 1,
+                colorStops: [
+                  { offset: 0, color: c.color },
+                  { offset: 1, color: c.color + 'aa' }
+                ]
+              }
+            }
+          };
+        }),
+        emphasis: { itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0,0,0,0.5)' } }
+      },
+      {
+        name: 'Budget Allocation',
+        type: 'pie',
+        radius: ['52%', '72%'],
+        center: ['40%', '50%'],
+        label: {
+          show: true,
+          color: MUTED,
+          fontSize: 10,
+          formatter: function(p) { return p.name.split(' ')[0] + '\n$' + p.value; }
+        },
+        labelLine: { lineStyle: { color: BORDER } },
+        data: categories.map(function(c) {
+          return {
+            name: c.name,
+            value: c.budget,
+            itemStyle: {
+              color: c.color + '66',
+              borderColor: c.color,
+              borderWidth: 2
+            }
+          };
+        }),
+        emphasis: { itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0,0,0,0.5)' } }
+      }
+    ],
+    graphic: [
+      {
+        type: 'text',
+        left: 'center',
+        top: 12,
+        style: {
+          text: 'Inner: Actual Spend  |  Outer: Budget Allocation',
+          fill: MUTED,
+          fontSize: 11
+        }
+      }
+    ]
+  });
+  window.addEventListener('resize', function() { chart.resize(); });
+})();
+
+
+/* ══════════════════════════════════════════
+   5 — Top 10 Most Expensive Missions
+   ══════════════════════════════════════════ */
+;(function() {
+  const chart = init('chartTopMissions');
+
+  const missions = [
+    { name: 'Full codebase refactor',      cost: 42.30, team: 'Dev Team' },
+    { name: 'Research paper synthesis',     cost: 38.70, team: 'Research Team' },
+    { name: 'API integration test suite',   cost: 31.20, team: 'Dev Team' },
+    { name: 'Competitor analysis report',   cost: 28.90, team: 'Research Team' },
+    { name: 'Marketing image generation',   cost: 18.50, team: 'Image Gen' },
+    { name: 'Data pipeline migration',      cost: 17.80, team: 'Dev Team' },
+    { name: 'Embedding index rebuild',      cost: 12.00, team: 'Embeddings' },
+    { name: 'Quarterly metrics dashboard',  cost: 11.40, team: 'Research Team' },
+    { name: 'Bug triage automation',        cost: 10.60, team: 'Dev Team' },
+    { name: 'User feedback classifier',     cost:  9.80, team: 'Research Team' }
+  ];
+
+  const teamColors = {
+    'Dev Team':       '#f43f5e',
+    'Research Team':  '#10b981',
+    'Image Gen':      '#f59e0b',
+    'Embeddings':     '#22d3ee'
+  };
+
+  // Reverse for horizontal bar (bottom to top)
+  const reversed = missions.slice().reverse();
+
+  chart.setOption({
+    tooltip: {
+      trigger: 'axis',
+      axisPointer: { type: 'shadow' },
+      backgroundColor: '#1a1d27',
+      borderColor: BORDER,
+      textStyle: { color: TEXT, fontSize: 12 },
+      formatter: function(params) {
+        const p = params[0];
+        const m = reversed[p.dataIndex];
+        return '<b>' + m.name + '</b><br/>' +
+               'Team: ' + m.team + '<br/>' +
+               'Cost: <b>$' + m.cost.toFixed(2) + '</b>';
+      }
+    },
+    grid: { left: 220, right: 90, top: 20, bottom: 20 },
+    xAxis: {
+      type: 'value',
+      axisLabel: { color: MUTED, formatter: '${value}' },
+      splitLine: { lineStyle: { color: BORDER, type: 'dashed' } },
+      axisLine: { show: false }
+    },
+    yAxis: {
+      type: 'category',
+      data: reversed.map(function(m) { return m.name; }),
+      axisLabel: { color: TEXT, fontSize: 11, width: 200, overflow: 'truncate' },
+      axisLine: { show: false },
+      axisTick: { show: false }
+    },
+    series: [{
+      type: 'bar',
+      data: reversed.map(function(m) {
+        return {
+          value: m.cost,
+          itemStyle: {
+            color: {
+              type: 'linear', x: 0, y: 0, x2: 1, y2: 0,
+              colorStops: [
+                { offset: 0, color: teamColors[m.team] + '99' },
+                { offset: 1, color: teamColors[m.team] }
+              ]
+            },
+            borderRadius: [0, 4, 4, 0]
+          }
+        };
+      }),
+      barWidth: 20,
+      label: {
+        show: true,
+        position: 'right',
+        color: TEXT,
+        fontSize: 11,
+        fontWeight: 600,
+        formatter: function(p) {
+          const m = reversed[p.dataIndex];
+          return '$' + m.cost.toFixed(2) + '  [' + m.team + ']';
+        }
+      }
+    }]
+  });
+  window.addEventListener('resize', function() { chart.resize(); });
+})();
+
+</script>
+</body>
+</html>

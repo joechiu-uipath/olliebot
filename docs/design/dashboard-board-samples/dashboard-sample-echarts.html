@@ -1,0 +1,1135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OllieBot Agent Analytics Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.6.0/dist/echarts.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/marked@15.0.7/lib/marked.umd.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg-primary: #0f1117;
+    --bg-card: #1a1d27;
+    --border-card: #2a2d37;
+    --text-primary: #e0e0e0;
+    --text-secondary: #8b8fa3;
+    --accent-indigo: #6366f1;
+    --accent-cyan: #22d3ee;
+    --accent-emerald: #10b981;
+    --accent-amber: #f59e0b;
+    --accent-rose: #f43f5e;
+    --shadow-card: 0 4px 24px rgba(0, 0, 0, 0.35), 0 1px 4px rgba(0, 0, 0, 0.2);
+    --radius: 12px;
+  }
+
+  html { font-size: 15px; }
+
+  body {
+    font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    min-height: 100vh;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .dashboard {
+    max-width: 1440px;
+    margin: 0 auto;
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  /* --- Header --- */
+  .header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px 24px;
+    background: linear-gradient(135deg, #1a1d27 0%, #1e2233 100%);
+    border: 1px solid var(--border-card);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-card);
+  }
+  .header-left h1 {
+    font-size: 1.45rem;
+    font-weight: 700;
+    background: linear-gradient(135deg, var(--accent-indigo), var(--accent-cyan));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    letter-spacing: -0.02em;
+  }
+  .header-left .subtitle {
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+    margin-top: 2px;
+  }
+  .header-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+  }
+  .live-dot {
+    width: 8px; height: 8px;
+    background: var(--accent-emerald);
+    border-radius: 50%;
+    animation: pulse-dot 2s ease-in-out infinite;
+  }
+  @keyframes pulse-dot {
+    0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(16,185,129,0.5); }
+    50% { opacity: 0.7; box-shadow: 0 0 0 6px rgba(16,185,129,0); }
+  }
+
+  /* --- KPI Row --- */
+  .kpi-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+  }
+  .kpi-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border-card);
+    border-radius: var(--radius);
+    padding: 20px 22px;
+    box-shadow: var(--shadow-card);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    position: relative;
+    overflow: hidden;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+  }
+  .kpi-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 32px rgba(0,0,0,0.45);
+  }
+  .kpi-card::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 3px;
+    border-radius: var(--radius) var(--radius) 0 0;
+  }
+  .kpi-card:nth-child(1)::before { background: linear-gradient(90deg, var(--accent-indigo), #818cf8); }
+  .kpi-card:nth-child(2)::before { background: linear-gradient(90deg, var(--accent-cyan), #67e8f9); }
+  .kpi-card:nth-child(3)::before { background: linear-gradient(90deg, var(--accent-emerald), #34d399); }
+  .kpi-card:nth-child(4)::before { background: linear-gradient(90deg, var(--accent-amber), #fbbf24); }
+  .kpi-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-weight: 600;
+  }
+  .kpi-icon {
+    font-size: 1.15rem;
+    width: 32px; height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 8px;
+    flex-shrink: 0;
+  }
+  .kpi-card:nth-child(1) .kpi-icon { background: rgba(99,102,241,0.15); color: var(--accent-indigo); }
+  .kpi-card:nth-child(2) .kpi-icon { background: rgba(34,211,238,0.15); color: var(--accent-cyan); }
+  .kpi-card:nth-child(3) .kpi-icon { background: rgba(16,185,129,0.15); color: var(--accent-emerald); }
+  .kpi-card:nth-child(4) .kpi-icon { background: rgba(245,158,11,0.15); color: var(--accent-amber); }
+  .kpi-value {
+    font-size: 2rem;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    line-height: 1.1;
+  }
+  .kpi-card:nth-child(1) .kpi-value { color: #a5b4fc; }
+  .kpi-card:nth-child(2) .kpi-value { color: #67e8f9; }
+  .kpi-card:nth-child(3) .kpi-value { color: #6ee7b7; }
+  .kpi-card:nth-child(4) .kpi-value { color: #fcd34d; }
+  .kpi-sub {
+    font-size: 0.72rem;
+    color: var(--text-secondary);
+  }
+  .kpi-change {
+    font-size: 0.73rem;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 2px 8px;
+    border-radius: 6px;
+    width: fit-content;
+  }
+  .kpi-change.up { color: var(--accent-emerald); background: rgba(16,185,129,0.12); }
+  .kpi-change.down { color: var(--accent-rose); background: rgba(244,63,94,0.12); }
+
+  /* --- Chart Panels --- */
+  .row-2col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 20px;
+  }
+  .row-full {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 20px;
+  }
+  .panel {
+    background: var(--bg-card);
+    border: 1px solid var(--border-card);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-card);
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+  }
+  .panel-title {
+    font-size: 0.88rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .panel-title .dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .chart-container {
+    flex: 1;
+    min-height: 320px;
+  }
+  .chart-container.heatmap { min-height: 280px; }
+  .chart-container.gauge { min-height: 240px; }
+  .chart-container.sankey { min-height: 380px; }
+
+  /* --- Gauge cluster --- */
+  .gauge-cluster {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    flex: 1;
+  }
+  .gauge-cluster .gauge-item {
+    min-height: 240px;
+  }
+
+  /* --- Table --- */
+  .table-wrapper {
+    flex: 1;
+    overflow: auto;
+    max-height: 460px;
+    border-radius: 8px;
+    border: 1px solid var(--border-card);
+  }
+  .table-wrapper::-webkit-scrollbar { width: 6px; height: 6px; }
+  .table-wrapper::-webkit-scrollbar-track { background: var(--bg-card); }
+  .table-wrapper::-webkit-scrollbar-thumb { background: var(--border-card); border-radius: 3px; }
+
+  table.traces {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.78rem;
+  }
+  table.traces thead {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+  }
+  table.traces th {
+    background: #22253a;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-weight: 600;
+    font-size: 0.7rem;
+    padding: 10px 12px;
+    text-align: left;
+    white-space: nowrap;
+    cursor: pointer;
+    user-select: none;
+    border-bottom: 1px solid var(--border-card);
+    transition: color 0.15s;
+  }
+  table.traces th:hover { color: var(--accent-cyan); }
+  table.traces th .sort-arrow { margin-left: 4px; font-size: 0.6rem; opacity: 0.5; }
+  table.traces th.sorted .sort-arrow { opacity: 1; color: var(--accent-cyan); }
+  table.traces td {
+    padding: 9px 12px;
+    border-bottom: 1px solid rgba(42,45,55,0.5);
+    white-space: nowrap;
+    color: var(--text-primary);
+  }
+  table.traces tbody tr {
+    transition: background 0.15s;
+  }
+  table.traces tbody tr:hover { background: rgba(99,102,241,0.06); }
+  .badge {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 20px;
+    font-size: 0.68rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+  }
+  .badge.success { background: rgba(16,185,129,0.15); color: var(--accent-emerald); }
+  .badge.error   { background: rgba(244,63,94,0.15); color: var(--accent-rose); }
+  .badge.warning { background: rgba(245,158,11,0.15); color: var(--accent-amber); }
+  .badge.running { background: rgba(99,102,241,0.15); color: var(--accent-indigo); }
+
+  .agents-list {
+    display: flex;
+    gap: 4px;
+  }
+  .agent-chip {
+    display: inline-block;
+    padding: 1px 7px;
+    border-radius: 4px;
+    font-size: 0.66rem;
+    font-weight: 500;
+    background: rgba(99,102,241,0.12);
+    color: #a5b4fc;
+  }
+
+  /* --- Footer --- */
+  .footer {
+    text-align: center;
+    padding: 16px;
+    font-size: 0.72rem;
+    color: #555870;
+    border-top: 1px solid var(--border-card);
+    margin-top: 4px;
+  }
+  .footer span { color: var(--accent-indigo); }
+
+  /* Responsive */
+  @media (max-width: 960px) {
+    .kpi-row { grid-template-columns: repeat(2, 1fr); }
+    .row-2col { grid-template-columns: 1fr; }
+    .gauge-cluster { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 560px) {
+    .kpi-row { grid-template-columns: 1fr; }
+    .header { flex-direction: column; gap: 8px; text-align: center; }
+  }
+</style>
+</head>
+<body>
+<div class="dashboard">
+
+  <!-- HEADER -->
+  <div class="header">
+    <div class="header-left">
+      <h1>OllieBot Agent Analytics</h1>
+      <div class="subtitle">Snapshot: Feb 13, 2026 14:30 UTC</div>
+    </div>
+    <div class="header-right">
+      <div class="live-dot"></div>
+      <span>Data snapshot v1.0.3</span>
+    </div>
+  </div>
+
+  <!-- KPI CARDS -->
+  <div class="kpi-row">
+    <div class="kpi-card">
+      <div class="kpi-header"><div class="kpi-icon">&#x1D5E7;</div> Total Traces</div>
+      <div class="kpi-value">247</div>
+      <div class="kpi-sub">Completed agent executions (24h)</div>
+      <div class="kpi-change up">&#9650; +12% vs last period</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-header"><div class="kpi-icon">&#x2726;</div> LLM Calls</div>
+      <div class="kpi-value">1,832</div>
+      <div class="kpi-sub">Avg 7.4 calls per trace</div>
+      <div class="kpi-change up">&#9650; +8% vs last period</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-header"><div class="kpi-icon">&#x25C8;</div> Total Tokens</div>
+      <div class="kpi-value">2.4M</div>
+      <div class="kpi-sub">1.6M input &middot; 0.8M output</div>
+      <div class="kpi-change down">&#9660; -3% vs last period</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-header"><div class="kpi-icon">&#x23F1;</div> Avg Latency</div>
+      <div class="kpi-value">1.2s</div>
+      <div class="kpi-sub">P95: 3.4s &middot; P99: 5.1s</div>
+      <div class="kpi-change up">&#9650; -15% vs last period</div>
+    </div>
+  </div>
+
+  <!-- ROW 1: Token Area + Pie -->
+  <div class="row-2col">
+    <div class="panel">
+      <div class="panel-title"><div class="dot" style="background:var(--accent-cyan)"></div> Token Usage Over Time (24h)</div>
+      <div class="chart-container" id="chart-token-area"></div>
+    </div>
+    <div class="panel">
+      <div class="panel-title"><div class="dot" style="background:var(--accent-indigo)"></div> LLM Calls by Workload</div>
+      <div class="chart-container" id="chart-workload-pie"></div>
+    </div>
+  </div>
+
+  <!-- ROW 2: Bar + Gauges -->
+  <div class="row-2col">
+    <div class="panel">
+      <div class="panel-title"><div class="dot" style="background:var(--accent-emerald)"></div> Top 10 Tools by Invocation Count</div>
+      <div class="chart-container" id="chart-tools-bar"></div>
+    </div>
+    <div class="panel">
+      <div class="panel-title"><div class="dot" style="background:var(--accent-amber)"></div> System Health Gauges</div>
+      <div class="gauge-cluster">
+        <div class="gauge-item" id="gauge-success"></div>
+        <div class="gauge-item" id="gauge-response"></div>
+        <div class="gauge-item" id="gauge-cache"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ROW 3: Heatmap -->
+  <div class="row-full">
+    <div class="panel">
+      <div class="panel-title"><div class="dot" style="background:var(--accent-rose)"></div> Agent Activity Heatmap (Last 7 Days)</div>
+      <div class="chart-container heatmap" id="chart-heatmap"></div>
+    </div>
+  </div>
+
+  <!-- ROW 4: Sankey + Table -->
+  <div class="row-2col">
+    <div class="panel">
+      <div class="panel-title"><div class="dot" style="background:var(--accent-indigo)"></div> Agent Delegation Flow</div>
+      <div class="chart-container sankey" id="chart-sankey"></div>
+    </div>
+    <div class="panel">
+      <div class="panel-title"><div class="dot" style="background:var(--accent-cyan)"></div> Recent Traces</div>
+      <div class="table-wrapper">
+        <table class="traces" id="traces-table">
+          <thead><tr></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- FOOTER -->
+  <div class="footer">
+    Dashboard generated by <span>OllieBot LLM-Powered Dashboard Engine</span> &bull; Data snapshot version v1.0.3
+  </div>
+</div>
+
+<script>
+// ============================================================
+// DATA DEFINITIONS
+// ============================================================
+
+// --- Token Usage Over Time (24h) ---
+const tokenTimeLabels = [];
+const inputTokenData = [];
+const outputTokenData = [];
+(function() {
+  const baseInput  = [42, 38, 29, 22, 18, 15, 14, 16, 28, 45, 62, 78, 95, 102, 98, 88, 92, 105, 110, 95, 82, 68, 55, 48];
+  const baseOutput = [18, 15, 12, 9,  7,  6,  5,  7,  12, 19, 28, 35, 44, 48,  46, 40, 43, 50,  52, 44, 38, 30, 24, 20];
+  for (let h = 0; h < 24; h++) {
+    const hh = String(h).padStart(2, '0');
+    tokenTimeLabels.push(hh + ':00');
+    inputTokenData.push(baseInput[h] * 1000);
+    outputTokenData.push(baseOutput[h] * 1000);
+  }
+})();
+
+// --- LLM Calls by Workload ---
+const workloadData = [
+  { value: 1191, name: 'main',      pct: '65.0%' },
+  { value: 458,  name: 'fast',      pct: '25.0%' },
+  { value: 147,  name: 'embedding', pct: '8.0%'  },
+  { value: 36,   name: 'browser',   pct: '2.0%'  }
+];
+
+// --- Top 10 Tools ---
+const toolsData = [
+  { name: 'Read',           count: 412, source: 'native' },
+  { name: 'Edit',           count: 387, source: 'native' },
+  { name: 'Bash',           count: 298, source: 'native' },
+  { name: 'Grep',           count: 245, source: 'native' },
+  { name: 'WebFetch',       count: 178, source: 'native' },
+  { name: 'pg_query',       count: 156, source: 'mcp'    },
+  { name: 'github_pr',      count: 134, source: 'mcp'    },
+  { name: 'slack_post',     count: 89,  source: 'mcp'    },
+  { name: 'deploy_preview', count: 72,  source: 'user'   },
+  { name: 'run_tests',      count: 61,  source: 'user'   }
+];
+const sourceColors = { native: '#6366f1', mcp: '#10b981', user: '#f59e0b' };
+
+// --- Heatmap Data (7 days x 24 hours) ---
+const heatmapDays = ['Mon Feb 7', 'Tue Feb 8', 'Wed Feb 9', 'Thu Feb 10', 'Fri Feb 11', 'Sat Feb 12', 'Sun Feb 13'];
+const heatmapData = [];
+(function() {
+  const patterns = [
+    [1,1,0,0,0,0,0,1,3,6,8,10,12,11,10,9,10,12,13,10,7,5,3,2],
+    [2,1,1,0,0,0,1,2,4,7,9,11,14,13,11,10,11,13,14,11,8,5,3,2],
+    [1,1,0,0,0,0,0,1,3,5,8,10,11,12,10,9,10,11,12,9,7,4,2,1],
+    [2,1,1,0,0,0,1,2,5,8,10,13,15,14,12,11,12,14,16,12,9,6,4,2],
+    [3,2,1,1,0,0,1,3,6,9,12,15,18,17,15,13,14,16,18,14,10,7,4,3],
+    [1,0,0,0,0,0,0,0,1,2,3,4,5,5,4,3,3,4,5,4,3,2,1,1],
+    [1,0,0,0,0,0,0,1,2,4,6,8,9,10,9,8,8,9,10,8,6,4,2,1]
+  ];
+  for (let d = 0; d < 7; d++) {
+    for (let h = 0; h < 24; h++) {
+      heatmapData.push([h, d, patterns[d][h]]);
+    }
+  }
+})();
+
+// --- Sankey Diagram ---
+const sankeyNodes = [
+  { name: 'Supervisor' },
+  { name: 'MissionLead' },
+  { name: 'Researcher' },
+  { name: 'Coder' },
+  { name: 'Reviewer' },
+  { name: 'Read' },
+  { name: 'Edit' },
+  { name: 'Bash' },
+  { name: 'WebFetch' },
+  { name: 'Grep' },
+  { name: 'pg_query' },
+  { name: 'github_pr' }
+];
+const sankeyLinks = [
+  { source: 'Supervisor',  target: 'MissionLead', value: 320 },
+  { source: 'Supervisor',  target: 'Researcher',  value: 240 },
+  { source: 'Supervisor',  target: 'Coder',       value: 480 },
+  { source: 'Supervisor',  target: 'Reviewer',    value: 160 },
+  { source: 'MissionLead', target: 'Read',        value: 110 },
+  { source: 'MissionLead', target: 'Grep',        value: 85  },
+  { source: 'MissionLead', target: 'WebFetch',    value: 65  },
+  { source: 'Researcher',  target: 'WebFetch',    value: 105 },
+  { source: 'Researcher',  target: 'pg_query',    value: 80  },
+  { source: 'Researcher',  target: 'Read',        value: 55  },
+  { source: 'Coder',       target: 'Edit',        value: 210 },
+  { source: 'Coder',       target: 'Read',        value: 120 },
+  { source: 'Coder',       target: 'Bash',        value: 95  },
+  { source: 'Coder',       target: 'Grep',        value: 55  },
+  { source: 'Reviewer',    target: 'Read',        value: 70  },
+  { source: 'Reviewer',    target: 'github_pr',   value: 55  },
+  { source: 'Reviewer',    target: 'Grep',        value: 35  }
+];
+
+// --- Recent Traces ---
+const tracesColumns = [
+  { key: 'time',     label: 'Time',      sortable: true },
+  { key: 'trigger',  label: 'Trigger',   sortable: true },
+  { key: 'agents',   label: 'Agents',    sortable: false },
+  { key: 'llmCalls', label: 'LLM Calls', sortable: true },
+  { key: 'tokens',   label: 'Tokens',    sortable: true },
+  { key: 'duration', label: 'Duration',  sortable: true },
+  { key: 'status',   label: 'Status',    sortable: true }
+];
+
+const tracesData = [
+  { time: '14:28', trigger: 'PR Review #482',       agents: ['Reviewer','Coder'],                llmCalls: 12, tokens: 18400,  duration: 8.2,  status: 'success' },
+  { time: '14:25', trigger: 'Code Refactor Task',   agents: ['MissionLead','Coder'],             llmCalls: 18, tokens: 32100,  duration: 14.5, status: 'success' },
+  { time: '14:22', trigger: 'Bug Investigation',    agents: ['Researcher','Coder'],              llmCalls: 9,  tokens: 14200,  duration: 6.1,  status: 'success' },
+  { time: '14:18', trigger: 'Deploy Preview',       agents: ['Coder'],                           llmCalls: 4,  tokens: 5800,   duration: 3.2,  status: 'success' },
+  { time: '14:15', trigger: 'Documentation Update', agents: ['MissionLead','Researcher'],        llmCalls: 7,  tokens: 11500,  duration: 5.8,  status: 'success' },
+  { time: '14:11', trigger: 'Slack Query',          agents: ['Researcher'],                      llmCalls: 3,  tokens: 4200,   duration: 2.1,  status: 'success' },
+  { time: '14:08', trigger: 'Test Suite Run',       agents: ['Coder','Reviewer'],                llmCalls: 15, tokens: 24800,  duration: 11.3, status: 'error'   },
+  { time: '14:04', trigger: 'Schema Migration',     agents: ['MissionLead','Coder','Reviewer'],  llmCalls: 22, tokens: 41200,  duration: 18.7, status: 'success' },
+  { time: '14:01', trigger: 'Security Audit',       agents: ['Researcher','Reviewer'],           llmCalls: 11, tokens: 19300,  duration: 9.4,  status: 'warning' },
+  { time: '13:57', trigger: 'Feature Branch Merge', agents: ['Coder','Reviewer'],                llmCalls: 8,  tokens: 12700,  duration: 5.5,  status: 'success' },
+  { time: '13:53', trigger: 'API Endpoint Design',  agents: ['MissionLead','Coder'],             llmCalls: 14, tokens: 26400,  duration: 12.8, status: 'success' },
+  { time: '13:49', trigger: 'Performance Profiling',agents: ['Researcher','Coder'],              llmCalls: 10, tokens: 17600,  duration: 7.9,  status: 'success' },
+  { time: '13:44', trigger: 'Dependency Update',    agents: ['Coder'],                           llmCalls: 5,  tokens: 7100,   duration: 3.8,  status: 'warning' },
+  { time: '13:40', trigger: 'Log Analysis',         agents: ['Researcher'],                      llmCalls: 6,  tokens: 9800,   duration: 4.6,  status: 'success' },
+  { time: '13:35', trigger: 'Onboarding Flow',      agents: ['MissionLead','Coder','Reviewer'],  llmCalls: 19, tokens: 35600,  duration: 16.2, status: 'running' }
+];
+
+
+// ============================================================
+// CHART RENDERING
+// ============================================================
+
+function initChart(domId) {
+  const el = document.getElementById(domId);
+  if (!el) return null;
+  return echarts.init(el, null, { renderer: 'canvas' });
+}
+
+// Resize helper
+const allCharts = [];
+function registerChart(c) { if (c) allCharts.push(c); }
+window.addEventListener('resize', () => { allCharts.forEach(c => c.resize()); });
+
+// ---- 1. Token Usage Stacked Area ----
+(function() {
+  const chart = initChart('chart-token-area');
+  if (!chart) return;
+  registerChart(chart);
+  chart.setOption({
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: 'rgba(26,29,39,0.95)',
+      borderColor: '#2a2d37',
+      textStyle: { color: '#e0e0e0', fontSize: 12 },
+      formatter: function(params) {
+        let s = '<b>' + params[0].axisValue + '</b><br/>';
+        params.forEach(p => {
+          s += p.marker + ' ' + p.seriesName + ': <b>' + (p.value / 1000).toFixed(0) + 'K</b><br/>';
+        });
+        return s;
+      }
+    },
+    legend: {
+      data: ['Input Tokens', 'Output Tokens'],
+      top: 4,
+      right: 16,
+      textStyle: { color: '#8b8fa3', fontSize: 11 },
+      icon: 'roundRect',
+      itemWidth: 14,
+      itemHeight: 8
+    },
+    grid: { left: 48, right: 20, top: 40, bottom: 72 },
+    xAxis: {
+      type: 'category',
+      data: tokenTimeLabels,
+      boundaryGap: false,
+      axisLine: { lineStyle: { color: '#2a2d37' } },
+      axisLabel: { color: '#8b8fa3', fontSize: 10 },
+      axisTick: { show: false }
+    },
+    yAxis: {
+      type: 'value',
+      splitLine: { lineStyle: { color: 'rgba(42,45,55,0.6)' } },
+      axisLabel: { color: '#8b8fa3', fontSize: 10, formatter: v => (v/1000)+'K' },
+      axisLine: { show: false },
+      axisTick: { show: false }
+    },
+    dataZoom: [{
+      type: 'slider',
+      start: 0, end: 100,
+      height: 22,
+      bottom: 8,
+      borderColor: 'transparent',
+      backgroundColor: 'rgba(42,45,55,0.3)',
+      fillerColor: 'rgba(99,102,241,0.15)',
+      handleStyle: { color: '#6366f1', borderColor: '#6366f1' },
+      textStyle: { color: '#8b8fa3', fontSize: 10 },
+      dataBackground: {
+        lineStyle: { color: 'rgba(99,102,241,0.3)' },
+        areaStyle: { color: 'rgba(99,102,241,0.08)' }
+      }
+    }],
+    series: [
+      {
+        name: 'Input Tokens',
+        type: 'line',
+        stack: 'tokens',
+        smooth: true,
+        symbol: 'none',
+        lineStyle: { width: 2, color: '#6366f1' },
+        areaStyle: {
+          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+            { offset: 0, color: 'rgba(99,102,241,0.45)' },
+            { offset: 1, color: 'rgba(99,102,241,0.02)' }
+          ])
+        },
+        data: inputTokenData
+      },
+      {
+        name: 'Output Tokens',
+        type: 'line',
+        stack: 'tokens',
+        smooth: true,
+        symbol: 'none',
+        lineStyle: { width: 2, color: '#22d3ee' },
+        areaStyle: {
+          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+            { offset: 0, color: 'rgba(34,211,238,0.4)' },
+            { offset: 1, color: 'rgba(34,211,238,0.02)' }
+          ])
+        },
+        data: outputTokenData
+      }
+    ],
+    animationDuration: 1200,
+    animationEasing: 'cubicInOut'
+  });
+})();
+
+// ---- 2. Workload Donut ----
+(function() {
+  const chart = initChart('chart-workload-pie');
+  if (!chart) return;
+  registerChart(chart);
+  const colors = ['#6366f1', '#22d3ee', '#10b981', '#f59e0b'];
+  chart.setOption({
+    tooltip: {
+      backgroundColor: 'rgba(26,29,39,0.95)',
+      borderColor: '#2a2d37',
+      textStyle: { color: '#e0e0e0', fontSize: 12 },
+      formatter: p => '<b>' + p.name + '</b><br/>Calls: ' + p.value.toLocaleString() + ' (' + p.data.pct + ')'
+    },
+    legend: {
+      orient: 'vertical',
+      right: 16,
+      top: 'center',
+      textStyle: { color: '#8b8fa3', fontSize: 11 },
+      icon: 'circle',
+      itemWidth: 10,
+      itemHeight: 10,
+      formatter: function(name) {
+        const item = workloadData.find(d => d.name === name);
+        return name + '  ' + item.pct;
+      }
+    },
+    color: colors,
+    series: [{
+      type: 'pie',
+      radius: ['48%', '72%'],
+      center: ['38%', '50%'],
+      avoidLabelOverlap: true,
+      itemStyle: {
+        borderColor: '#1a1d27',
+        borderWidth: 3,
+        borderRadius: 6
+      },
+      label: {
+        show: true,
+        position: 'outside',
+        formatter: '{b}\n{c} calls',
+        color: '#e0e0e0',
+        fontSize: 11,
+        lineHeight: 16
+      },
+      labelLine: {
+        lineStyle: { color: '#3a3d57' }
+      },
+      emphasis: {
+        itemStyle: {
+          shadowBlur: 20,
+          shadowColor: 'rgba(0,0,0,0.4)'
+        },
+        label: { fontSize: 13, fontWeight: 'bold' }
+      },
+      data: workloadData,
+      animationType: 'scale',
+      animationDuration: 1000,
+      animationEasing: 'elasticOut'
+    }]
+  });
+})();
+
+// ---- 3. Top Tools Horizontal Bar ----
+(function() {
+  const chart = initChart('chart-tools-bar');
+  if (!chart) return;
+  registerChart(chart);
+  const sorted = [...toolsData].sort((a, b) => a.count - b.count);
+  chart.setOption({
+    tooltip: {
+      backgroundColor: 'rgba(26,29,39,0.95)',
+      borderColor: '#2a2d37',
+      textStyle: { color: '#e0e0e0', fontSize: 12 },
+      formatter: p => '<b>' + p.name + '</b><br/>Invocations: ' + p.value + '<br/>Source: ' + sorted[p.dataIndex].source
+    },
+    grid: { left: 110, right: 60, top: 16, bottom: 36 },
+    xAxis: {
+      type: 'value',
+      splitLine: { lineStyle: { color: 'rgba(42,45,55,0.6)' } },
+      axisLabel: { color: '#8b8fa3', fontSize: 10 },
+      axisLine: { show: false },
+      axisTick: { show: false }
+    },
+    yAxis: {
+      type: 'category',
+      data: sorted.map(d => d.name),
+      axisLine: { lineStyle: { color: '#2a2d37' } },
+      axisLabel: { color: '#e0e0e0', fontSize: 11 },
+      axisTick: { show: false }
+    },
+    series: [{
+      type: 'bar',
+      data: sorted.map(d => ({
+        value: d.count,
+        itemStyle: {
+          color: new echarts.graphic.LinearGradient(0, 0, 1, 0, [
+            { offset: 0, color: sourceColors[d.source] + '99' },
+            { offset: 1, color: sourceColors[d.source] }
+          ]),
+          borderRadius: [0, 4, 4, 0]
+        }
+      })),
+      barWidth: '60%',
+      label: {
+        show: true,
+        position: 'right',
+        color: '#8b8fa3',
+        fontSize: 11,
+        formatter: '{c}'
+      },
+      animationDuration: 1200,
+      animationEasing: 'cubicOut'
+    }],
+    // Legend for source colors
+    graphic: [
+      { type: 'circle', left: 116, bottom: 10, shape: { r: 4 }, style: { fill: '#6366f1' } },
+      { type: 'text',   left: 126, bottom: 4,  style: { text: 'native', fill: '#8b8fa3', fontSize: 10 } },
+      { type: 'circle', left: 180, bottom: 10, shape: { r: 4 }, style: { fill: '#10b981' } },
+      { type: 'text',   left: 190, bottom: 4,  style: { text: 'mcp', fill: '#8b8fa3', fontSize: 10 } },
+      { type: 'circle', left: 224, bottom: 10, shape: { r: 4 }, style: { fill: '#f59e0b' } },
+      { type: 'text',   left: 234, bottom: 4,  style: { text: 'user', fill: '#8b8fa3', fontSize: 10 } }
+    ]
+  });
+})();
+
+// ---- 4. Gauge Cluster ----
+function makeGauge(domId, title, value, min, max, unit, thresholds) {
+  const chart = initChart(domId);
+  if (!chart) return;
+  registerChart(chart);
+  const pct = (value - min) / (max - min);
+  chart.setOption({
+    series: [{
+      type: 'gauge',
+      center: ['50%', '60%'],
+      radius: '88%',
+      startAngle: 210,
+      endAngle: -30,
+      min: min,
+      max: max,
+      splitNumber: 5,
+      progress: {
+        show: true,
+        width: 14,
+        itemStyle: {
+          color: {
+            type: 'linear', x: 0, y: 0, x2: 1, y2: 0,
+            colorStops: thresholds
+          }
+        }
+      },
+      axisLine: {
+        lineStyle: {
+          width: 14,
+          color: [[1, 'rgba(42,45,55,0.5)']]
+        }
+      },
+      axisTick: { show: false },
+      splitLine: {
+        length: 8,
+        lineStyle: { width: 1, color: '#3a3d57' }
+      },
+      axisLabel: {
+        distance: 18,
+        color: '#555870',
+        fontSize: 9,
+        formatter: function(v) {
+          if (unit === '%') return v + '%';
+          return v + 's';
+        }
+      },
+      pointer: {
+        icon: 'path://M12.8,0.7l12,40.1H0.7L12.8,0.7z',
+        length: '55%',
+        width: 6,
+        offsetCenter: [0, '-10%'],
+        itemStyle: { color: 'auto' }
+      },
+      anchor: {
+        show: true,
+        size: 12,
+        showAbove: true,
+        itemStyle: { borderWidth: 3, borderColor: '#1a1d27', color: '#2a2d37' }
+      },
+      title: {
+        offsetCenter: [0, '70%'],
+        fontSize: 12,
+        color: '#8b8fa3',
+        fontWeight: 500
+      },
+      detail: {
+        offsetCenter: [0, '42%'],
+        fontSize: 22,
+        fontWeight: 700,
+        color: '#e0e0e0',
+        formatter: function(v) {
+          return v + (unit || '');
+        }
+      },
+      data: [{ value: value, name: title }],
+      animationDuration: 1500,
+      animationEasing: 'bounceOut'
+    }]
+  });
+}
+
+makeGauge('gauge-success', 'Success Rate', 98.5, 0, 100, '%', [
+  { offset: 0, color: '#10b981' },
+  { offset: 1, color: '#6ee7b7' }
+]);
+makeGauge('gauge-response', 'Avg Response', 1.2, 0, 5, 's', [
+  { offset: 0, color: '#22d3ee' },
+  { offset: 0.5, color: '#f59e0b' },
+  { offset: 1, color: '#f43f5e' }
+]);
+makeGauge('gauge-cache', 'Cache Hit Rate', 73, 0, 100, '%', [
+  { offset: 0, color: '#6366f1' },
+  { offset: 1, color: '#a78bfa' }
+]);
+
+// ---- 5. Heatmap ----
+(function() {
+  const chart = initChart('chart-heatmap');
+  if (!chart) return;
+  registerChart(chart);
+  const hours = Array.from({ length: 24 }, (_, i) => String(i).padStart(2, '0') + ':00');
+  const maxVal = Math.max(...heatmapData.map(d => d[2]));
+  chart.setOption({
+    tooltip: {
+      backgroundColor: 'rgba(26,29,39,0.95)',
+      borderColor: '#2a2d37',
+      textStyle: { color: '#e0e0e0', fontSize: 12 },
+      formatter: function(p) {
+        return '<b>' + heatmapDays[p.value[1]] + '</b> at <b>' + hours[p.value[0]] + '</b><br/>LLM Calls: <b>' + p.value[2] + '</b>';
+      }
+    },
+    grid: { left: 100, right: 60, top: 10, bottom: 40 },
+    xAxis: {
+      type: 'category',
+      data: hours,
+      splitArea: { show: false },
+      axisLine: { lineStyle: { color: '#2a2d37' } },
+      axisLabel: { color: '#8b8fa3', fontSize: 9, interval: 1 },
+      axisTick: { show: false }
+    },
+    yAxis: {
+      type: 'category',
+      data: heatmapDays,
+      splitArea: { show: false },
+      axisLine: { lineStyle: { color: '#2a2d37' } },
+      axisLabel: { color: '#8b8fa3', fontSize: 10 },
+      axisTick: { show: false }
+    },
+    visualMap: {
+      min: 0,
+      max: maxVal,
+      calculable: false,
+      orient: 'vertical',
+      right: 4,
+      top: 'center',
+      itemHeight: 160,
+      textStyle: { color: '#8b8fa3', fontSize: 9 },
+      inRange: {
+        color: ['#0f1117', '#1e3a5f', '#1d4ed8', '#7c3aed', '#db2777', '#f43f5e']
+      }
+    },
+    series: [{
+      type: 'heatmap',
+      data: heatmapData,
+      label: { show: false },
+      itemStyle: { borderWidth: 2, borderColor: '#0f1117', borderRadius: 3 },
+      emphasis: {
+        itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0,0,0,0.5)' }
+      },
+      animationDuration: 1500,
+      animationEasing: 'cubicInOut'
+    }]
+  });
+})();
+
+// ---- 6. Sankey Diagram ----
+(function() {
+  const chart = initChart('chart-sankey');
+  if (!chart) return;
+  registerChart(chart);
+  const nodeColors = {
+    'Supervisor': '#6366f1',
+    'MissionLead': '#818cf8',
+    'Researcher': '#22d3ee',
+    'Coder': '#10b981',
+    'Reviewer': '#f59e0b',
+    'Read': '#a78bfa',
+    'Edit': '#34d399',
+    'Bash': '#67e8f9',
+    'WebFetch': '#fbbf24',
+    'Grep': '#c084fc',
+    'pg_query': '#2dd4bf',
+    'github_pr': '#fb923c'
+  };
+  chart.setOption({
+    tooltip: {
+      backgroundColor: 'rgba(26,29,39,0.95)',
+      borderColor: '#2a2d37',
+      textStyle: { color: '#e0e0e0', fontSize: 12 },
+      formatter: function(p) {
+        if (p.dataType === 'edge') {
+          return p.data.source + ' → ' + p.data.target + '<br/>Token cost: <b>' + (p.data.value * 100).toLocaleString() + '</b>';
+        }
+        return '<b>' + p.name + '</b>';
+      }
+    },
+    series: [{
+      type: 'sankey',
+      layout: 'none',
+      emphasis: { focus: 'adjacency' },
+      nodeAlign: 'left',
+      orient: 'horizontal',
+      left: 16, right: 16, top: 10, bottom: 10,
+      nodeWidth: 20,
+      nodeGap: 14,
+      draggable: true,
+      lineStyle: {
+        color: 'gradient',
+        curveness: 0.5,
+        opacity: 0.35
+      },
+      label: {
+        color: '#e0e0e0',
+        fontSize: 11,
+        fontWeight: 500
+      },
+      data: sankeyNodes.map(n => ({
+        ...n,
+        itemStyle: { color: nodeColors[n.name] || '#6366f1', borderColor: 'transparent' }
+      })),
+      links: sankeyLinks,
+      animationDuration: 1500,
+      animationEasing: 'cubicInOut'
+    }]
+  });
+})();
+
+// ---- 7. Sortable Table ----
+(function() {
+  const table = document.getElementById('traces-table');
+  if (!table) return;
+  const thead = table.querySelector('thead tr');
+  const tbody = table.querySelector('tbody');
+
+  let sortKey = null;
+  let sortAsc = true;
+  let data = [...tracesData];
+
+  function render() {
+    // Header
+    thead.innerHTML = '';
+    tracesColumns.forEach(col => {
+      const th = document.createElement('th');
+      th.textContent = col.label;
+      if (col.sortable) {
+        const arrow = document.createElement('span');
+        arrow.className = 'sort-arrow';
+        if (sortKey === col.key) {
+          th.classList.add('sorted');
+          arrow.textContent = sortAsc ? ' ▲' : ' ▼';
+        } else {
+          arrow.textContent = ' ⇅';
+        }
+        th.appendChild(arrow);
+        th.addEventListener('click', () => {
+          if (sortKey === col.key) { sortAsc = !sortAsc; }
+          else { sortKey = col.key; sortAsc = true; }
+          sort();
+          render();
+        });
+      }
+      thead.appendChild(th);
+    });
+
+    // Body
+    tbody.innerHTML = '';
+    data.forEach(row => {
+      const tr = document.createElement('tr');
+
+      // Time
+      const tdTime = document.createElement('td');
+      tdTime.textContent = row.time;
+      tdTime.style.color = '#8b8fa3';
+      tr.appendChild(tdTime);
+
+      // Trigger
+      const tdTrigger = document.createElement('td');
+      tdTrigger.textContent = row.trigger;
+      tdTrigger.style.fontWeight = '500';
+      tr.appendChild(tdTrigger);
+
+      // Agents
+      const tdAgents = document.createElement('td');
+      const agentsDiv = document.createElement('div');
+      agentsDiv.className = 'agents-list';
+      row.agents.forEach(a => {
+        const chip = document.createElement('span');
+        chip.className = 'agent-chip';
+        chip.textContent = a;
+        agentsDiv.appendChild(chip);
+      });
+      tdAgents.appendChild(agentsDiv);
+      tr.appendChild(tdAgents);
+
+      // LLM Calls
+      const tdCalls = document.createElement('td');
+      tdCalls.textContent = row.llmCalls;
+      tdCalls.style.textAlign = 'right';
+      tr.appendChild(tdCalls);
+
+      // Tokens
+      const tdTokens = document.createElement('td');
+      tdTokens.textContent = row.tokens.toLocaleString();
+      tdTokens.style.textAlign = 'right';
+      tdTokens.style.fontVariantNumeric = 'tabular-nums';
+      tr.appendChild(tdTokens);
+
+      // Duration
+      const tdDur = document.createElement('td');
+      tdDur.textContent = row.duration.toFixed(1) + 's';
+      tdDur.style.textAlign = 'right';
+      tdDur.style.fontVariantNumeric = 'tabular-nums';
+      tr.appendChild(tdDur);
+
+      // Status
+      const tdStatus = document.createElement('td');
+      const badge = document.createElement('span');
+      badge.className = 'badge ' + row.status;
+      badge.textContent = row.status.charAt(0).toUpperCase() + row.status.slice(1);
+      tdStatus.appendChild(badge);
+      tr.appendChild(tdStatus);
+
+      tbody.appendChild(tr);
+    });
+  }
+
+  function sort() {
+    data.sort((a, b) => {
+      let va = a[sortKey], vb = b[sortKey];
+      if (typeof va === 'string') {
+        const cmp = va.localeCompare(vb);
+        return sortAsc ? cmp : -cmp;
+      }
+      return sortAsc ? va - vb : vb - va;
+    });
+  }
+
+  render();
+})();
+
+// ---- Use marked.js to verify it loaded (render a small hidden element) ----
+(function() {
+  if (typeof marked !== 'undefined') {
+    const testEl = document.createElement('div');
+    testEl.style.display = 'none';
+    testEl.innerHTML = marked.parse('**Dashboard loaded**');
+    document.body.appendChild(testEl);
+  }
+})();
+</script>
+</body>
+</html>

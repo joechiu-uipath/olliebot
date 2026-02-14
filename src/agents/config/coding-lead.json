@@ -1,0 +1,22 @@
+{
+  "type": "coding-lead",
+  "identity": {
+    "name": "Coding Lead",
+    "emoji": "👨‍💻",
+    "role": "specialist",
+    "description": "Orchestrates frontend code modifications, validates builds, and commits changes"
+  },
+  "canAccessTools": [
+    "delegate",
+    "check_frontend_code"
+  ],
+  "delegation": {
+    "canDelegate": true,
+    "allowedDelegates": ["coding-planner", "coding-fixer"],
+    "restrictedToWorkflow": null,
+    "supervisorCanInvoke": true,
+    "commandTrigger": "Modify",
+    "commandOnly": true
+  },
+  "allowedSkills": []
+}

@@ -1,0 +1,837 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Resource Utilization — System Health &amp; Capacity</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.6.0/dist/echarts.min.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0f1117;
+    --card: #1a1d27;
+    --border: #2a2d37;
+    --text-primary: #e0e0e0;
+    --text-secondary: #8b8fa3;
+    --indigo: #6366f1;
+    --cyan: #22d3ee;
+    --emerald: #10b981;
+    --amber: #f59e0b;
+    --rose: #f43f5e;
+  }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text-primary);
+    line-height: 1.5;
+    min-height: 100vh;
+    padding: 0 0 40px 0;
+  }
+
+  /* ---------- Title bar ---------- */
+  .title-bar {
+    background: linear-gradient(135deg, #1a1d27 0%, #12141c 100%);
+    border-bottom: 1px solid var(--border);
+    padding: 24px 32px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 12px;
+  }
+  .title-bar h1 {
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: -0.3px;
+    color: var(--text-primary);
+    flex: 1 1 100%;
+  }
+  .title-bar h1 span.accent { color: var(--indigo); }
+  .title-bar .meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 24px;
+    width: 100%;
+    align-items: center;
+  }
+  .title-bar .timestamp {
+    font-size: 13px;
+    color: var(--text-secondary);
+    background: rgba(99,102,241,0.1);
+    border: 1px solid rgba(99,102,241,0.25);
+    border-radius: 6px;
+    padding: 4px 12px;
+  }
+  .title-bar .synopsis {
+    font-size: 13px;
+    color: var(--text-secondary);
+    flex: 1;
+  }
+
+  /* ---------- Info panel ---------- */
+  .info-panel {
+    margin: 16px 32px 0;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: rgba(99,102,241,0.06);
+    overflow: hidden;
+    transition: max-height 0.3s ease;
+  }
+  .info-toggle {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 16px;
+    background: transparent;
+    border: none;
+    color: var(--indigo);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    letter-spacing: 0.3px;
+  }
+  .info-toggle:hover { background: rgba(99,102,241,0.08); }
+  .info-toggle .arrow { transition: transform 0.3s ease; display: inline-block; }
+  .info-toggle .arrow.open { transform: rotate(180deg); }
+  .info-body {
+    padding: 0 16px 14px;
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.65;
+    display: none;
+  }
+  .info-body.open { display: block; }
+
+  /* ---------- Layout ---------- */
+  .container { max-width: 1440px; margin: 0 auto; padding: 0 32px; }
+  .section { margin-top: 28px; }
+  .section-title {
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin-bottom: 14px;
+    padding-left: 2px;
+    letter-spacing: 0.2px;
+  }
+  .section-title::before {
+    content: '';
+    display: inline-block;
+    width: 3px;
+    height: 14px;
+    background: var(--indigo);
+    border-radius: 2px;
+    margin-right: 10px;
+    vertical-align: middle;
+  }
+
+  /* ---------- Cards ---------- */
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px;
+  }
+
+  /* ---------- Gauge grid ---------- */
+  .gauge-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+  }
+  .gauge-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 12px 8px;
+    text-align: center;
+  }
+  .gauge-card .gauge-chart { width: 100%; height: 200px; }
+  .gauge-card .gauge-label {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-top: 2px;
+  }
+
+  /* ---------- Chart containers ---------- */
+  .chart-full { width: 100%; height: 400px; }
+  .chart-medium { width: 100%; height: 360px; }
+
+  /* ---------- Two-column layout ---------- */
+  .grid-2col {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+  }
+
+  /* ---------- Responsive ---------- */
+  @media (max-width: 1024px) {
+    .gauge-grid { grid-template-columns: repeat(2, 1fr); }
+    .grid-2col { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 640px) {
+    .gauge-grid { grid-template-columns: 1fr; }
+    .container { padding: 0 16px; }
+    .title-bar { padding: 16px; }
+    .info-panel { margin: 12px 16px 0; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ===== TITLE BAR ===== -->
+<div class="title-bar">
+  <h1><span class="accent">Resource Utilization</span> — System Health &amp; Capacity</h1>
+  <div class="meta">
+    <span class="timestamp">2026-02-13 &nbsp;14:32 UTC</span>
+    <span class="synopsis">Real-time view of system resources: CPU, memory, database connections, API rate limits, and queue depths.</span>
+  </div>
+</div>
+
+<!-- ===== INTERACTIVITY INSTRUCTIONS ===== -->
+<div class="info-panel" id="infoPanel">
+  <button class="info-toggle" onclick="toggleInfo()">
+    <span>Interactivity Guide</span>
+    <span class="arrow" id="infoArrow">&#9662;</span>
+  </button>
+  <div class="info-body" id="infoBody">
+    <strong>Gauges</strong> update arc colors dynamically based on thresholds &mdash; green for healthy, yellow for warning, red for critical.<br>
+    <strong>Hover</strong> over any area chart or line chart to see exact values via tooltip.<br>
+    <strong>Data zoom</strong> sliders are available on all time-series charts &mdash; drag to narrow the time window or use the scroll wheel inside the chart area.<br>
+    <strong>Stacked bars</strong> and <strong>bullet charts</strong> support hover tooltips showing breakdowns and capacity targets.
+  </div>
+</div>
+
+<div class="container">
+
+  <!-- ===== SECTION 1: GAUGES (3x2) ===== -->
+  <div class="section">
+    <div class="section-title">System Resource Gauges</div>
+    <div class="gauge-grid">
+      <div class="gauge-card">
+        <div class="gauge-chart" id="gaugeCPU"></div>
+        <div class="gauge-label">CPU Usage</div>
+      </div>
+      <div class="gauge-card">
+        <div class="gauge-chart" id="gaugeMemory"></div>
+        <div class="gauge-label">Memory</div>
+      </div>
+      <div class="gauge-card">
+        <div class="gauge-chart" id="gaugeDB"></div>
+        <div class="gauge-label">DB Connections (12 / 50)</div>
+      </div>
+      <div class="gauge-card">
+        <div class="gauge-chart" id="gaugeAPI"></div>
+        <div class="gauge-label">API Rate Limit (340 / 1000 req)</div>
+      </div>
+      <div class="gauge-card">
+        <div class="gauge-chart" id="gaugeQueue"></div>
+        <div class="gauge-label">Queue Depth (3 items)</div>
+      </div>
+      <div class="gauge-card">
+        <div class="gauge-chart" id="gaugeWS"></div>
+        <div class="gauge-label">WebSocket Clients (8 connected)</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== SECTION 2: RESOURCE TRENDS ===== -->
+  <div class="section">
+    <div class="section-title">Resource Trends (24h)</div>
+    <div class="card">
+      <div class="chart-full" id="chartResourceTrends"></div>
+    </div>
+  </div>
+
+  <!-- ===== SECTION 3 & 4: MEMORY BREAKDOWN + API RESPONSE TIME ===== -->
+  <div class="section">
+    <div class="grid-2col">
+      <div>
+        <div class="section-title">Memory Breakdown</div>
+        <div class="card">
+          <div class="chart-medium" id="chartMemoryBreakdown"></div>
+        </div>
+      </div>
+      <div>
+        <div class="section-title">API Response Time (24h)</div>
+        <div class="card">
+          <div class="chart-medium" id="chartAPIResponseTime"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== SECTION 5: CAPACITY PLANNING ===== -->
+  <div class="section">
+    <div class="section-title">Capacity Planning</div>
+    <div class="card">
+      <div class="chart-medium" id="chartCapacity"></div>
+    </div>
+  </div>
+
+</div><!-- /container -->
+
+<script>
+// =====================================================
+// HELPERS
+// =====================================================
+function toggleInfo() {
+  var body = document.getElementById('infoBody');
+  var arrow = document.getElementById('infoArrow');
+  body.classList.toggle('open');
+  arrow.classList.toggle('open');
+}
+
+// Shared tooltip styling
+var tooltipStyle = {
+  backgroundColor: 'rgba(26,29,39,0.95)',
+  borderColor: '#2a2d37',
+  textStyle: { color: '#e0e0e0', fontSize: 12 }
+};
+
+// =====================================================
+// 1. GAUGE CHARTS
+// =====================================================
+function createGauge(domId, value, max, title, unit) {
+  var chart = echarts.init(document.getElementById(domId));
+  // Determine color based on percentage
+  var pct = (value / max) * 100;
+  var pointerColor;
+  var axisColors;
+  if (max <= 20) {
+    // For small-max gauges (queue, websocket) use different thresholds
+    axisColors = [
+      [0.5, '#10b981'],
+      [0.75, '#f59e0b'],
+      [1, '#f43f5e']
+    ];
+    pointerColor = pct < 50 ? '#10b981' : pct < 75 ? '#f59e0b' : '#f43f5e';
+  } else {
+    axisColors = [
+      [0.7, '#10b981'],
+      [0.85, '#f59e0b'],
+      [1, '#f43f5e']
+    ];
+    pointerColor = pct < 70 ? '#10b981' : pct < 85 ? '#f59e0b' : '#f43f5e';
+  }
+
+  var option = {
+    series: [{
+      type: 'gauge',
+      startAngle: 220,
+      endAngle: -40,
+      min: 0,
+      max: max,
+      splitNumber: 5,
+      radius: '90%',
+      center: ['50%', '55%'],
+      axisLine: {
+        lineStyle: {
+          width: 14,
+          color: axisColors
+        }
+      },
+      pointer: {
+        icon: 'path://M12.8,0.7l12,40.1H0.7L12.8,0.7z',
+        length: '55%',
+        width: 8,
+        offsetCenter: [0, '-10%'],
+        itemStyle: { color: pointerColor }
+      },
+      axisTick: {
+        length: 6,
+        lineStyle: { color: 'auto', width: 1.5 }
+      },
+      splitLine: {
+        length: 12,
+        lineStyle: { color: 'auto', width: 2 }
+      },
+      axisLabel: {
+        color: '#8b8fa3',
+        fontSize: 10,
+        distance: 20,
+        formatter: function(v) {
+          if (max === 100) return v + '%';
+          return v;
+        }
+      },
+      title: {
+        show: true,
+        offsetCenter: [0, '30%'],
+        fontSize: 13,
+        color: '#8b8fa3',
+        fontWeight: 600
+      },
+      detail: {
+        fontSize: 26,
+        fontWeight: 700,
+        offsetCenter: [0, '60%'],
+        valueAnimation: true,
+        color: pointerColor,
+        formatter: function(v) {
+          if (unit === '%') return v.toFixed(0) + '%';
+          return v + (unit ? ' ' + unit : '');
+        }
+      },
+      data: [{ value: value, name: title }],
+      animationDuration: 1500,
+      animationEasingUpdate: 'cubicOut'
+    }]
+  };
+  chart.setOption(option);
+  return chart;
+}
+
+var gaugeCPU = createGauge('gaugeCPU', 67, 100, 'CPU', '%');
+var gaugeMemory = createGauge('gaugeMemory', 54, 100, 'Memory', '%');
+var gaugeDB = createGauge('gaugeDB', 12, 50, 'DB Conn', '');
+var gaugeAPI = createGauge('gaugeAPI', 340, 1000, 'API Rate', 'req');
+var gaugeQueue = createGauge('gaugeQueue', 3, 15, 'Queue', '');
+var gaugeWS = createGauge('gaugeWS', 8, 20, 'WS Clients', '');
+
+// =====================================================
+// 2. RESOURCE TRENDS (Multi-line area chart, 24h)
+// =====================================================
+(function() {
+  var chart = echarts.init(document.getElementById('chartResourceTrends'));
+  var hours = [];
+  for (var i = 0; i < 24; i++) {
+    hours.push((i < 10 ? '0' : '') + i + ':00');
+  }
+  // Hardcoded 24-hour data
+  var cpuData =    [42, 38, 35, 32, 30, 28, 31, 45, 58, 64, 72, 75, 78, 74, 70, 68, 65, 62, 55, 48, 44, 40, 38, 67];
+  var memData =    [48, 47, 46, 45, 44, 43, 44, 48, 52, 55, 58, 60, 62, 61, 59, 57, 55, 53, 51, 50, 49, 48, 47, 54];
+  var apiData =    [12, 8, 5, 3, 2, 3, 8, 22, 35, 42, 48, 52, 55, 50, 46, 40, 38, 35, 28, 20, 16, 14, 12, 34];
+  var dbData =     [18, 14, 10, 8, 6, 5, 8, 16, 22, 28, 32, 35, 38, 36, 32, 28, 24, 22, 18, 16, 14, 12, 10, 24];
+
+  function makeAreaSeries(name, data, color) {
+    return {
+      name: name,
+      type: 'line',
+      smooth: true,
+      symbol: 'none',
+      lineStyle: { width: 2, color: color },
+      areaStyle: {
+        color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+          { offset: 0, color: color.replace(')', ',0.25)').replace('rgb', 'rgba') },
+          { offset: 1, color: color.replace(')', ',0.02)').replace('rgb', 'rgba') }
+        ])
+      },
+      itemStyle: { color: color },
+      data: data
+    };
+  }
+
+  var option = {
+    tooltip: Object.assign({}, tooltipStyle, {
+      trigger: 'axis',
+      axisPointer: { type: 'cross', lineStyle: { color: '#2a2d37' } }
+    }),
+    legend: {
+      data: ['CPU %', 'Memory %', 'API Rate %', 'DB Active %'],
+      top: 6,
+      textStyle: { color: '#8b8fa3', fontSize: 11 },
+      itemWidth: 14,
+      itemHeight: 10
+    },
+    grid: { left: 50, right: 30, top: 46, bottom: 70 },
+    xAxis: {
+      type: 'category',
+      data: hours,
+      boundaryGap: false,
+      axisLine: { lineStyle: { color: '#2a2d37' } },
+      axisLabel: { color: '#8b8fa3', fontSize: 11 },
+      axisTick: { show: false }
+    },
+    yAxis: {
+      type: 'value',
+      max: 100,
+      axisLine: { show: false },
+      splitLine: { lineStyle: { color: '#2a2d37' } },
+      axisLabel: { color: '#8b8fa3', fontSize: 11, formatter: '{value}%' }
+    },
+    dataZoom: [
+      {
+        type: 'slider',
+        start: 0,
+        end: 100,
+        bottom: 10,
+        height: 22,
+        borderColor: '#2a2d37',
+        backgroundColor: '#1a1d27',
+        fillerColor: 'rgba(99,102,241,0.15)',
+        handleStyle: { color: '#6366f1' },
+        textStyle: { color: '#8b8fa3' },
+        dataBackground: {
+          lineStyle: { color: '#6366f1' },
+          areaStyle: { color: 'rgba(99,102,241,0.08)' }
+        }
+      },
+      { type: 'inside' }
+    ],
+    series: [
+      makeAreaSeries('CPU %', cpuData, '#6366f1'),
+      makeAreaSeries('Memory %', memData, '#22d3ee'),
+      makeAreaSeries('API Rate %', apiData, '#f59e0b'),
+      makeAreaSeries('DB Active %', dbData, '#10b981')
+    ]
+  };
+  chart.setOption(option);
+  window.addEventListener('resize', function() { chart.resize(); });
+})();
+
+// =====================================================
+// 3. MEMORY BREAKDOWN (Stacked horizontal bar)
+// =====================================================
+(function() {
+  var chart = echarts.init(document.getElementById('chartMemoryBreakdown'));
+  var snapshots = ['00:00', '04:00', '08:00', '12:00', '16:00', '20:00'];
+
+  var option = {
+    tooltip: Object.assign({}, tooltipStyle, {
+      trigger: 'axis',
+      axisPointer: { type: 'shadow' },
+      formatter: function(params) {
+        var s = '<div style="font-weight:600;margin-bottom:4px">' + params[0].axisValue + '</div>';
+        var total = 0;
+        params.forEach(function(p) {
+          total += p.value;
+          s += '<span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:' + p.color + ';margin-right:6px"></span>' +
+               p.seriesName + ': <strong>' + p.value + ' MB</strong><br>';
+        });
+        s += '<div style="margin-top:4px;border-top:1px solid #2a2d37;padding-top:4px">Total: <strong>' + total + ' MB</strong></div>';
+        return s;
+      }
+    }),
+    legend: {
+      data: ['Heap Used', 'Heap Total', 'External', 'RSS'],
+      top: 6,
+      textStyle: { color: '#8b8fa3', fontSize: 11 },
+      itemWidth: 14,
+      itemHeight: 10
+    },
+    grid: { left: 60, right: 30, top: 46, bottom: 20 },
+    xAxis: {
+      type: 'value',
+      axisLine: { lineStyle: { color: '#2a2d37' } },
+      splitLine: { lineStyle: { color: '#2a2d37' } },
+      axisLabel: { color: '#8b8fa3', fontSize: 11, formatter: '{value} MB' }
+    },
+    yAxis: {
+      type: 'category',
+      data: snapshots,
+      axisLine: { lineStyle: { color: '#2a2d37' } },
+      axisLabel: { color: '#8b8fa3', fontSize: 11 },
+      axisTick: { show: false }
+    },
+    series: [
+      {
+        name: 'Heap Used',
+        type: 'bar',
+        stack: 'mem',
+        barWidth: 20,
+        itemStyle: { color: '#6366f1', borderRadius: [0, 0, 0, 0] },
+        data: [180, 175, 210, 245, 230, 195]
+      },
+      {
+        name: 'Heap Total',
+        type: 'bar',
+        stack: 'mem',
+        barWidth: 20,
+        itemStyle: { color: '#22d3ee' },
+        data: [80, 85, 95, 110, 100, 90]
+      },
+      {
+        name: 'External',
+        type: 'bar',
+        stack: 'mem',
+        barWidth: 20,
+        itemStyle: { color: '#f59e0b' },
+        data: [32, 30, 38, 45, 40, 34]
+      },
+      {
+        name: 'RSS',
+        type: 'bar',
+        stack: 'mem',
+        barWidth: 20,
+        itemStyle: { color: '#f43f5e', borderRadius: [0, 4, 4, 0] },
+        data: [120, 115, 140, 160, 150, 130]
+      }
+    ]
+  };
+  chart.setOption(option);
+  window.addEventListener('resize', function() { chart.resize(); });
+})();
+
+// =====================================================
+// 4. API RESPONSE TIME (Line + threshold zones)
+// =====================================================
+(function() {
+  var chart = echarts.init(document.getElementById('chartAPIResponseTime'));
+  var hours = [];
+  for (var i = 0; i < 24; i++) {
+    hours.push((i < 10 ? '0' : '') + i + ':00');
+  }
+  var responseData = [82, 78, 65, 58, 52, 48, 55, 95, 180, 320, 450, 520, 680, 580, 420, 310, 240, 180, 140, 110, 95, 88, 84, 120];
+
+  var option = {
+    tooltip: Object.assign({}, tooltipStyle, {
+      trigger: 'axis',
+      axisPointer: { type: 'line', lineStyle: { color: '#6366f1' } },
+      formatter: function(params) {
+        var v = params[0].value;
+        var zone = v <= 100 ? '<span style="color:#10b981">Good</span>' :
+                   v <= 500 ? '<span style="color:#f59e0b">Warning</span>' :
+                   '<span style="color:#f43f5e">Critical</span>';
+        return '<strong>' + params[0].axisValue + '</strong><br>' +
+               'Response: <strong>' + v + ' ms</strong><br>' +
+               'Status: ' + zone;
+      }
+    }),
+    grid: { left: 55, right: 30, top: 20, bottom: 70 },
+    xAxis: {
+      type: 'category',
+      data: hours,
+      boundaryGap: false,
+      axisLine: { lineStyle: { color: '#2a2d37' } },
+      axisLabel: { color: '#8b8fa3', fontSize: 11 },
+      axisTick: { show: false }
+    },
+    yAxis: {
+      type: 'value',
+      max: 1200,
+      axisLine: { show: false },
+      splitLine: { lineStyle: { color: '#2a2d37' } },
+      axisLabel: { color: '#8b8fa3', fontSize: 11, formatter: '{value} ms' }
+    },
+    dataZoom: [
+      {
+        type: 'slider',
+        start: 0,
+        end: 100,
+        bottom: 10,
+        height: 22,
+        borderColor: '#2a2d37',
+        backgroundColor: '#1a1d27',
+        fillerColor: 'rgba(99,102,241,0.15)',
+        handleStyle: { color: '#6366f1' },
+        textStyle: { color: '#8b8fa3' },
+        dataBackground: {
+          lineStyle: { color: '#6366f1' },
+          areaStyle: { color: 'rgba(99,102,241,0.08)' }
+        }
+      },
+      { type: 'inside' }
+    ],
+    visualMap: {
+      show: false,
+      pieces: [
+        { lte: 100, color: '#10b981' },
+        { gt: 100, lte: 500, color: '#f59e0b' },
+        { gt: 500, color: '#f43f5e' }
+      ],
+      seriesIndex: 0
+    },
+    series: [
+      {
+        name: 'Response Time',
+        type: 'line',
+        smooth: true,
+        symbol: 'circle',
+        symbolSize: 5,
+        lineStyle: { width: 2.5 },
+        data: responseData,
+        markLine: {
+          silent: true,
+          symbol: 'none',
+          lineStyle: { type: 'dashed', width: 1.5 },
+          label: {
+            position: 'insideEndTop',
+            fontSize: 11,
+            fontWeight: 600,
+            padding: [2, 6],
+            borderRadius: 3
+          },
+          data: [
+            {
+              yAxis: 100,
+              lineStyle: { color: '#10b981' },
+              label: { formatter: 'Good (100ms)', color: '#10b981', backgroundColor: 'rgba(16,185,129,0.1)' }
+            },
+            {
+              yAxis: 500,
+              lineStyle: { color: '#f59e0b' },
+              label: { formatter: 'Warning (500ms)', color: '#f59e0b', backgroundColor: 'rgba(245,158,11,0.1)' }
+            },
+            {
+              yAxis: 1000,
+              lineStyle: { color: '#f43f5e' },
+              label: { formatter: 'Critical (1000ms)', color: '#f43f5e', backgroundColor: 'rgba(244,63,94,0.1)' }
+            }
+          ]
+        },
+        markArea: {
+          silent: true,
+          data: [
+            [
+              { yAxis: 0, itemStyle: { color: 'rgba(16,185,129,0.04)' } },
+              { yAxis: 100 }
+            ],
+            [
+              { yAxis: 100, itemStyle: { color: 'rgba(245,158,11,0.04)' } },
+              { yAxis: 500 }
+            ],
+            [
+              { yAxis: 500, itemStyle: { color: 'rgba(244,63,94,0.04)' } },
+              { yAxis: 1200 }
+            ]
+          ]
+        }
+      }
+    ]
+  };
+  chart.setOption(option);
+  window.addEventListener('resize', function() { chart.resize(); });
+})();
+
+// =====================================================
+// 5. CAPACITY PLANNING (Horizontal bullet chart)
+// =====================================================
+(function() {
+  var chart = echarts.init(document.getElementById('chartCapacity'));
+
+  var categories = ['Disk', 'API Rate', 'DB Pool', 'Memory', 'CPU'];
+  var currentValues = [62, 34, 24, 54, 67];
+  var targetValues =  [75, 50, 60, 70, 75];
+  var maxCapacity =   [100, 100, 100, 100, 100];
+
+  var option = {
+    tooltip: Object.assign({}, tooltipStyle, {
+      trigger: 'axis',
+      axisPointer: { type: 'shadow' },
+      formatter: function(params) {
+        var catName = params[0].axisValue;
+        var idx = categories.indexOf(catName);
+        var s = '<div style="font-weight:600;margin-bottom:4px">' + catName + '</div>';
+        s += 'Current: <strong>' + currentValues[idx] + '%</strong><br>';
+        s += 'Target: <strong>' + targetValues[idx] + '%</strong><br>';
+        s += 'Max Capacity: <strong>100%</strong>';
+        return s;
+      }
+    }),
+    legend: {
+      data: ['Current Usage', 'Target', 'Max Capacity'],
+      top: 6,
+      textStyle: { color: '#8b8fa3', fontSize: 11 },
+      itemWidth: 14,
+      itemHeight: 10
+    },
+    grid: { left: 80, right: 40, top: 46, bottom: 20 },
+    xAxis: {
+      type: 'value',
+      max: 100,
+      axisLine: { lineStyle: { color: '#2a2d37' } },
+      splitLine: { lineStyle: { color: '#2a2d37' } },
+      axisLabel: { color: '#8b8fa3', fontSize: 11, formatter: '{value}%' }
+    },
+    yAxis: {
+      type: 'category',
+      data: categories,
+      axisLine: { lineStyle: { color: '#2a2d37' } },
+      axisLabel: { color: '#e0e0e0', fontSize: 12, fontWeight: 600 },
+      axisTick: { show: false }
+    },
+    series: [
+      // Background: Max capacity
+      {
+        name: 'Max Capacity',
+        type: 'bar',
+        barWidth: 28,
+        barGap: '-100%',
+        z: 1,
+        silent: true,
+        itemStyle: {
+          color: 'rgba(42,45,55,0.6)',
+          borderRadius: [0, 4, 4, 0]
+        },
+        data: maxCapacity
+      },
+      // Current usage bar
+      {
+        name: 'Current Usage',
+        type: 'bar',
+        barWidth: 28,
+        barGap: '-100%',
+        z: 2,
+        itemStyle: {
+          borderRadius: [0, 4, 4, 0],
+          color: function(params) {
+            var v = params.value;
+            if (v < 50) return '#10b981';
+            if (v < 70) return '#22d3ee';
+            if (v < 85) return '#f59e0b';
+            return '#f43f5e';
+          }
+        },
+        data: currentValues,
+        label: {
+          show: true,
+          position: 'insideRight',
+          formatter: '{c}%',
+          color: '#fff',
+          fontSize: 11,
+          fontWeight: 600,
+          textShadowColor: 'rgba(0,0,0,0.3)',
+          textShadowBlur: 2
+        }
+      },
+      // Target markers
+      {
+        name: 'Target',
+        type: 'bar',
+        barWidth: 36,
+        barGap: '-100%',
+        z: 3,
+        itemStyle: { color: 'transparent' },
+        data: targetValues,
+        markPoint: {
+          symbol: 'rect',
+          symbolSize: [3, 36],
+          itemStyle: { color: '#e0e0e0' },
+          label: {
+            show: true,
+            position: 'right',
+            formatter: function(params) { return params.value + '%'; },
+            color: '#8b8fa3',
+            fontSize: 10,
+            offset: [4, 0]
+          },
+          data: categories.map(function(cat, idx) {
+            return {
+              coord: [targetValues[idx], cat],
+              value: targetValues[idx]
+            };
+          })
+        }
+      }
+    ]
+  };
+  chart.setOption(option);
+  window.addEventListener('resize', function() { chart.resize(); });
+})();
+
+// =====================================================
+// GLOBAL RESIZE HANDLER FOR GAUGES
+// =====================================================
+window.addEventListener('resize', function() {
+  gaugeCPU.resize();
+  gaugeMemory.resize();
+  gaugeDB.resize();
+  gaugeAPI.resize();
+  gaugeQueue.resize();
+  gaugeWS.resize();
+});
+</script>
+</body>
+</html>

@@ -34,6 +34,7 @@ export function transformMessages(data) {
       error: msg.toolError,
       parameters: msg.toolParameters,
       result: msg.toolResult,
+      files: msg.toolFiles,
       agentType: msg.agentType || msg.delegationAgentType || (msg.agentName?.includes('-') ? msg.agentName : undefined),
       mission: msg.delegationMission,
       reasoningMode: msg.reasoningMode,

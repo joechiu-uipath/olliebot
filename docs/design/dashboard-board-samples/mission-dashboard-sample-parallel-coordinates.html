@@ -1,0 +1,904 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Parallel Coordinates — OllieBot Agent System</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.6.0/dist/echarts.min.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg: #0f1117;
+    --card: #1a1d27;
+    --border: #2a2d37;
+    --text-primary: #e0e0e0;
+    --text-secondary: #8b8fa3;
+    --indigo: #6366f1;
+    --cyan: #22d3ee;
+    --emerald: #10b981;
+    --amber: #f59e0b;
+    --rose: #f43f5e;
+  }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text-primary);
+    line-height: 1.5;
+    min-height: 100vh;
+    padding: 0 0 40px 0;
+  }
+
+  /* ---------- Title bar ---------- */
+  .title-bar {
+    background: linear-gradient(135deg, #1a1d27 0%, #12141c 100%);
+    border-bottom: 1px solid var(--border);
+    padding: 24px 32px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 12px;
+  }
+  .title-bar h1 {
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: -0.3px;
+    color: var(--text-primary);
+    flex: 1 1 100%;
+  }
+  .title-bar h1 span.accent { color: var(--indigo); }
+  .title-bar .meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 24px;
+    width: 100%;
+    align-items: center;
+  }
+  .title-bar .timestamp {
+    font-size: 13px;
+    color: var(--text-secondary);
+    background: rgba(99,102,241,0.1);
+    border: 1px solid rgba(99,102,241,0.25);
+    border-radius: 6px;
+    padding: 4px 12px;
+  }
+  .title-bar .synopsis {
+    font-size: 13px;
+    color: var(--text-secondary);
+    flex: 1;
+  }
+
+  /* ---------- Info panel ---------- */
+  .info-panel {
+    margin: 16px 32px 0;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: rgba(99,102,241,0.06);
+    overflow: hidden;
+  }
+  .info-toggle {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 16px;
+    background: none;
+    border: none;
+    color: var(--indigo);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    text-align: left;
+  }
+  .info-toggle:hover { background: rgba(99,102,241,0.08); }
+  .info-toggle .arrow { transition: transform 0.3s ease; display: inline-block; }
+  .info-toggle .arrow.open { transform: rotate(90deg); }
+  .info-body {
+    max-height: 0;
+    overflow: hidden;
+    transition: max-height 0.3s ease, padding 0.3s ease;
+    padding: 0 16px;
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.7;
+  }
+  .info-body.open {
+    max-height: 300px;
+    padding: 0 16px 14px;
+  }
+
+  /* ---------- Layout ---------- */
+  .container { padding: 0 32px; }
+
+  .kpi-row {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+    margin-top: 20px;
+  }
+  .kpi-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px 24px;
+    text-align: center;
+  }
+  .kpi-card .label {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: var(--text-secondary);
+    margin-bottom: 8px;
+  }
+  .kpi-card .value {
+    font-size: 36px;
+    font-weight: 700;
+    line-height: 1.1;
+  }
+  .kpi-card .sub {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-top: 4px;
+  }
+
+  .chart-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 20px 24px;
+    margin-top: 20px;
+  }
+  .chart-card .card-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 4px;
+  }
+  .chart-card .card-subtitle {
+    font-size: 12px;
+    color: var(--text-secondary);
+    margin-bottom: 16px;
+  }
+
+  .chart-row {
+    display: grid;
+    gap: 16px;
+    margin-top: 20px;
+  }
+  .chart-row.three { grid-template-columns: repeat(3, 1fr); }
+  .chart-row.two { grid-template-columns: 1fr 1fr; }
+  .chart-row .chart-card { margin-top: 0; }
+
+  .legend-bar {
+    display: flex;
+    gap: 20px;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+  }
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: var(--text-secondary);
+  }
+  .legend-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  @media (max-width: 900px) {
+    .kpi-row { grid-template-columns: 1fr; }
+    .chart-row.three { grid-template-columns: 1fr; }
+    .chart-row.two { grid-template-columns: 1fr; }
+    .container { padding: 0 16px; }
+    .title-bar { padding: 20px 16px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ===== Title bar ===== -->
+<div class="title-bar">
+  <h1><span class="accent">Multi-Dimensional Analysis</span> — Parallel Coordinates &amp; Advanced Charts</h1>
+  <div class="meta">
+    <span class="timestamp">2026-02-13 09:42 UTC</span>
+    <span class="synopsis">Explores multi-dimensional relationships in mission execution data using parallel coordinates, radar overlays, and scatter matrices.</span>
+  </div>
+</div>
+
+<!-- ===== Interactivity instructions ===== -->
+<div class="info-panel" id="infoPanel">
+  <button class="info-toggle" onclick="toggleInfo()">
+    <span class="arrow" id="infoArrow">&#9654;</span> Interactivity Guide
+  </button>
+  <div class="info-body" id="infoBody">
+    <strong>Drag on parallel coordinate axes</strong> to create range filters. <strong>Brush-select on scatter plots</strong> to highlight subsets.
+    <strong>Click radar polygons</strong> to highlight a mission type. <strong>All charts are linked</strong> — filtering one affects others.
+    Use the toolbox icons in chart corners to save images or reset views.
+  </div>
+</div>
+
+<div class="container">
+
+  <!-- ===== KPI Cards ===== -->
+  <div class="kpi-row">
+    <div class="kpi-card">
+      <div class="label">Dimensions Analyzed</div>
+      <div class="value" style="color: var(--indigo);">7</div>
+      <div class="sub">Duration, LLM Calls, Tokens, Tool Calls, Cost, Success, Agents</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">Data Points</div>
+      <div class="value" style="color: var(--cyan);">100</div>
+      <div class="sub">missions across 4 types</div>
+    </div>
+    <div class="kpi-card">
+      <div class="label">Outliers Detected</div>
+      <div class="value" style="color: var(--rose);">4</div>
+      <div class="sub">missions exceeding 2&sigma; on 3+ dimensions</div>
+    </div>
+  </div>
+
+  <!-- ===== Legend ===== -->
+  <div class="chart-card" style="padding-bottom: 8px;">
+    <div class="legend-bar">
+      <div class="legend-item"><div class="legend-dot" style="background: var(--indigo);"></div> Code Gen</div>
+      <div class="legend-item"><div class="legend-dot" style="background: var(--cyan);"></div> Research</div>
+      <div class="legend-item"><div class="legend-dot" style="background: var(--emerald);"></div> Bug Fix</div>
+      <div class="legend-item"><div class="legend-dot" style="background: var(--amber);"></div> Documentation</div>
+    </div>
+  </div>
+
+  <!-- ===== Parallel Coordinates ===== -->
+  <div class="chart-card">
+    <div class="card-title">Mission Multi-Dimensional Profile</div>
+    <div class="card-subtitle">100 mission traces across 7 dimensions — drag on any axis to filter by range</div>
+    <div id="parallelChart" style="width:100%; height:450px;"></div>
+  </div>
+
+  <!-- ===== Radar + Heatmap Row ===== -->
+  <div class="chart-row two">
+    <div class="chart-card">
+      <div class="card-title">Mission Type Profiles</div>
+      <div class="card-subtitle">Average normalized profile for each mission type across all 7 dimensions</div>
+      <div id="radarChart" style="width:100%; height:400px;"></div>
+    </div>
+    <div class="chart-card">
+      <div class="card-title">Correlation Heatmap</div>
+      <div class="card-subtitle">Pairwise Pearson correlation coefficients between all 7 dimensions</div>
+      <div id="heatmapChart" style="width:100%; height:400px;"></div>
+    </div>
+  </div>
+
+  <!-- ===== Scatter Row ===== -->
+  <div class="chart-row three">
+    <div class="chart-card">
+      <div class="card-title">Duration vs Cost</div>
+      <div class="card-subtitle">Are longer missions more expensive?</div>
+      <div id="scatter1" style="width:100%; height:300px;"></div>
+    </div>
+    <div class="chart-card">
+      <div class="card-title">Token Count vs LLM Calls</div>
+      <div class="card-subtitle">Token efficiency per call</div>
+      <div id="scatter2" style="width:100%; height:300px;"></div>
+    </div>
+    <div class="chart-card">
+      <div class="card-title">Agent Count vs Success Rate</div>
+      <div class="card-subtitle">Do more agents help?</div>
+      <div id="scatter3" style="width:100%; height:300px;"></div>
+    </div>
+  </div>
+
+  <!-- ===== Box Plot ===== -->
+  <div class="chart-card">
+    <div class="card-title">Distribution of Key Metrics by Mission Type</div>
+    <div class="card-subtitle">Box plots showing spread and outliers for Duration, Token Count (K), and Cost ($) grouped by mission type</div>
+    <div id="boxPlot" style="width:100%; height:420px;"></div>
+  </div>
+
+</div><!-- .container -->
+
+<script>
+// ============================================================
+//  Toggle info panel
+// ============================================================
+function toggleInfo() {
+  var body = document.getElementById('infoBody');
+  var arrow = document.getElementById('infoArrow');
+  body.classList.toggle('open');
+  arrow.classList.toggle('open');
+}
+
+// ============================================================
+//  Seeded random for reproducibility
+// ============================================================
+var _seed = 42;
+function seededRandom() {
+  _seed = (_seed * 16807 + 0) % 2147483647;
+  return (_seed - 1) / 2147483646;
+}
+function randBetween(a, b) { return a + seededRandom() * (b - a); }
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+function roundTo(v, d) { var f = Math.pow(10, d); return Math.round(v * f) / f; }
+
+// ============================================================
+//  Mission type definitions
+// ============================================================
+var TYPES = ['Code Gen', 'Research', 'Bug Fix', 'Documentation'];
+var TYPE_COLORS = {
+  'Code Gen':       '#6366f1',
+  'Research':       '#22d3ee',
+  'Bug Fix':        '#10b981',
+  'Documentation':  '#f59e0b'
+};
+var TYPE_IDX = { 'Code Gen': 0, 'Research': 1, 'Bug Fix': 2, 'Documentation': 3 };
+
+// Base profiles per type: [duration, llmCalls, tokenCount, toolCalls, cost, successRate, agentCount]
+var BASE = {
+  'Code Gen':      [30, 28, 180000, 55, 4.50, 82, 3],
+  'Research':      [40, 35, 280000, 30, 6.00, 78, 2],
+  'Bug Fix':       [18, 15,  80000, 65, 2.00, 90, 2],
+  'Documentation': [12,  8,  40000, 20, 0.80, 94, 1]
+};
+
+// ============================================================
+//  Generate 100 data points with realistic correlations
+// ============================================================
+var missions = [];
+var typeCounts = [30, 25, 25, 20]; // Code Gen, Research, Bug Fix, Documentation
+var idx = 0;
+
+for (var t = 0; t < 4; t++) {
+  var type = TYPES[t];
+  var base = BASE[type];
+  for (var i = 0; i < typeCounts[t]; i++) {
+    var duration = clamp(roundTo(base[0] + randBetween(-base[0]*0.5, base[0]*0.6), 1), 1, 60);
+    var llmCalls = clamp(Math.round(base[1] + randBetween(-base[1]*0.5, base[1]*0.5)), 1, 50);
+    // Token count correlated with duration and LLM calls
+    var tokenBase = (duration / 60) * 300000 + llmCalls * 4000;
+    var tokenCount = clamp(Math.round(tokenBase + randBetween(-40000, 60000)), 1000, 500000);
+    var toolCalls = clamp(Math.round(base[3] + randBetween(-base[3]*0.5, base[3]*0.6)), 0, 100);
+    // Cost correlated with tokens and LLM calls
+    var cost = clamp(roundTo(tokenCount / 50000 * 1.0 + llmCalls * 0.05 + randBetween(-0.5, 0.5), 2), 0.01, 10.00);
+    // Success rate inversely correlated with complexity (duration + tool calls)
+    var successRate = clamp(roundTo(base[5] + randBetween(-12, 8) - (duration > 40 ? 5 : 0), 1), 50, 100);
+    var agentCount = clamp(Math.round(base[6] + randBetween(-1.2, 1.2)), 1, 5);
+
+    missions.push({
+      id: idx,
+      type: type,
+      typeIdx: TYPE_IDX[type],
+      duration: duration,
+      llmCalls: llmCalls,
+      tokenCount: tokenCount,
+      toolCalls: toolCalls,
+      cost: cost,
+      successRate: successRate,
+      agentCount: agentCount
+    });
+    idx++;
+  }
+}
+
+// Mark 4 outliers (high on multiple dimensions)
+for (var oi = 0; oi < 4; oi++) {
+  var m = missions[oi * 25]; // spread across types
+  m.duration = clamp(roundTo(m.duration * 1.8, 1), 1, 60);
+  m.tokenCount = clamp(Math.round(m.tokenCount * 2.2), 1000, 500000);
+  m.cost = clamp(roundTo(m.cost * 2.5, 2), 0.01, 10.00);
+  m.llmCalls = clamp(Math.round(m.llmCalls * 1.7), 1, 50);
+}
+
+// ============================================================
+//  Dimension labels
+// ============================================================
+var DIM_NAMES = ['Duration (min)', 'LLM Calls', 'Token Count', 'Tool Calls', 'Cost ($)', 'Success Rate (%)', 'Agent Count'];
+var DIM_KEYS = ['duration', 'llmCalls', 'tokenCount', 'toolCalls', 'cost', 'successRate', 'agentCount'];
+
+// ============================================================
+//  Helper: compute averages per type
+// ============================================================
+function avgByType(type) {
+  var subset = missions.filter(function(m) { return m.type === type; });
+  var sums = [0, 0, 0, 0, 0, 0, 0];
+  subset.forEach(function(m) {
+    DIM_KEYS.forEach(function(k, i) { sums[i] += m[k]; });
+  });
+  return sums.map(function(s) { return roundTo(s / subset.length, 2); });
+}
+
+// ============================================================
+//  Helper: Pearson correlation
+// ============================================================
+function pearson(xs, ys) {
+  var n = xs.length;
+  var mx = xs.reduce(function(a,b){return a+b;},0) / n;
+  var my = ys.reduce(function(a,b){return a+b;},0) / n;
+  var num = 0, dx2 = 0, dy2 = 0;
+  for (var i = 0; i < n; i++) {
+    var dx = xs[i] - mx, dy = ys[i] - my;
+    num += dx * dy; dx2 += dx*dx; dy2 += dy*dy;
+  }
+  return dx2 === 0 || dy2 === 0 ? 0 : num / Math.sqrt(dx2 * dy2);
+}
+
+// ============================================================
+//  Chart instances
+// ============================================================
+var cParallel = echarts.init(document.getElementById('parallelChart'));
+var cRadar    = echarts.init(document.getElementById('radarChart'));
+var cHeatmap  = echarts.init(document.getElementById('heatmapChart'));
+var cScatter1 = echarts.init(document.getElementById('scatter1'));
+var cScatter2 = echarts.init(document.getElementById('scatter2'));
+var cScatter3 = echarts.init(document.getElementById('scatter3'));
+var cBox      = echarts.init(document.getElementById('boxPlot'));
+
+// ============================================================
+//  1) Parallel Coordinates
+// ============================================================
+(function() {
+  var dimConfigs = [
+    { dim: 0, name: 'Duration\n(min)',    min: 1,    max: 60 },
+    { dim: 1, name: 'LLM\nCalls',        min: 1,    max: 50 },
+    { dim: 2, name: 'Token\nCount',       min: 1000, max: 500000 },
+    { dim: 3, name: 'Tool\nCalls',        min: 0,    max: 100 },
+    { dim: 4, name: 'Cost\n($)',          min: 0.01, max: 10.00 },
+    { dim: 5, name: 'Success\nRate (%)',  min: 50,   max: 100 },
+    { dim: 6, name: 'Agent\nCount',       min: 1,    max: 5 }
+  ];
+
+  var parallelAxes = dimConfigs.map(function(d) {
+    return {
+      dim: d.dim,
+      name: d.name,
+      min: d.min,
+      max: d.max,
+      nameTextStyle: { fontSize: 11, color: '#8b8fa3' },
+      axisLine: { lineStyle: { color: '#2a2d37' } },
+      axisLabel: { color: '#8b8fa3', fontSize: 10 }
+    };
+  });
+
+  // Group data by type for separate series (coloring)
+  var seriesData = {};
+  TYPES.forEach(function(t) { seriesData[t] = []; });
+  missions.forEach(function(m) {
+    seriesData[m.type].push([m.duration, m.llmCalls, m.tokenCount, m.toolCalls, m.cost, m.successRate, m.agentCount]);
+  });
+
+  var series = TYPES.map(function(t) {
+    return {
+      name: t,
+      type: 'parallel',
+      lineStyle: {
+        width: 1.5,
+        opacity: 0.45,
+        color: TYPE_COLORS[t]
+      },
+      emphasis: {
+        lineStyle: { width: 3, opacity: 1 }
+      },
+      inactiveOpacity: 0.05,
+      activeOpacity: 0.7,
+      data: seriesData[t]
+    };
+  });
+
+  cParallel.setOption({
+    parallel: {
+      left: 60, right: 60, top: 40, bottom: 40,
+      parallelAxisDefault: {
+        type: 'value',
+        nameLocation: 'start',
+        nameGap: 20,
+        axisLine: { lineStyle: { color: '#2a2d37' } },
+        axisTick: { lineStyle: { color: '#2a2d37' } },
+        splitLine: { show: false },
+        axisLabel: { color: '#8b8fa3' }
+      }
+    },
+    parallelAxis: parallelAxes,
+    tooltip: { trigger: 'item' },
+    legend: {
+      top: 8, right: 60,
+      textStyle: { color: '#8b8fa3', fontSize: 11 },
+      data: TYPES
+    },
+    toolbox: {
+      right: 10, top: 8,
+      feature: { saveAsImage: { title: 'Save' } },
+      iconStyle: { borderColor: '#8b8fa3' }
+    },
+    series: series
+  });
+})();
+
+// ============================================================
+//  2) Radar Chart
+// ============================================================
+(function() {
+  // Normalize averages to 0-100 scale for radar
+  var ranges = [
+    [1, 60], [1, 50], [1000, 500000], [0, 100], [0.01, 10], [50, 100], [1, 5]
+  ];
+  function normalize(val, i) {
+    return roundTo((val - ranges[i][0]) / (ranges[i][1] - ranges[i][0]) * 100, 1);
+  }
+
+  var indicator = DIM_NAMES.map(function(n) {
+    return { name: n, max: 100 };
+  });
+
+  var radarSeries = TYPES.map(function(t) {
+    var avgs = avgByType(t);
+    var normed = avgs.map(function(v, i) { return normalize(v, i); });
+    return {
+      name: t,
+      value: normed,
+      itemStyle: { color: TYPE_COLORS[t] },
+      lineStyle: { color: TYPE_COLORS[t], width: 2 },
+      areaStyle: { color: TYPE_COLORS[t], opacity: 0.15 }
+    };
+  });
+
+  cRadar.setOption({
+    radar: {
+      indicator: indicator,
+      shape: 'polygon',
+      center: ['50%', '55%'],
+      radius: '68%',
+      axisName: { color: '#8b8fa3', fontSize: 10 },
+      splitLine: { lineStyle: { color: '#2a2d37' } },
+      splitArea: { show: false },
+      axisLine: { lineStyle: { color: '#2a2d37' } }
+    },
+    legend: {
+      top: 4,
+      textStyle: { color: '#8b8fa3', fontSize: 11 },
+      data: TYPES
+    },
+    tooltip: {
+      trigger: 'item',
+      backgroundColor: '#1a1d27',
+      borderColor: '#2a2d37',
+      textStyle: { color: '#e0e0e0' }
+    },
+    toolbox: {
+      right: 10, top: 4,
+      feature: { saveAsImage: { title: 'Save' } },
+      iconStyle: { borderColor: '#8b8fa3' }
+    },
+    series: [{
+      type: 'radar',
+      data: radarSeries,
+      emphasis: {
+        lineStyle: { width: 3 },
+        areaStyle: { opacity: 0.35 }
+      }
+    }]
+  });
+})();
+
+// ============================================================
+//  3) Correlation Heatmap
+// ============================================================
+(function() {
+  // Compute 7x7 correlation matrix
+  var cols = DIM_KEYS.map(function(k) {
+    return missions.map(function(m) { return m[k]; });
+  });
+
+  var heatData = [];
+  for (var i = 0; i < 7; i++) {
+    for (var j = 0; j < 7; j++) {
+      var r = i === j ? 1 : roundTo(pearson(cols[i], cols[j]), 2);
+      heatData.push([j, i, r]);
+    }
+  }
+
+  var shortNames = ['Duration', 'LLM Calls', 'Tokens', 'Tool Calls', 'Cost', 'Success%', 'Agents'];
+
+  cHeatmap.setOption({
+    tooltip: {
+      trigger: 'item',
+      backgroundColor: '#1a1d27',
+      borderColor: '#2a2d37',
+      textStyle: { color: '#e0e0e0' },
+      formatter: function(p) {
+        return shortNames[p.data[0]] + ' vs ' + shortNames[p.data[1]] + ': <b>' + p.data[2].toFixed(2) + '</b>';
+      }
+    },
+    grid: { left: 90, right: 40, top: 10, bottom: 80 },
+    xAxis: {
+      type: 'category',
+      data: shortNames,
+      axisLabel: { color: '#8b8fa3', fontSize: 10, rotate: 35 },
+      axisLine: { lineStyle: { color: '#2a2d37' } },
+      axisTick: { show: false },
+      splitLine: { show: false }
+    },
+    yAxis: {
+      type: 'category',
+      data: shortNames,
+      axisLabel: { color: '#8b8fa3', fontSize: 10 },
+      axisLine: { lineStyle: { color: '#2a2d37' } },
+      axisTick: { show: false },
+      splitLine: { show: false }
+    },
+    visualMap: {
+      min: -1, max: 1,
+      calculable: false,
+      orient: 'horizontal',
+      left: 'center',
+      bottom: 2,
+      itemWidth: 12,
+      itemHeight: 120,
+      textStyle: { color: '#8b8fa3', fontSize: 10 },
+      inRange: {
+        color: ['#3b82f6', '#6898eb', '#a0b4d8', '#e0e0e0', '#e0a0a0', '#d06060', '#ef4444']
+      }
+    },
+    toolbox: {
+      right: 10, top: 4,
+      feature: { saveAsImage: { title: 'Save' } },
+      iconStyle: { borderColor: '#8b8fa3' }
+    },
+    series: [{
+      type: 'heatmap',
+      data: heatData,
+      itemStyle: { borderColor: '#0f1117', borderWidth: 2 },
+      label: {
+        show: true,
+        fontSize: 10,
+        color: '#e0e0e0',
+        formatter: function(p) { return p.data[2].toFixed(2); }
+      },
+      emphasis: {
+        itemStyle: { borderColor: '#6366f1', borderWidth: 2 }
+      }
+    }]
+  });
+})();
+
+// ============================================================
+//  4) Scatter plots
+// ============================================================
+function makeScatterOption(xKey, yKey, xName, yName) {
+  var seriesArr = TYPES.map(function(t) {
+    var pts = missions.filter(function(m) { return m.type === t; }).map(function(m) {
+      return [m[xKey], m[yKey]];
+    });
+    return {
+      name: t,
+      type: 'scatter',
+      data: pts,
+      symbolSize: 8,
+      itemStyle: { color: TYPE_COLORS[t], opacity: 0.75 },
+      emphasis: { itemStyle: { opacity: 1, borderColor: '#fff', borderWidth: 1 } }
+    };
+  });
+
+  // Compute simple linear regression for trend line
+  var allX = missions.map(function(m) { return m[xKey]; });
+  var allY = missions.map(function(m) { return m[yKey]; });
+  var n = allX.length;
+  var mx = allX.reduce(function(a,b){return a+b;},0)/n;
+  var my = allY.reduce(function(a,b){return a+b;},0)/n;
+  var num = 0, den = 0;
+  for (var i = 0; i < n; i++) { num += (allX[i]-mx)*(allY[i]-my); den += (allX[i]-mx)*(allX[i]-mx); }
+  var slope = den === 0 ? 0 : num/den;
+  var intercept = my - slope*mx;
+  var xMin = Math.min.apply(null, allX);
+  var xMax = Math.max.apply(null, allX);
+
+  seriesArr.push({
+    name: 'Trend',
+    type: 'line',
+    data: [[xMin, roundTo(slope*xMin+intercept,2)], [xMax, roundTo(slope*xMax+intercept,2)]],
+    lineStyle: { color: '#f43f5e', width: 2, type: 'dashed', opacity: 0.7 },
+    symbol: 'none',
+    tooltip: { show: false }
+  });
+
+  return {
+    grid: { left: 50, right: 20, top: 16, bottom: 38 },
+    xAxis: {
+      type: 'value', name: xName, nameLocation: 'center', nameGap: 24,
+      nameTextStyle: { color: '#8b8fa3', fontSize: 11 },
+      axisLine: { lineStyle: { color: '#2a2d37' } },
+      axisLabel: { color: '#8b8fa3', fontSize: 10 },
+      splitLine: { lineStyle: { color: '#2a2d3744' } }
+    },
+    yAxis: {
+      type: 'value', name: yName, nameLocation: 'center', nameGap: 36,
+      nameTextStyle: { color: '#8b8fa3', fontSize: 11 },
+      axisLine: { lineStyle: { color: '#2a2d37' } },
+      axisLabel: { color: '#8b8fa3', fontSize: 10 },
+      splitLine: { lineStyle: { color: '#2a2d3744' } }
+    },
+    tooltip: {
+      trigger: 'item',
+      backgroundColor: '#1a1d27',
+      borderColor: '#2a2d37',
+      textStyle: { color: '#e0e0e0', fontSize: 12 },
+      formatter: function(p) {
+        if (p.seriesName === 'Trend') return '';
+        return p.seriesName + '<br/>' + xName + ': ' + p.data[0] + '<br/>' + yName + ': ' + p.data[1];
+      }
+    },
+    toolbox: {
+      right: 4, top: -4,
+      feature: {
+        brush: { title: { rect: 'Box Select', clear: 'Clear' } },
+        saveAsImage: { title: 'Save', iconStyle: { borderColor: '#8b8fa3' } }
+      },
+      iconStyle: { borderColor: '#8b8fa3' }
+    },
+    brush: {
+      toolbox: ['rect', 'clear'],
+      xAxisIndex: 0,
+      yAxisIndex: 0,
+      brushStyle: { borderWidth: 1, color: 'rgba(99,102,241,0.15)', borderColor: '#6366f1' }
+    },
+    series: seriesArr
+  };
+}
+
+cScatter1.setOption(makeScatterOption('duration', 'cost', 'Duration (min)', 'Cost ($)'));
+cScatter2.setOption(makeScatterOption('tokenCount', 'llmCalls', 'Token Count', 'LLM Calls'));
+cScatter3.setOption(makeScatterOption('agentCount', 'successRate', 'Agent Count', 'Success Rate (%)'));
+
+// ============================================================
+//  5) Box Plot
+// ============================================================
+(function() {
+  // For each type, compute box stats for Duration, Tokens (K), Cost
+  function boxStats(arr) {
+    arr.sort(function(a,b){return a-b;});
+    var n = arr.length;
+    var q1 = arr[Math.floor(n*0.25)];
+    var q2 = arr[Math.floor(n*0.5)];
+    var q3 = arr[Math.floor(n*0.75)];
+    var iqr = q3 - q1;
+    var lo = q1 - 1.5*iqr;
+    var hi = q3 + 1.5*iqr;
+    var wLo = arr.find(function(v){return v >= lo;}) || arr[0];
+    var wHi = arr[arr.length-1];
+    for (var i = arr.length-1; i >= 0; i--) {
+      if (arr[i] <= hi) { wHi = arr[i]; break; }
+    }
+    var outliers = arr.filter(function(v){ return v < lo || v > hi; });
+    return { low: roundTo(wLo,2), q1: roundTo(q1,2), median: roundTo(q2,2), q3: roundTo(q3,2), high: roundTo(wHi,2), outliers: outliers.map(function(v){return roundTo(v,2);}) };
+  }
+
+  var metrics = [
+    { key: 'duration',   label: 'Duration (min)', scale: 1 },
+    { key: 'tokenCount', label: 'Tokens (K)',      scale: 0.001 },
+    { key: 'cost',       label: 'Cost ($)',         scale: 1 }
+  ];
+
+  // Category labels: "Code Gen\nDuration", "Code Gen\nTokens", etc.
+  var categories = [];
+  var boxData = [];     // each entry: [low, q1, median, q3, high]
+  var outlierData = []; // [catIdx, value]
+  var metricColors = ['#6366f1', '#22d3ee', '#10b981'];
+
+  var seriesBoxes = metrics.map(function(met, mi) {
+    var thisData = [];
+    TYPES.forEach(function(t, ti) {
+      var vals = missions.filter(function(m){return m.type === t;}).map(function(m){ return m[met.key] * met.scale; });
+      var stats = boxStats(vals);
+      var catIdx = ti * 3 + mi;
+      if (mi === 0) categories.push(t); // only push type label once per group
+      thisData.push([stats.low, stats.q1, stats.median, stats.q3, stats.high]);
+      stats.outliers.forEach(function(ov) {
+        outlierData.push({ mi: mi, ti: ti, val: ov * met.scale });
+      });
+    });
+    return thisData;
+  });
+
+  // We'll use subcategories approach: one boxplot series per metric
+  var xLabels = [];
+  TYPES.forEach(function(t) {
+    metrics.forEach(function(met) {
+      xLabels.push(t + '\n' + met.label);
+    });
+  });
+
+  // Flatten into single box series with coloring
+  var flatBoxData = [];
+  var flatOutliers = [];
+  TYPES.forEach(function(t, ti) {
+    metrics.forEach(function(met, mi) {
+      var vals = missions.filter(function(m){return m.type === t;}).map(function(m){ return m[met.key] * met.scale; });
+      var stats = boxStats(vals);
+      flatBoxData.push([stats.low, stats.q1, stats.median, stats.q3, stats.high]);
+      stats.outliers.forEach(function(ov) {
+        flatOutliers.push([ti * 3 + mi, roundTo(ov, 2)]);
+      });
+    });
+  });
+
+  cBox.setOption({
+    grid: { left: 60, right: 30, top: 30, bottom: 80 },
+    xAxis: {
+      type: 'category',
+      data: xLabels,
+      axisLabel: { color: '#8b8fa3', fontSize: 9, interval: 0, rotate: 0 },
+      axisLine: { lineStyle: { color: '#2a2d37' } },
+      axisTick: { alignWithLabel: true, lineStyle: { color: '#2a2d37' } },
+      splitLine: { show: false }
+    },
+    yAxis: {
+      type: 'value',
+      name: 'Value',
+      nameTextStyle: { color: '#8b8fa3', fontSize: 11 },
+      axisLine: { lineStyle: { color: '#2a2d37' } },
+      axisLabel: { color: '#8b8fa3', fontSize: 10 },
+      splitLine: { lineStyle: { color: '#2a2d3740' } }
+    },
+    tooltip: {
+      trigger: 'item',
+      backgroundColor: '#1a1d27',
+      borderColor: '#2a2d37',
+      textStyle: { color: '#e0e0e0' },
+      formatter: function(p) {
+        if (p.seriesType === 'scatter') return 'Outlier: ' + p.data[1];
+        if (p.componentType === 'series' && p.data) {
+          var d = p.data;
+          return p.name + '<br/>Min: ' + d[1] + '<br/>Q1: ' + d[2] + '<br/>Median: ' + d[3] + '<br/>Q3: ' + d[4] + '<br/>Max: ' + d[5];
+        }
+        return '';
+      }
+    },
+    toolbox: {
+      right: 10, top: 4,
+      feature: { saveAsImage: { title: 'Save' } },
+      iconStyle: { borderColor: '#8b8fa3' }
+    },
+    series: [
+      {
+        name: 'Metrics',
+        type: 'boxplot',
+        data: flatBoxData,
+        itemStyle: {
+          color: 'rgba(99,102,241,0.15)',
+          borderColor: '#6366f1',
+          borderWidth: 1.5
+        },
+        emphasis: {
+          itemStyle: { borderColor: '#f43f5e', borderWidth: 2 }
+        }
+      },
+      {
+        name: 'Outliers',
+        type: 'scatter',
+        data: flatOutliers,
+        symbolSize: 7,
+        itemStyle: { color: '#f43f5e' }
+      }
+    ]
+  });
+})();
+
+// ============================================================
+//  Resize handler
+// ============================================================
+window.addEventListener('resize', function() {
+  cParallel.resize();
+  cRadar.resize();
+  cHeatmap.resize();
+  cScatter1.resize();
+  cScatter2.resize();
+  cScatter3.resize();
+  cBox.resize();
+});
+
+</script>
+</body>
+</html>
