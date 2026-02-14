@@ -232,21 +232,13 @@ export class RAGProjectService extends EventEmitter {
   }
 
   /**
-   * Check if any of the enabled strategies require LLM preprocessing
-   * (keyword or summary). If so, we use ChunkPreprocessor to make one
-   * combined LLM call instead of N separate calls per chunk.
-   */
-  private needsLLMPreprocessing(strategies: RetrievalStrategy[]): boolean {
-    return strategies.some((s) => s.id === 'keyword' || s.id === 'summary');
-  }
-
-  /**
    * Index a single chunk across all enabled strategies.
    *
-   * When multiple strategies need LLM preprocessing (keyword + summary),
-   * a single combined LLM call via ChunkPreprocessor produces both outputs.
-   * Each strategy receives the shared preprocessed data instead of making
-   * its own redundant LLM call with the same input tokens.
+   * The ChunkPreprocessor (if provided) collects prompt directives from
+   * strategies that implement getPreprocessingDirective(), makes one shared
+   * LLM call, then lets each strategy extract its own result. Strategies
+   * that don't participate in preprocessing (like DirectEmbedding) simply
+   * ignore the preprocessed map.
    */
   private async indexChunkMultiStrategy(
     chunk: DocumentChunk,
@@ -256,7 +248,7 @@ export class RAGProjectService extends EventEmitter {
     store: LanceStore,
     preprocessor: ChunkPreprocessor | null
   ): Promise<void> {
-    // One LLM call produces keywords + summary for all strategies that need it
+    // One shared LLM call; strategies extract their own results
     const preprocessed = preprocessor
       ? await preprocessor.process(chunk.text)
       : undefined;
@@ -457,10 +449,10 @@ export class RAGProjectService extends EventEmitter {
           }
 
           if (useMultiStrategy) {
-            // Create preprocessor if any strategy needs LLM (keyword/summary).
-            // One LLM call per chunk produces both keywords + summary.
-            const preprocessor = this.needsLLMPreprocessing(strategies) && this.summarizationProvider
-              ? new ChunkPreprocessor(this.summarizationProvider)
+            // Create preprocessor — it asks strategies for directives and only
+            // makes a shared LLM call if any strategy opted in.
+            const preprocessor = this.summarizationProvider
+              ? new ChunkPreprocessor(this.summarizationProvider, strategies)
               : null;
 
             // Multi-strategy: index each chunk across all strategies
@@ -471,7 +463,7 @@ export class RAGProjectService extends EventEmitter {
                 projectId,
                 relativePath,
                 store,
-                preprocessor
+                preprocessor?.hasContributors() ? preprocessor : null
               );
             }
           } else {

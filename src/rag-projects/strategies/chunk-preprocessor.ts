@@ -1,110 +1,113 @@
 /**
  * Chunk Preprocessor
  *
- * Makes a single combined LLM call per chunk to produce both keywords and summary,
- * instead of letting each strategy make independent calls with the same input tokens.
+ * A generic combiner that makes a single shared LLM call per chunk for all
+ * strategies that need LLM preprocessing. The preprocessor has ZERO knowledge
+ * of what any strategy does — it only knows how to:
  *
- * Before: keyword strategy sends chunk → LLM → keywords (N input tokens)
- *         summary strategy sends chunk → LLM → summary (N input tokens again)
- *         Total: 2× input token cost for the same chunk text
+ *   1. Ask each strategy: "what's your prompt directive?" (getPreprocessingDirective)
+ *   2. Concatenate all directives into one combined prompt
+ *   3. Make one LLM call with the chunk text + combined prompt
+ *   4. Ask each strategy: "extract your result from this response" (extractPreprocessedResult)
  *
- * After:  preprocessor sends chunk → LLM → { keywords, summary } (N input tokens once)
- *         strategies read from cached preprocessor output
- *         Total: 1× input token cost
+ * Each strategy owns its directive format and extraction logic. Strategies can
+ * break each other if their output labels collide — that's their responsibility
+ * to coordinate (e.g., by choosing distinctive section labels like KEYWORDS:, SUMMARY:).
  */
 
 import type { SummarizationProvider } from '../types.js';
-
-const COMBINED_PROMPT =
-  'Analyze the following text and produce two outputs.\n\n' +
-  'KEYWORDS: Extract 10-20 important keywords and key phrases. ' +
-  'Focus on specific terms, named entities, technical concepts, and core topics.\n\n' +
-  'SUMMARY: Write a concise 1-2 sentence summary capturing the main point and key details.\n\n' +
-  'Respond in EXACTLY this format (no other text):\n' +
-  'KEYWORDS: keyword1, keyword2, keyword3, ...\n' +
-  'SUMMARY: Your summary here.';
+import type { RetrievalStrategy, PreprocessedChunkMap } from './types.js';
 
 /**
- * Preprocessed output for a single chunk.
- */
-export interface PreprocessedChunk {
-  /** Comma-separated keyword list */
-  keywords: string;
-  /** 1-2 sentence summary */
-  summary: string;
-}
-
-/**
- * Preprocesses chunks with a single LLM call per chunk, producing both
- * keywords and summaries that multiple strategies can consume.
- *
- * Usage:
- *   const preprocessor = new ChunkPreprocessor(llmProvider);
- *   const result = await preprocessor.process(chunkText);
- *   // result.keywords → for KeywordEmbeddingStrategy
- *   // result.summary  → for SummaryEmbeddingStrategy
+ * Preprocesses chunks with a single shared LLM call whose prompt is assembled
+ * from strategy-contributed directives.
  */
 export class ChunkPreprocessor {
   private summarizationProvider: SummarizationProvider;
-  /** Cache keyed by chunk text to avoid re-processing the same chunk */
-  private cache: Map<string, PreprocessedChunk> = new Map();
+  private strategies: RetrievalStrategy[];
+  /** The combined prompt built from all contributing strategies' directives */
+  private combinedDirective: string;
+  /** IDs of strategies that contribute to the shared call */
+  private contributorIds: string[];
+  /** Cache keyed by chunk text to avoid re-processing identical chunks */
+  private cache: Map<string, PreprocessedChunkMap> = new Map();
 
-  constructor(summarizationProvider: SummarizationProvider) {
+  /**
+   * @param summarizationProvider - The LLM provider for the shared call
+   * @param strategies - All enabled strategies. Only those implementing
+   *   getPreprocessingDirective() will participate in the shared call.
+   */
+  constructor(summarizationProvider: SummarizationProvider, strategies: RetrievalStrategy[]) {
     this.summarizationProvider = summarizationProvider;
-  }
+    this.strategies = strategies;
 
-  /**
-   * Process a chunk's text, returning both keywords and summary.
-   * Results are cached so repeated calls with the same text are free.
-   */
-  async process(chunkText: string): Promise<PreprocessedChunk> {
-    const cached = this.cache.get(chunkText);
-    if (cached) return cached;
+    // Collect directives from strategies that opt in
+    const directives: string[] = [];
+    this.contributorIds = [];
 
-    try {
-      const response = await this.summarizationProvider.summarize(
-        chunkText,
-        COMBINED_PROMPT
-      );
-
-      const result = this.parseResponse(response, chunkText);
-      this.cache.set(chunkText, result);
-      return result;
-    } catch (error) {
-      console.warn('[ChunkPreprocessor] Combined LLM call failed, using fallbacks:', error);
-      // Fallback: use raw text for both
-      const fallback: PreprocessedChunk = {
-        keywords: chunkText,
-        summary: chunkText,
-      };
-      this.cache.set(chunkText, fallback);
-      return fallback;
-    }
-  }
-
-  /**
-   * Parse the structured LLM response into keywords and summary.
-   * Handles minor formatting variations gracefully.
-   */
-  private parseResponse(response: string, fallbackText: string): PreprocessedChunk {
-    const lines = response.trim().split('\n');
-
-    let keywords = '';
-    let summary = '';
-
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (trimmed.toUpperCase().startsWith('KEYWORDS:')) {
-        keywords = trimmed.slice('KEYWORDS:'.length).trim();
-      } else if (trimmed.toUpperCase().startsWith('SUMMARY:')) {
-        summary = trimmed.slice('SUMMARY:'.length).trim();
+    for (const strategy of strategies) {
+      if (strategy.getPreprocessingDirective) {
+        const directive = strategy.getPreprocessingDirective();
+        if (directive) {
+          directives.push(directive);
+          this.contributorIds.push(strategy.id);
+        }
       }
     }
 
-    return {
-      keywords: keywords || fallbackText,
-      summary: summary || fallbackText,
-    };
+    this.combinedDirective = directives.length > 0
+      ? 'Analyze the following text and produce the outputs described below.\n\n' +
+        directives.join('\n\n') +
+        '\n\nRespond in EXACTLY the format specified above, nothing else.'
+      : '';
+  }
+
+  /**
+   * Whether this preprocessor has any work to do (at least one strategy contributed a directive).
+   */
+  hasContributors(): boolean {
+    return this.contributorIds.length > 0;
+  }
+
+  /**
+   * Process a chunk's text through the shared LLM call.
+   * Returns a map of strategyId → extracted text for each contributing strategy.
+   * Results are cached by chunk text.
+   */
+  async process(chunkText: string): Promise<PreprocessedChunkMap> {
+    const cached = this.cache.get(chunkText);
+    if (cached) return cached;
+
+    const result: PreprocessedChunkMap = new Map();
+
+    if (!this.hasContributors()) {
+      this.cache.set(chunkText, result);
+      return result;
+    }
+
+    try {
+      // One LLM call with the combined directive
+      const rawResponse = await this.summarizationProvider.summarize(
+        chunkText,
+        this.combinedDirective
+      );
+
+      // Let each contributing strategy extract its own result from the raw response
+      for (const strategy of this.strategies) {
+        if (strategy.extractPreprocessedResult && this.contributorIds.includes(strategy.id)) {
+          const extracted = strategy.extractPreprocessedResult(rawResponse);
+          if (extracted !== null) {
+            result.set(strategy.id, extracted);
+          }
+        }
+      }
+    } catch (error) {
+      console.warn('[ChunkPreprocessor] Shared LLM call failed:', error);
+      // Result map stays empty — strategies will fall back to their own LLM calls
+    }
+
+    this.cache.set(chunkText, result);
+    return result;
   }
 
   /**
