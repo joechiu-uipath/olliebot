@@ -7,10 +7,13 @@ import type { NativeToolResult } from './types.js';
 
 /**
  * Validates that a required string parameter is present and non-empty.
+ * @param value - Value to validate
+ * @param fieldName - Field name for error message
+ * @param customMessage - Optional custom error message (default: "{fieldName} is required")
  */
-export function validateRequired(value: unknown, fieldName: string): NativeToolResult | null {
+export function validateRequired(value: unknown, fieldName: string, customMessage?: string): NativeToolResult | null {
   if (typeof value !== 'string' || !value.trim()) {
-    return { success: false, error: `${fieldName} is required` };
+    return { success: false, error: customMessage || `${fieldName} is required` };
   }
   return null;
 }

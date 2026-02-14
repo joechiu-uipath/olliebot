@@ -47,7 +47,7 @@ This tool is restricted to Mission Lead agents — Pillar Owners cannot self-cer
     let error = validateRequired(todoId, 'todoId');
     if (error) return error;
     
-    error = validateRequired(outcome, 'outcome');
+    error = validateRequired(outcome, 'outcome', 'outcome is required — provide a summary of what was accomplished');
     if (error) return error;
 
     const todo = this.missionManager.getTodoById(todoId);

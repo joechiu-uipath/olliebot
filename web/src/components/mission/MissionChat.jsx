@@ -153,13 +153,6 @@ export const MissionChat = memo(function MissionChat({
         aria-label={`${expanded ? 'Collapse' : 'Expand'} ${contextLabel}`}
         type="button"
       >
-      <button
-        className="mission-chat-header"
-        onClick={handleToggle}
-        aria-expanded={expanded}
-        aria-label={`${expanded ? 'Collapse' : 'Expand'} ${contextLabel}`}
-        type="button"
-      >
         <span className="mission-chat-header-label">
           {contextLabel}
           {isStreaming && expanded && <span className="mission-chat-streaming-dot" aria-label="Agent is typing" />}
