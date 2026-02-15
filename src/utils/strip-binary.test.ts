@@ -7,6 +7,12 @@
 
 import { describe, it, expect } from 'vitest';
 import { stripBinaryDataForLLM } from './strip-binary.js';
+import {
+  buildDataUrl,
+  buildBase64String,
+  BASE64_MIN_LENGTH_THRESHOLD,
+  VERY_LONG_STRING_LENGTH_10240,
+} from '../test-helpers/index.js';
 
 describe('stripBinaryDataForLLM', () => {
   it('returns null and undefined unchanged', () => {
@@ -21,20 +27,21 @@ describe('stripBinaryDataForLLM', () => {
   });
 
   it('replaces data URL strings with placeholder', () => {
-    const dataUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUg...';
+    const dataUrl = buildDataUrl();
     const result = stripBinaryDataForLLM(dataUrl) as string;
     expect(result).toMatch(/^\[Binary data: \d+KB - displayed to user\]$/);
   });
 
   it('replaces long base64-looking strings with placeholder', () => {
-    const base64 = 'A'.repeat(2000); // Long alphanumeric string
+    const base64 = buildBase64String(BASE64_MIN_LENGTH_THRESHOLD * 2); // 2000 chars
     const result = stripBinaryDataForLLM(base64) as string;
     expect(result).toMatch(/^\[Base64 data: \d+KB - displayed to user\]$/);
   });
 
   it('does not replace short strings', () => {
     expect(stripBinaryDataForLLM('short string')).toBe('short string');
-    expect(stripBinaryDataForLLM('A'.repeat(500))).toBe('A'.repeat(500));
+    const mediumString = buildBase64String(500);
+    expect(stripBinaryDataForLLM(mediumString)).toBe(mediumString);
   });
 
   it('does not replace strings that are not base64', () => {
@@ -45,7 +52,7 @@ describe('stripBinaryDataForLLM', () => {
 
   it('strips binary data from known field names in objects', () => {
     const obj = {
-      screenshot: 'data:image/png;base64,iVBORw0KGgo...',
+      screenshot: buildDataUrl(),
       description: 'A screenshot of the page',
     };
 
@@ -57,7 +64,7 @@ describe('stripBinaryDataForLLM', () => {
   it('recognizes all known binary field names', () => {
     const binaryFields = ['dataUrl', 'screenshot', 'image', 'imageData', 'base64', 'b64_json'];
     for (const field of binaryFields) {
-      const obj = { [field]: 'data:image/png;base64,abc123' };
+      const obj = { [field]: buildDataUrl() };
       const result = stripBinaryDataForLLM(obj) as Record<string, unknown>;
       expect(result[field]).toMatch(/\[Image data:/);
     }
@@ -67,7 +74,7 @@ describe('stripBinaryDataForLLM', () => {
     const nested = {
       level1: {
         level2: {
-          screenshot: 'data:image/jpeg;base64,/9j/4AAQSkZJRg...',
+          screenshot: buildDataUrl(),
           text: 'Nested text',
         },
       },
@@ -81,9 +88,9 @@ describe('stripBinaryDataForLLM', () => {
 
   it('recursively processes arrays', () => {
     const arr = [
-      'data:image/png;base64,iVBORw0KGgo...',
+      buildDataUrl(),
       'normal text',
-      { image: 'data:image/png;base64,abc' },
+      { image: buildDataUrl() },
     ];
 
     const result = stripBinaryDataForLLM(arr) as unknown[];
@@ -93,7 +100,7 @@ describe('stripBinaryDataForLLM', () => {
   });
 
   it('correctly calculates size in KB', () => {
-    const data = 'data:image/png;base64,' + 'A'.repeat(10240); // ~10KB
+    const data = buildDataUrl(VERY_LONG_STRING_LENGTH_10240); // ~10KB
     const result = stripBinaryDataForLLM(data) as string;
     expect(result).toContain('10KB');
   });

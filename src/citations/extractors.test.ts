@@ -15,11 +15,24 @@ import {
   mcpToolExtractor,
   getDefaultExtractors,
 } from './extractors.js';
-
-/** Helper: test a CitationExtractor.pattern (may be string or RegExp) against a value */
-function testPattern(pattern: string | RegExp, value: string): boolean {
-  return pattern instanceof RegExp ? pattern.test(value) : pattern === value;
-}
+import {
+  testPattern,
+  buildWebSearchResult,
+  buildRagQueryResult,
+  repeatString,
+  TEST_REQUEST_ID_PREFIX,
+  TEST_PROJECT_ID_PREFIX,
+  TEST_URL,
+  TEST_DOMAIN,
+  WEB_SCRAPE_SNIPPET_MAX_LENGTH,
+  RAG_QUERY_SNIPPET_MAX_LENGTH,
+  HTTP_CLIENT_SNIPPET_MAX_LENGTH,
+  MCP_ARRAY_RESULTS_LIMIT,
+  LONG_STRING_LENGTH_300,
+  LONG_STRING_LENGTH_500,
+  SHORT_TEST_DURATION_MS,
+  MEDIUM_TEST_DURATION_MS,
+} from '../test-helpers/index.js';
 
 describe('webSearchExtractor', () => {
   it('matches only web_search tool name', () => {
@@ -33,47 +46,59 @@ describe('webSearchExtractor', () => {
       query: 'test query',
       provider: 'tavily',
       results: [
-        { title: 'Result 1', link: 'https://example.com/page1', snippet: 'Snippet 1', position: 1 },
-        { title: 'Result 2', link: 'https://www.example.org/page2', snippet: 'Snippet 2', position: 2 },
+        buildWebSearchResult({ 
+          title: 'Result 1', 
+          link: `${TEST_URL}/page1`, 
+          snippet: 'Snippet 1', 
+          position: 1 
+        }),
+        buildWebSearchResult({ 
+          title: 'Result 2', 
+          link: `https://www.${TEST_DOMAIN}/page2`, 
+          snippet: 'Snippet 2', 
+          position: 2 
+        }),
       ],
       totalResults: 2,
     };
 
-    const sources = webSearchExtractor.extract('req-1', 'web_search', {}, output);
+    const sources = webSearchExtractor.extract(`${TEST_REQUEST_ID_PREFIX}1`, 'web_search', {}, output);
 
     expect(sources).toHaveLength(2);
     expect(sources[0]).toMatchObject({
-      id: 'req-1-0',
+      id: `${TEST_REQUEST_ID_PREFIX}1-0`,
       type: 'web',
       toolName: 'web_search',
-      toolRequestId: 'req-1',
-      uri: 'https://example.com/page1',
+      toolRequestId: `${TEST_REQUEST_ID_PREFIX}1`,
+      uri: `${TEST_URL}/page1`,
       title: 'Result 1',
-      domain: 'example.com',
+      domain: TEST_DOMAIN,
       snippet: 'Snippet 1',
     });
-    expect(sources[1].domain).toBe('example.org'); // www. stripped
+    expect(sources[1].domain).toBe(TEST_DOMAIN); // www. stripped
   });
 
   it('returns empty array for null/undefined output', () => {
-    expect(webSearchExtractor.extract('req-1', 'web_search', {}, null)).toEqual([]);
-    expect(webSearchExtractor.extract('req-1', 'web_search', {}, undefined)).toEqual([]);
+    const requestId = `${TEST_REQUEST_ID_PREFIX}1`;
+    expect(webSearchExtractor.extract(requestId, 'web_search', {}, null)).toEqual([]);
+    expect(webSearchExtractor.extract(requestId, 'web_search', {}, undefined)).toEqual([]);
   });
 
   it('returns empty array when results is not an array', () => {
-    expect(webSearchExtractor.extract('req-1', 'web_search', {}, { results: 'not-array' })).toEqual([]);
-    expect(webSearchExtractor.extract('req-1', 'web_search', {}, {})).toEqual([]);
+    const requestId = `${TEST_REQUEST_ID_PREFIX}1`;
+    expect(webSearchExtractor.extract(requestId, 'web_search', {}, { results: 'not-array' })).toEqual([]);
+    expect(webSearchExtractor.extract(requestId, 'web_search', {}, {})).toEqual([]);
   });
 
   it('handles invalid URLs gracefully', () => {
     const output = {
       query: 'test',
       provider: 'tavily',
-      results: [{ title: 'Bad', link: 'not-a-url', snippet: 'test', position: 1 }],
+      results: [buildWebSearchResult({ title: 'Bad', link: 'not-a-url', snippet: 'test', position: 1 })],
       totalResults: 1,
     };
 
-    const sources = webSearchExtractor.extract('req-1', 'web_search', {}, output);
+    const sources = webSearchExtractor.extract(`${TEST_REQUEST_ID_PREFIX}1`, 'web_search', {}, output);
     expect(sources[0].domain).toBe('unknown');
   });
 });
@@ -86,7 +111,7 @@ describe('webScrapeExtractor', () => {
 
   it('extracts citation from scrape output', () => {
     const output = {
-      url: 'https://example.com/article',
+      url: `${TEST_URL}/article`,
       title: 'Test Article',
       metaDescription: 'A test article about testing',
       contentType: 'text/html',
@@ -95,15 +120,15 @@ describe('webScrapeExtractor', () => {
       contentLength: 1000,
     };
 
-    const sources = webScrapeExtractor.extract('req-2', 'web_scrape', {}, output);
+    const sources = webScrapeExtractor.extract(`${TEST_REQUEST_ID_PREFIX}2`, 'web_scrape', {}, output);
 
     expect(sources).toHaveLength(1);
     expect(sources[0]).toMatchObject({
-      id: 'req-2-0',
+      id: `${TEST_REQUEST_ID_PREFIX}2-0`,
       type: 'web',
-      uri: 'https://example.com/article',
+      uri: `${TEST_URL}/article`,
       title: 'Test Article',
-      domain: 'example.com',
+      domain: TEST_DOMAIN,
       snippet: 'A test article about testing',
     });
     expect(sources[0].fullContent).toBe('Full article content here...');
@@ -111,35 +136,36 @@ describe('webScrapeExtractor', () => {
 
   it('uses summary as snippet when metaDescription is absent', () => {
     const output = {
-      url: 'https://example.com/page',
+      url: `${TEST_URL}/page`,
       contentType: 'text/html',
       outputMode: 'markdown',
       summary: 'Summary of the page',
       contentLength: 500,
     };
 
-    const sources = webScrapeExtractor.extract('req-3', 'web_scrape', {}, output);
+    const sources = webScrapeExtractor.extract(`${TEST_REQUEST_ID_PREFIX}3`, 'web_scrape', {}, output);
     expect(sources[0].snippet).toBe('Summary of the page');
   });
 
-  it('truncates long snippets to 200 chars with ellipsis', () => {
-    const longDesc = 'A'.repeat(300);
+  it('truncates long snippets to max length with ellipsis', () => {
+    const longDesc = repeatString('A', LONG_STRING_LENGTH_300);
     const output = {
-      url: 'https://example.com',
+      url: TEST_URL,
       metaDescription: longDesc,
       contentType: 'text/html',
       outputMode: 'markdown',
-      contentLength: 300,
+      contentLength: LONG_STRING_LENGTH_300,
     };
 
-    const sources = webScrapeExtractor.extract('req-4', 'web_scrape', {}, output);
-    expect(sources[0].snippet!.length).toBeLessThanOrEqual(203); // 200 + '...'
+    const sources = webScrapeExtractor.extract(`${TEST_REQUEST_ID_PREFIX}4`, 'web_scrape', {}, output);
+    expect(sources[0].snippet!.length).toBeLessThanOrEqual(WEB_SCRAPE_SNIPPET_MAX_LENGTH + 3); // 3 for '...'
     expect(sources[0].snippet!.endsWith('...')).toBe(true);
   });
 
   it('returns empty for missing URL', () => {
-    expect(webScrapeExtractor.extract('req-5', 'web_scrape', {}, {})).toEqual([]);
-    expect(webScrapeExtractor.extract('req-5', 'web_scrape', {}, null)).toEqual([]);
+    const requestId = `${TEST_REQUEST_ID_PREFIX}5`;
+    expect(webScrapeExtractor.extract(requestId, 'web_scrape', {}, {})).toEqual([]);
+    expect(webScrapeExtractor.extract(requestId, 'web_scrape', {}, null)).toEqual([]);
   });
 });
 
@@ -151,30 +177,35 @@ describe('ragQueryExtractor', () => {
 
   it('extracts citations from RAG results', () => {
     const output = {
-      projectId: 'proj-1',
+      projectId: `${TEST_PROJECT_ID_PREFIX}1`,
       query: 'what is testing',
       results: [
-        { documentPath: '/docs/testing.pdf', text: 'Testing is important...', score: 0.95, chunkIndex: 0 },
-        {
+        buildRagQueryResult({ 
+          documentPath: '/docs/testing.pdf', 
+          text: 'Testing is important...', 
+          score: 0.95, 
+          chunkIndex: 0 
+        }),
+        buildRagQueryResult({
           documentPath: '/docs/guide.pdf',
           text: 'Guide content...',
           score: 0.8,
           chunkIndex: 1,
           metadata: { pageNumber: 5 },
-        },
+        }),
       ],
       totalResults: 2,
-      queryTimeMs: 50,
+      queryTimeMs: MEDIUM_TEST_DURATION_MS,
     };
 
-    const sources = ragQueryExtractor.extract('req-6', 'query_rag_project', {}, output);
+    const sources = ragQueryExtractor.extract(`${TEST_REQUEST_ID_PREFIX}6`, 'query_rag_project', {}, output);
 
     expect(sources).toHaveLength(2);
     expect(sources[0]).toMatchObject({
       type: 'file',
       uri: '/docs/testing.pdf',
       title: 'testing.pdf',
-      projectId: 'proj-1',
+      projectId: `${TEST_PROJECT_ID_PREFIX}1`,
     });
     expect(sources[1].title).toBe('guide.pdf (page 5)');
     expect(sources[1].pageNumber).toBe(5);
@@ -182,34 +213,35 @@ describe('ragQueryExtractor', () => {
 
   it('handles Windows-style paths', () => {
     const output = {
-      projectId: 'proj-2',
+      projectId: `${TEST_PROJECT_ID_PREFIX}2`,
       query: 'test',
-      results: [{ documentPath: 'C:\\docs\\file.txt', text: 'content', score: 0.9, chunkIndex: 0 }],
+      results: [buildRagQueryResult({ documentPath: 'C:\\docs\\file.txt', text: 'content', score: 0.9, chunkIndex: 0 })],
       totalResults: 1,
-      queryTimeMs: 10,
+      queryTimeMs: SHORT_TEST_DURATION_MS,
     };
 
-    const sources = ragQueryExtractor.extract('req-7', 'query_rag_project', {}, output);
+    const sources = ragQueryExtractor.extract(`${TEST_REQUEST_ID_PREFIX}7`, 'query_rag_project', {}, output);
     expect(sources[0].title).toBe('file.txt');
   });
 
-  it('truncates long text snippets to 400 chars', () => {
-    const longText = 'X'.repeat(500);
+  it('truncates long text snippets to max length', () => {
+    const longText = repeatString('X', LONG_STRING_LENGTH_500);
     const output = {
-      projectId: 'proj-3',
+      projectId: `${TEST_PROJECT_ID_PREFIX}3`,
       query: 'test',
-      results: [{ documentPath: 'doc.txt', text: longText, score: 0.9, chunkIndex: 0 }],
+      results: [buildRagQueryResult({ documentPath: 'doc.txt', text: longText, score: 0.9, chunkIndex: 0 })],
       totalResults: 1,
-      queryTimeMs: 10,
+      queryTimeMs: SHORT_TEST_DURATION_MS,
     };
 
-    const sources = ragQueryExtractor.extract('req-8', 'query_rag_project', {}, output);
-    expect(sources[0].snippet!.length).toBeLessThanOrEqual(403); // 400 + '...'
+    const sources = ragQueryExtractor.extract(`${TEST_REQUEST_ID_PREFIX}8`, 'query_rag_project', {}, output);
+    expect(sources[0].snippet!.length).toBeLessThanOrEqual(RAG_QUERY_SNIPPET_MAX_LENGTH + 3); // 3 for '...'
   });
 
   it('returns empty for invalid output', () => {
-    expect(ragQueryExtractor.extract('req-9', 'query_rag_project', {}, null)).toEqual([]);
-    expect(ragQueryExtractor.extract('req-9', 'query_rag_project', {}, { results: 'bad' })).toEqual([]);
+    const requestId = `${TEST_REQUEST_ID_PREFIX}9`;
+    expect(ragQueryExtractor.extract(requestId, 'query_rag_project', {}, null)).toEqual([]);
+    expect(ragQueryExtractor.extract(requestId, 'query_rag_project', {}, { results: 'bad' })).toEqual([]);
   });
 });
 
@@ -259,7 +291,7 @@ describe('httpClientExtractor', () => {
       url: 'https://api.example.com/data',
     };
 
-    const sources = httpClientExtractor.extract('req-12', 'http_client', params, output);
+    const sources = httpClientExtractor.extract(`${TEST_REQUEST_ID_PREFIX}12`, 'http_client', params, output);
 
     expect(sources).toHaveLength(1);
     expect(sources[0]).toMatchObject({
@@ -272,20 +304,20 @@ describe('httpClientExtractor', () => {
 
   it('falls back to output URL when parameter URL missing', () => {
     const output = { status: 200, statusText: 'OK', headers: {}, body: '', url: 'https://fallback.com/api' };
-    const sources = httpClientExtractor.extract('req-13', 'http_client', {}, output);
+    const sources = httpClientExtractor.extract(`${TEST_REQUEST_ID_PREFIX}13`, 'http_client', {}, output);
     expect(sources[0].uri).toBe('https://fallback.com/api');
   });
 
   it('returns empty when no URL available', () => {
-    const sources = httpClientExtractor.extract('req-14', 'http_client', {}, {});
+    const sources = httpClientExtractor.extract(`${TEST_REQUEST_ID_PREFIX}14`, 'http_client', {}, {});
     expect(sources).toEqual([]);
   });
 
   it('truncates long body snippets', () => {
-    const longBody = 'Z'.repeat(300);
-    const output = { status: 200, statusText: 'OK', headers: {}, body: longBody, url: 'https://example.com' };
-    const sources = httpClientExtractor.extract('req-15', 'http_client', { url: 'https://example.com' }, output);
-    expect(sources[0].snippet!.length).toBeLessThanOrEqual(203);
+    const longBody = repeatString('Z', LONG_STRING_LENGTH_300);
+    const output = { status: 200, statusText: 'OK', headers: {}, body: longBody, url: TEST_URL };
+    const sources = httpClientExtractor.extract(`${TEST_REQUEST_ID_PREFIX}15`, 'http_client', { url: TEST_URL }, output);
+    expect(sources[0].snippet!.length).toBeLessThanOrEqual(HTTP_CLIENT_SNIPPET_MAX_LENGTH + 3); // 3 for '...'
   });
 });
 
@@ -304,7 +336,7 @@ describe('mcpToolExtractor', () => {
       content: 'Some content from MCP tool',
     };
 
-    const sources = mcpToolExtractor.extract('req-16', 'mcp.server__tool', {}, output);
+    const sources = mcpToolExtractor.extract(`${TEST_REQUEST_ID_PREFIX}16`, 'mcp.server__tool', {}, output);
 
     expect(sources).toHaveLength(1);
     expect(sources[0]).toMatchObject({
@@ -323,33 +355,34 @@ describe('mcpToolExtractor', () => {
       ],
     };
 
-    const sources = mcpToolExtractor.extract('req-17', 'mcp.s__t', {}, output);
+    const sources = mcpToolExtractor.extract(`${TEST_REQUEST_ID_PREFIX}17`, 'mcp.s__t', {}, output);
     expect(sources).toHaveLength(2);
     expect(sources[0].uri).toBe('https://a.com');
     expect(sources[1].uri).toBe('https://b.com');
   });
 
   it('returns empty for non-object output', () => {
-    expect(mcpToolExtractor.extract('req-18', 'mcp.s__t', {}, null)).toEqual([]);
-    expect(mcpToolExtractor.extract('req-18', 'mcp.s__t', {}, 'string')).toEqual([]);
-    expect(mcpToolExtractor.extract('req-18', 'mcp.s__t', {}, 42)).toEqual([]);
+    const requestId = `${TEST_REQUEST_ID_PREFIX}18`;
+    expect(mcpToolExtractor.extract(requestId, 'mcp.s__t', {}, null)).toEqual([]);
+    expect(mcpToolExtractor.extract(requestId, 'mcp.s__t', {}, 'string')).toEqual([]);
+    expect(mcpToolExtractor.extract(requestId, 'mcp.s__t', {}, 42)).toEqual([]);
   });
 
   it('returns empty when no URL-like fields exist', () => {
     const output = { name: 'test', value: 42 };
-    const sources = mcpToolExtractor.extract('req-19', 'mcp.s__t', {}, output);
+    const sources = mcpToolExtractor.extract(`${TEST_REQUEST_ID_PREFIX}19`, 'mcp.s__t', {}, output);
     expect(sources).toEqual([]);
   });
 
-  it('limits array results to 10 items', () => {
+  it('limits array results to maximum allowed', () => {
     const items = Array.from({ length: 15 }, (_, i) => ({
-      url: `https://example.com/${i}`,
+      url: `${TEST_URL}/${i}`,
       title: `Item ${i}`,
     }));
     const output = { results: items };
 
-    const sources = mcpToolExtractor.extract('req-20', 'mcp.s__t', {}, output);
-    expect(sources).toHaveLength(10);
+    const sources = mcpToolExtractor.extract(`${TEST_REQUEST_ID_PREFIX}20`, 'mcp.s__t', {}, output);
+    expect(sources).toHaveLength(MCP_ARRAY_RESULTS_LIMIT);
   });
 });
 
