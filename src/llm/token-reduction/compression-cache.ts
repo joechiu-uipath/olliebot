@@ -78,7 +78,11 @@ export class CompressionCache {
       const oldestKey = this.cache.keys().next().value as string;
       this.cache.delete(oldestKey);
       if (this.dbRemove) {
-        try { this.dbRemove(oldestKey); } catch { /* non-fatal */ }
+        try {
+          this.dbRemove(oldestKey);
+        } catch (err) {
+          console.warn('[CompressionCache] DB remove failed (non-fatal):', err);
+        }
       }
     }
 
@@ -93,7 +97,11 @@ export class CompressionCache {
 
     // Persist to DB asynchronously
     if (this.dbPersist) {
-      try { this.dbPersist(entry); } catch { /* non-fatal */ }
+      try {
+        this.dbPersist(entry);
+      } catch (err) {
+        console.warn('[CompressionCache] DB persist failed (non-fatal):', err);
+      }
     }
   }
 

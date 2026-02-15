@@ -13,6 +13,7 @@ import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 
 const API_BASE = '';
 const POLL_INTERVAL_MS = 5000;
+const TEXT_PREVIEW_LENGTH = 2000;
 
 // ============================================================
 // Hook: useLogsMode
@@ -33,6 +34,11 @@ export function useLogsMode() {
   const [selectedTrace, setSelectedTrace] = useState(null); // full trace detail
   const [selectedLlmCall, setSelectedLlmCall] = useState(null); // single LLM call detail
   const [llmCalls, setLlmCalls] = useState([]); // flat LLM calls list
+
+  // UI state for collapsible sections
+  const [showTokenReduction, setShowTokenReduction] = useState(false);
+  const [showSystemPrompt, setShowSystemPrompt] = useState(false);
+  const [showMessages, setShowMessages] = useState(false);
 
   // Filters
   const [activeView, setActiveView] = useState('traces'); // 'traces' | 'llm-calls'
@@ -274,7 +280,7 @@ function formatTokens(n) {
   return String(n);
 }
 
-function savingsPercent(original, compressed) {
+function calculateSavingsPercent(original, compressed) {
   if (!original || original <= 0) return 0;
   return Math.round((original - compressed) / original * 10000) / 100;
 }
@@ -583,7 +589,7 @@ const TraceDetailView = memo(function TraceDetailView({ trace, onBack, onSelectL
                 <div className="logs-llm-stats">
                   {formatTokens(c.inputTokens)} in / {formatTokens(c.outputTokens)} out
                   {c.tokenReductionEnabled === 1 && (
-                    <span className="logs-token-reduction-inline"> | compressed: {savingsPercent(c.tokenReductionOriginalTokens, c.tokenReductionCompressedTokens)}% saved</span>
+                    <span className="logs-token-reduction-inline"> | compressed: {calculateSavingsPercent(c.tokenReductionOriginalTokens, c.tokenReductionCompressedTokens)}% saved</span>
                   )}
                   {c.callerPurpose && <span> | {c.callerPurpose}</span>}
                   {c.stopReason && <span> | stop: {c.stopReason}</span>}
@@ -674,19 +680,26 @@ const LlmCallDetailView = memo(function LlmCallDetailView({ call, onBack }) {
       {/* Token Reduction (Prompt Compression) */}
       {call.tokenReductionEnabled === 1 && (
         <div className="logs-detail-section logs-token-reduction-section">
-          <h4 className="logs-collapsible" onClick={() => setShowTokenReduction(!showTokenReduction)}>
-            {showTokenReduction ? '▾' : '▸'} Token Reduction
-            <span className="logs-token-reduction-badge">
-              {savingsPercent(call.tokenReductionOriginalTokens, call.tokenReductionCompressedTokens)}% saved
-            </span>
-          </h4>
+          <button
+            className="logs-collapsible"
+            onClick={() => setShowTokenReduction(!showTokenReduction)}
+            aria-expanded={showTokenReduction}
+            aria-label="Toggle token reduction details"
+          >
+            <h4>
+              {showTokenReduction ? '▾' : '▸'} Token Reduction
+              <span className="logs-token-reduction-badge">
+                {calculateSavingsPercent(call.tokenReductionOriginalTokens, call.tokenReductionCompressedTokens)}% saved
+              </span>
+            </h4>
+          </button>
           {showTokenReduction && (
             <div className="logs-token-reduction-detail">
               <div className="logs-token-reduction-meta">
                 <span>Provider: <strong>{call.tokenReductionProvider}</strong></span>
                 <span>Original: <strong>{formatTokens(call.tokenReductionOriginalTokens)} tokens</strong></span>
                 <span>Compressed: <strong>{formatTokens(call.tokenReductionCompressedTokens)} tokens</strong></span>
-                <span>Saved: <strong>{formatTokens(call.tokenReductionOriginalTokens - call.tokenReductionCompressedTokens)} tokens ({savingsPercent(call.tokenReductionOriginalTokens, call.tokenReductionCompressedTokens)}%)</strong></span>
+                <span>Saved: <strong>{formatTokens(call.tokenReductionOriginalTokens - call.tokenReductionCompressedTokens)} tokens ({calculateSavingsPercent(call.tokenReductionOriginalTokens, call.tokenReductionCompressedTokens)}%)</strong></span>
                 <span>Compression Time: <strong>{formatDuration(call.tokenReductionTimeMs)}</strong></span>
               </div>
               {call.tokenReductionOriginalText && (
@@ -709,8 +722,19 @@ const LlmCallDetailView = memo(function LlmCallDetailView({ call, onBack }) {
       {/* System Prompt */}
       {call.systemPrompt && (
         <div className="logs-detail-section">
-          <h4 className="logs-collapsible" onClick={() => {}}>System Prompt</h4>
-          <pre className="logs-text-block">{call.systemPrompt}</pre>
+          <button
+            className="logs-collapsible"
+            onClick={() => setShowSystemPrompt(!showSystemPrompt)}
+            aria-expanded={showSystemPrompt}
+            aria-label="Toggle system prompt"
+          >
+            <h4>
+              {showSystemPrompt ? '▾' : '▸'} System Prompt
+            </h4>
+          </button>
+          {showSystemPrompt && (
+            <pre className="logs-text-block">{call.systemPrompt.substring(0, TEXT_PREVIEW_LENGTH)}</pre>
+          )}
         </div>
       )}
 
@@ -729,9 +753,16 @@ const LlmCallDetailView = memo(function LlmCallDetailView({ call, onBack }) {
       {/* Messages (collapsible - can be large) - system messages filtered out since shown above */}
       {nonSystemMessages.length > 0 && (
         <div className="logs-detail-section">
-          <h4 className="logs-collapsible" onClick={() => setShowMessages(!showMessages)}>
-            {showMessages ? '▾' : '▸'} Messages ({nonSystemMessages.length})
-          </h4>
+          <button
+            className="logs-collapsible"
+            onClick={() => setShowMessages(!showMessages)}
+            aria-expanded={showMessages}
+            aria-label="Toggle messages"
+          >
+            <h4>
+              {showMessages ? '▾' : '▸'} Messages ({nonSystemMessages.length})
+            </h4>
+          </button>
           {showMessages && (
             <div className="logs-messages-list">
               {nonSystemMessages.map((msg, i) => (
@@ -739,8 +770,8 @@ const LlmCallDetailView = memo(function LlmCallDetailView({ call, onBack }) {
                   <div className="logs-message-role">{msg.role}</div>
                   <pre className="logs-message-content">
                     {typeof msg.content === 'string'
-                      ? msg.content.substring(0, 2000)
-                      : JSON.stringify(msg.content, null, 2)?.substring(0, 2000)}
+                      ? msg.content.substring(0, TEXT_PREVIEW_LENGTH)
+                      : JSON.stringify(msg.content, null, 2)?.substring(0, TEXT_PREVIEW_LENGTH)}
                   </pre>
                 </div>
               ))}

@@ -10,3 +10,11 @@ export type {
   CompressionResult,
   TokenReductionStats,
 } from './types.js';
+export {
+  calculateSavingsPercent,
+  estimateTokenCount,
+  truncateForStorage,
+  CHARS_PER_TOKEN_ESTIMATE,
+  TRACE_TEXT_PREVIEW_LENGTH,
+  WORKLOAD_THRESHOLDS,
+} from './utils.js';

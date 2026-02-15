@@ -6006,6 +6006,28 @@ html, body {
   color: var(--accent);
 }
 
+/* Make collapsible buttons inherit text styles */
+button.logs-collapsible {
+  background: none;
+  border: none;
+  padding: 0;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+
+button.logs-collapsible h4 {
+  display: inline;
+  margin: 0;
+}
+
+button.logs-collapsible:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 /* Messages in LLM call detail */
 .logs-messages-list {
   display: flex;
@@ -7056,6 +7078,13 @@ html, body {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 0.75rem;
+  max-width: 1200px;
+}
+
+@media (max-width: 768px) {
+  .logs-token-reduction-compare {
+    grid-template-columns: 1fr;
+  }
 }
 
 .logs-token-reduction-compare-title {

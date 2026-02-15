@@ -24,6 +24,7 @@ import type {
   CompressionResult,
   CompressionLevel,
 } from './types.js';
+import { calculateSavingsPercent, estimateTokenCount } from './utils.js';
 
 // ────────────────────────────────────────────────────────────
 // Provider-specific constants
@@ -100,7 +101,7 @@ export class LLMLingua2Provider implements TokenReductionProvider {
     }
 
     const preset = LEVEL_PRESETS[level];
-    const estimatedTokens = this.estimateTokens(text);
+    const estimatedTokens = estimateTokenCount(text);
 
     // Skip compression when below the activation threshold for this level
     if (estimatedTokens < preset.activationThreshold) {
@@ -131,11 +132,8 @@ export class LLMLingua2Provider implements TokenReductionProvider {
       });
 
       const compressionTimeMs = Date.now() - startTime;
-      const compressedTokenCount = this.estimateTokens(compressedText);
-      const tokensSaved = estimatedTokens - compressedTokenCount;
-      const tokenSavingsPercent = estimatedTokens > 0
-        ? Math.round((tokensSaved / estimatedTokens) * 10000) / 100
-        : 0;
+      const compressedTokenCount = estimateTokenCount(compressedText);
+      const tokenSavingsPercent = calculateSavingsPercent(estimatedTokens, compressedTokenCount);
 
       return {
         compressedText,
@@ -163,12 +161,4 @@ export class LLMLingua2Provider implements TokenReductionProvider {
     }
   }
 
-  /**
-   * Rough token estimate (~4 chars per token for English).
-   * Used for activation-threshold checks and stats display only;
-   * the actual compression is model-driven.
-   */
-  private estimateTokens(text: string): number {
-    return Math.ceil(text.length / 4);
-  }
 }

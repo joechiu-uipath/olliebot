@@ -20,6 +20,7 @@ import type {
 import { LLMLingua2Provider } from './llmlingua2-provider.js';
 import { CompressionCache } from './compression-cache.js';
 import { getDb } from '../../db/index.js';
+import { estimateTokenCount, WORKLOAD_THRESHOLDS } from './utils.js';
 
 export class TokenReductionService {
   private provider: TokenReductionProvider | null = null;
@@ -157,9 +158,9 @@ export class TokenReductionService {
     }
 
     // Skip compression for short texts based on workload threshold
-    const threshold = workload === 'main' ? 1000 : 2000;
+    const threshold = WORKLOAD_THRESHOLDS[workload];
     if (text.length <= threshold) {
-      const estimatedTokens = Math.ceil(text.length / 4);
+      const estimatedTokens = estimateTokenCount(text);
       return {
         compressedText: text,
         originalLength: text.length,
@@ -227,12 +228,16 @@ export class TokenReductionService {
                VALUES (?, ?, ?, ?)`,
               [entry.key, entry.inputText, JSON.stringify(entry.result), entry.createdAt]
             );
-          } catch { /* non-fatal */ }
+          } catch (err) {
+            console.warn('[TokenReduction] Cache persist failed (non-fatal):', err);
+          }
         },
         (key) => {
           try {
             getDb().rawRun('DELETE FROM token_reduction_cache WHERE key = ?', [key]);
-          } catch { /* non-fatal */ }
+          } catch (err) {
+            console.warn('[TokenReduction] Cache remove failed (non-fatal):', err);
+          }
         }
       );
 

@@ -20,6 +20,7 @@ import type {
   TraceStats,
 } from './types.js';
 import type { Channel } from '../channels/types.js';
+import { truncateForStorage } from '../llm/token-reduction/utils.js';
 
 // Max stored size for messages/tools JSON (500KB)
 const MAX_MESSAGES_JSON_SIZE = 500_000;
@@ -572,8 +573,8 @@ export class TraceStore {
     const id = uuid();
     const now = new Date().toISOString();
     // Truncate texts for storage (keep first 2000 chars for inspection)
-    const originalText = data.originalText?.substring(0, 2000) || null;
-    const compressedText = data.compressedText?.substring(0, 2000) || null;
+    const originalText = truncateForStorage(data.originalText) ?? null;
+    const compressedText = truncateForStorage(data.compressedText) ?? null;
 
     db.rawRun(
       `INSERT INTO token_reductions (id, llmCallId, provider, originalTokens, compressedTokens, compressionTimeMs, originalText, compressedText, createdAt)

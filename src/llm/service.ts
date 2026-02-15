@@ -14,6 +14,7 @@ import type { TraceStore } from '../tracing/trace-store.js';
 import type { TraceContext, LlmWorkload } from '../tracing/types.js';
 import { TokenReductionService } from './token-reduction/token-reduction-service.js';
 import type { TokenReductionConfig, CompressionResult, TokenReductionProviderType } from './token-reduction/types.js';
+import { truncateForStorage } from './token-reduction/utils.js';
 
 export interface LLMServiceConfig {
   main: LLMProvider;
@@ -191,28 +192,25 @@ export class LLMService {
 
       // Record token reduction in trace
       if (callId && this.traceStore && result.results.length > 0) {
-        // Aggregate all compression results
-        const totalOriginal = result.results.reduce((sum, r) => sum + r.originalTokenCount, 0);
-        const totalCompressed = result.results.reduce((sum, r) => sum + r.compressedTokenCount, 0);
-        const totalTimeMs = result.results.reduce((sum, r) => sum + r.compressionTimeMs, 0);
-        const tokensSaved = totalOriginal - totalCompressed;
-        const savingsPercent = totalOriginal > 0
-          ? Math.round((tokensSaved / totalOriginal) * 10000) / 100
-          : 0;
-
+        const stats = this.aggregateCompressionResults(result.results);
+        
         // Use the first result's texts for the trace detail view
         const firstResult = result.results[0];
 
         this.traceStore.recordTokenReduction(callId, {
           provider: firstResult.provider,
-          originalTokens: totalOriginal,
-          compressedTokens: totalCompressed,
-          compressionTimeMs: totalTimeMs,
-          originalText: messages.length > 0 ? this.extractFirstUserText(messages) : undefined,
-          compressedText: result.messages.length > 0 ? this.extractFirstUserText(result.messages) : undefined,
+          originalTokens: stats.originalTokens,
+          compressedTokens: stats.compressedTokens,
+          compressionTimeMs: stats.compressionTimeMs,
+          originalText: truncateForStorage(this.extractFirstUserText(messages)),
+          compressedText: truncateForStorage(this.extractFirstUserText(result.messages)),
         });
 
-        console.log(`[LLMService] Token reduction: ${totalOriginal} -> ${totalCompressed} tokens (${savingsPercent}% saved, ${totalTimeMs}ms)`);
+        const savingsPercent = stats.originalTokens > 0
+          ? Math.round((stats.tokensSaved / stats.originalTokens) * 10000) / 100
+          : 0;
+
+        console.log(`[LLMService] Token reduction: ${stats.originalTokens} -> ${stats.compressedTokens} tokens (${savingsPercent}% saved, ${stats.compressionTimeMs}ms)`);
       }
 
       return {
@@ -225,6 +223,31 @@ export class LLMService {
       console.error('[LLMService] Token reduction failed, using original messages:', error);
       return { messages, options };
     }
+  }
+
+  /**
+   * Aggregate compression results into total stats.
+   */
+  private aggregateCompressionResults(results: CompressionResult[]): {
+    originalTokens: number;
+    compressedTokens: number;
+    tokensSaved: number;
+    compressionTimeMs: number;
+  } {
+    if (results.length === 0) {
+      return { originalTokens: 0, compressedTokens: 0, tokensSaved: 0, compressionTimeMs: 0 };
+    }
+
+    const originalTokens = results.reduce((sum, r) => sum + r.originalTokenCount, 0);
+    const compressedTokens = results.reduce((sum, r) => sum + r.compressedTokenCount, 0);
+    const compressionTimeMs = results.reduce((sum, r) => sum + r.compressionTimeMs, 0);
+
+    return {
+      originalTokens,
+      compressedTokens,
+      tokensSaved: originalTokens - compressedTokens,
+      compressionTimeMs,
+    };
   }
 
   /**
