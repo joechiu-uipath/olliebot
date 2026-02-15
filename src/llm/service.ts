@@ -14,14 +14,12 @@ import type { TraceStore } from '../tracing/trace-store.js';
 import type { TraceContext, LlmWorkload } from '../tracing/types.js';
 import { TokenReductionService } from './token-reduction/token-reduction-service.js';
 import type { TokenReductionConfig, CompressionResult, TokenReductionProviderType } from './token-reduction/types.js';
-import type { UserSettingsService } from '../settings/service.js';
 
 export interface LLMServiceConfig {
   main: LLMProvider;
   fast: LLMProvider;
   traceStore?: TraceStore;
   tokenReduction?: TokenReductionConfig;
-  settingsService?: UserSettingsService;
 }
 
 export class LLMService {
@@ -30,7 +28,6 @@ export class LLMService {
   private traceStore: TraceStore | null;
   private tokenReduction: TokenReductionService | null = null;
   private tokenReductionConfig: TokenReductionConfig | null;
-  private settingsService: UserSettingsService | null;
 
   // AsyncLocalStorage provides request-scoped context that is safe for concurrent async operations.
   // Unlike a shared stack, each async execution chain maintains its own isolated context,
@@ -42,29 +39,22 @@ export class LLMService {
     this.fast = config.fast;
     this.traceStore = config.traceStore || null;
     this.tokenReductionConfig = config.tokenReduction || null;
-    this.settingsService = config.settingsService || null;
   }
 
   /**
-   * Build a TokenReductionConfig from process.env and user settings.
-   * Returns undefined when token reduction is not wanted, keeping the
+   * Build a TokenReductionConfig from process.env.
+   * Returns undefined when token reduction is not enabled, keeping the
    * caller (index.ts) to a simple one-liner.
    */
   static buildTokenReductionConfig(
-    env: NodeJS.ProcessEnv,
-    settingsService?: UserSettingsService
+    env: NodeJS.ProcessEnv
   ): TokenReductionConfig | undefined {
-    const envEnabled = env.TOKEN_REDUCTION_ENABLED === 'true';
-    const envProvider = (env.TOKEN_REDUCTION_PROVIDER || 'llmlingua2') as TokenReductionProviderType;
-
-    const trSettings = settingsService?.getTokenReductionSettings();
-    const wanted = envEnabled || trSettings?.enabledForMain || trSettings?.enabledForFast;
-    if (!wanted) return undefined;
+    if (env.TOKEN_REDUCTION_ENABLED !== 'true') return undefined;
 
     return {
       enabled: true,
-      provider: (trSettings?.provider || envProvider) as TokenReductionProviderType,
-      compressionLevel: trSettings?.compressionLevel || 'default',
+      provider: (env.TOKEN_REDUCTION_PROVIDER || 'llmlingua2') as TokenReductionProviderType,
+      compressionLevel: 'default',
     };
   }
 
@@ -189,7 +179,9 @@ export class LLMService {
   /**
    * Apply token reduction to messages and options before an LLM call.
    * Records compression stats to the trace if a callId is provided.
-   * Checks settings to determine if reduction is enabled for the given workload.
+   * Activation is threshold-based per workload (total input characters):
+   *   main  > 1000
+   *   fast  > 2000
    * Returns the (possibly compressed) messages and options.
    */
   private async applyTokenReduction(
@@ -202,8 +194,10 @@ export class LLMService {
       return { messages, options };
     }
 
-    // Check settings for per-workload toggle
-    if (this.settingsService && !this.settingsService.isTokenReductionEnabled(workload)) {
+    // Skip if total input characters are below the workload activation threshold
+    const threshold = workload === 'main' ? 1000 : 2000;
+    const totalChars = this.estimateTotalInputChars(messages, options?.systemPrompt);
+    if (totalChars <= threshold) {
       return { messages, options };
     }
 
@@ -263,6 +257,25 @@ export class LLMService {
       }
     }
     return undefined;
+  }
+
+  /**
+   * Sum up total character count across all messages and the system prompt.
+   */
+  private estimateTotalInputChars(messages: LLMMessage[], systemPrompt?: string): number {
+    let chars = systemPrompt?.length || 0;
+    for (const msg of messages) {
+      if (typeof msg.content === 'string') {
+        chars += msg.content.length;
+      } else if (Array.isArray(msg.content)) {
+        for (const block of msg.content) {
+          if (block.type === 'text' && block.text) {
+            chars += block.text.length;
+          }
+        }
+      }
+    }
+    return chars;
   }
 
   // ============================================================

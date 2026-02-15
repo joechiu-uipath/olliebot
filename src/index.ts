@@ -292,15 +292,13 @@ async function main(): Promise<void> {
   const mainProvider = createLLMProvider(CONFIG.mainProvider, CONFIG.mainModel);
   const fastProvider = createLLMProvider(CONFIG.fastProvider, CONFIG.fastModel);
 
-  // Load user settings early (needed for token reduction config)
   const userSettings = getUserSettingsService();
 
   const llmService = new LLMService({
     main: mainProvider,
     fast: fastProvider,
     traceStore,
-    tokenReduction: LLMService.buildTokenReductionConfig(process.env, userSettings),
-    settingsService: userSettings,
+    tokenReduction: LLMService.buildTokenReductionConfig(process.env),
   });
   await llmService.init();
 

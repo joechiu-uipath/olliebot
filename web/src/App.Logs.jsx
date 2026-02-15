@@ -300,39 +300,6 @@ export const LogsSidebarContent = memo(function LogsSidebarContent({ logsMode })
   const { stats, activeView, setActiveView, statusFilter, setStatusFilter,
     workloadFilter, setWorkloadFilter, refresh } = logsMode;
 
-  // Token reduction settings state
-  const [trSettings, setTrSettings] = useState(null);
-
-  // Fetch token reduction settings on mount
-  useEffect(() => {
-    fetch(`${API_BASE}/api/settings/token-reduction`)
-      .then(res => res.ok ? res.json() : null)
-      .then(data => { if (data) setTrSettings(data); })
-      .catch(() => {});
-  }, []);
-
-  // Toggle handler for token reduction per workload
-  const handleToggleTokenReduction = useCallback(async (field) => {
-    if (!trSettings) return;
-    const newValue = !trSettings[field];
-    setTrSettings(prev => ({ ...prev, [field]: newValue }));
-    try {
-      const res = await fetch(`${API_BASE}/api/settings/token-reduction`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ [field]: newValue }),
-      });
-      if (res.ok) {
-        const updated = await res.json();
-        setTrSettings(updated);
-      } else {
-        setTrSettings(prev => ({ ...prev, [field]: !newValue }));
-      }
-    } catch {
-      setTrSettings(prev => ({ ...prev, [field]: !newValue }));
-    }
-  }, [trSettings]);
-
   return (
     <div className="logs-sidebar">
       <div className="logs-sidebar-header">
@@ -365,31 +332,6 @@ export const LogsSidebarContent = memo(function LogsSidebarContent({ logsMode })
       {/* Token Reduction Settings & Stats */}
       <div className="logs-token-reduction-stats">
         <h4 className="logs-token-reduction-title">Token Reduction</h4>
-
-        {/* Toggles */}
-        {trSettings && (
-          <div className="logs-tr-toggles">
-            <label className="logs-tr-toggle" title="Enable prompt compression for Main LLM calls">
-              <input
-                type="checkbox"
-                checked={trSettings.enabledForMain}
-                onChange={() => handleToggleTokenReduction('enabledForMain')}
-              />
-              <span className="logs-tr-toggle-label">Main LLM</span>
-            </label>
-            <label className="logs-tr-toggle" title="Enable prompt compression for Fast LLM calls">
-              <input
-                type="checkbox"
-                checked={trSettings.enabledForFast}
-                onChange={() => handleToggleTokenReduction('enabledForFast')}
-              />
-              <span className="logs-tr-toggle-label">Fast LLM</span>
-            </label>
-            <div className="logs-tr-info">
-              {trSettings.provider} / {trSettings.compressionLevel}
-            </div>
-          </div>
-        )}
 
         {/* Aggregate stats */}
         {stats?.tokenReduction && (

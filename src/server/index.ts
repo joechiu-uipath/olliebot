@@ -543,24 +543,6 @@ export class AssistantServer {
       }
     });
 
-    // Get token reduction settings
-    this.app.get('/api/settings/token-reduction', (_req: Request, res: Response) => {
-      const settingsService = getUserSettingsService();
-      res.json(settingsService.getTokenReductionSettings());
-    });
-
-    // Update token reduction settings
-    this.app.patch('/api/settings/token-reduction', (req: Request, res: Response) => {
-      try {
-        const settingsService = getUserSettingsService();
-        const updated = settingsService.updateTokenReductionSettings(req.body);
-        res.json(updated);
-      } catch (error) {
-        console.error('[API] Failed to update token reduction settings:', error);
-        res.status(500).json({ error: 'Failed to update token reduction settings' });
-      }
-    });
-
     // Get skills metadata
     this.app.get('/api/skills', (_req: Request, res: Response) => {
       if (!this.skillManager) {
