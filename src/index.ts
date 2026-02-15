@@ -819,7 +819,6 @@ async function main(): Promise<void> {
     if (ragProjectService) {
       await ragProjectService.close();
     }
-    await llmService.shutdown();
     await closeDb();
     console.log('[Shutdown] Complete');
     process.exit(0);

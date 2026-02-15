@@ -79,16 +79,6 @@ export class LLMService {
     }
   }
 
-  /**
-   * Shut down async subsystems.
-   */
-  async shutdown(): Promise<void> {
-    if (this.tokenReduction) {
-      await this.tokenReduction.shutdown();
-      this.tokenReduction = null;
-    }
-  }
-
   // ============================================================
   // Trace context management
   // ============================================================

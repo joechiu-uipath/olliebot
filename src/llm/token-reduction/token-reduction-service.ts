@@ -174,17 +174,6 @@ export class TokenReductionService {
     return result;
   }
 
-  /**
-   * Shut down the service and its provider.
-   */
-  async shutdown(): Promise<void> {
-    if (this.provider) {
-      await this.provider.shutdown();
-      this.provider = null;
-    }
-    this.initialized = false;
-  }
-
   // ============================================================
   // Cache DB persistence
   // ============================================================

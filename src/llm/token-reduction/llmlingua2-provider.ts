@@ -163,12 +163,6 @@ export class LLMLingua2Provider implements TokenReductionProvider {
     }
   }
 
-  async shutdown(): Promise<void> {
-    this.promptCompressor = null;
-    this.initialized = false;
-    console.log('[TokenReduction:LLMLingua2] Shut down');
-  }
-
   /**
    * Rough token estimate (~4 chars per token for English).
    * Used for activation-threshold checks and stats display only;

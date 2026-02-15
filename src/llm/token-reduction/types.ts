@@ -67,9 +67,6 @@ export interface TokenReductionProvider {
 
   /** Compress a text prompt at the given compression level */
   compress(text: string, level: CompressionLevel): Promise<CompressionResult>;
-
-  /** Shut down the provider (unload models, etc.) */
-  shutdown(): Promise<void>;
 }
 
 // ============================================================
