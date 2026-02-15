@@ -275,8 +275,17 @@ function formatTokens(n) {
 }
 
 function savingsPercent(original, compressed) {
-  if (!original || original <= 0) return 0;
-  return Math.round((original - compressed) / original * 10000) / 100;
+  const origNum = Number(original);
+  const compNum = Number(compressed);
+
+  if (!Number.isFinite(origNum) || !Number.isFinite(compNum) || origNum <= 0) {
+    return 0;
+  }
+
+  const rawPercent = ((origNum - compNum) / origNum) * 100;
+  const clampedPercent = Math.max(0, Math.min(100, rawPercent));
+
+  return Math.round(clampedPercent * 100) / 100;
 }
 
 function StatusBadge({ status }) {
