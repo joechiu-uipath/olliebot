@@ -203,7 +203,7 @@ export class LLMService {
     try {
       const result = await this.tokenReduction.compressMessages(messages, options?.systemPrompt, workload);
 
-      // Record token reduction in trace
+      // Record token reduction in trace (only if actual compression occurred)
       if (callId && this.traceStore && result.results.length > 0) {
         const totalOriginal = result.results.reduce((sum, r) => sum + r.originalTokenCount, 0);
         const totalCompressed = result.results.reduce((sum, r) => sum + r.compressedTokenCount, 0);
@@ -213,18 +213,21 @@ export class LLMService {
           ? Math.round((tokensSaved / totalOriginal) * 10000) / 100
           : 0;
 
-        const firstResult = result.results[0];
+        // Skip recording if no actual compression happened (e.g., below threshold)
+        if (tokensSaved > 0) {
+          const firstResult = result.results[0];
 
-        this.traceStore.recordTokenReduction(callId, {
-          provider: firstResult.provider,
-          originalTokens: totalOriginal,
-          compressedTokens: totalCompressed,
-          compressionTimeMs: totalTimeMs,
-          originalText: messages.length > 0 ? this.extractFirstUserText(messages) : undefined,
-          compressedText: result.messages.length > 0 ? this.extractFirstUserText(result.messages) : undefined,
-        });
+          this.traceStore.recordTokenReduction(callId, {
+            provider: firstResult.provider,
+            originalTokens: totalOriginal,
+            compressedTokens: totalCompressed,
+            compressionTimeMs: totalTimeMs,
+            originalText: messages.length > 0 ? this.extractFirstUserText(messages) : undefined,
+            compressedText: result.messages.length > 0 ? this.extractFirstUserText(result.messages) : undefined,
+          });
 
-        console.log(`[LLMService] Token reduction: ${totalOriginal} -> ${totalCompressed} tokens (${savingsPercent}% saved, ${totalTimeMs}ms)`);
+          console.log(`[LLMService] Token reduction: ${totalOriginal} -> ${totalCompressed} tokens (${savingsPercent}% saved, ${totalTimeMs}ms)`);
+        }
       }
 
       return {
