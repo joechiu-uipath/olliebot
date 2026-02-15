@@ -189,9 +189,8 @@ export class LLMService {
     try {
       const result = await this.tokenReduction.compressMessages(messages, options?.systemPrompt, workload);
 
-      // Record token reduction in trace
-      if (callId && this.traceStore && result.results.length > 0) {
-        // Aggregate all compression results
+      // Log compression stats
+      if (result.results.length > 0) {
         const totalOriginal = result.results.reduce((sum, r) => sum + r.originalTokenCount, 0);
         const totalCompressed = result.results.reduce((sum, r) => sum + r.compressedTokenCount, 0);
         const totalTimeMs = result.results.reduce((sum, r) => sum + r.compressionTimeMs, 0);
@@ -199,18 +198,6 @@ export class LLMService {
         const savingsPercent = totalOriginal > 0
           ? Math.round((tokensSaved / totalOriginal) * 10000) / 100
           : 0;
-
-        // Use the first result's texts for the trace detail view
-        const firstResult = result.results[0];
-
-        this.traceStore.recordTokenReduction(callId, {
-          provider: firstResult.provider,
-          originalTokens: totalOriginal,
-          compressedTokens: totalCompressed,
-          compressionTimeMs: totalTimeMs,
-          originalText: messages.length > 0 ? this.extractFirstUserText(messages) : undefined,
-          compressedText: result.messages.length > 0 ? this.extractFirstUserText(result.messages) : undefined,
-        });
 
         console.log(`[LLMService] Token reduction: ${totalOriginal} -> ${totalCompressed} tokens (${savingsPercent}% saved, ${totalTimeMs}ms)`);
       }
@@ -225,23 +212,6 @@ export class LLMService {
       console.error('[LLMService] Token reduction failed, using original messages:', error);
       return { messages, options };
     }
-  }
-
-  /**
-   * Extract the first user text content from messages (for trace display).
-   */
-  private extractFirstUserText(messages: LLMMessage[]): string | undefined {
-    for (const msg of messages) {
-      if (msg.role === 'user') {
-        if (typeof msg.content === 'string') return msg.content;
-        if (Array.isArray(msg.content)) {
-          for (const block of msg.content) {
-            if (block.type === 'text' && block.text) return block.text;
-          }
-        }
-      }
-    }
-    return undefined;
   }
 
   // ============================================================

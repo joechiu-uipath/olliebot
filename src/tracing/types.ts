@@ -106,34 +106,9 @@ export interface LlmCallRecord {
   callerPurpose: string | null;
   conversationId: string | null;
 
-  // Token reduction (prompt compression)
-  tokenReductionEnabled: number | null;       // 0 or 1
-  tokenReductionProvider: string | null;
-  tokenReductionOriginalTokens: number | null;
-  tokenReductionCompressedTokens: number | null;
-  tokenReductionTimeMs: number | null;
-  tokenReductionOriginalText: string | null;   // Stored for trace inspection
-  tokenReductionCompressedText: string | null;  // Stored for trace inspection
-
   // Status
   status: 'pending' | 'streaming' | 'completed' | 'error';
   error: string | null;
-}
-
-// ============================================================
-// TokenReductionRecord: Prompt compression applied to an LLM call
-// ============================================================
-
-export interface TokenReductionRecord {
-  id: string;
-  llmCallId: string;
-  provider: string;
-  originalTokens: number;
-  compressedTokens: number;
-  compressionTimeMs: number;
-  originalText: string | null;
-  compressedText: string | null;
-  createdAt: string;
 }
 
 // ============================================================
@@ -211,14 +186,4 @@ export interface TraceStats {
   totalInputTokens: number;
   totalOutputTokens: number;
   avgDurationMs: number;
-  // Token reduction aggregate stats
-  tokenReduction?: {
-    totalCompressions: number;
-    totalOriginalTokens: number;
-    totalCompressedTokens: number;
-    totalTokensSaved: number;
-    overallSavingsPercent: number;
-    totalCompressionTimeMs: number;
-    avgCompressionTimeMs: number;
-  };
 }

@@ -119,46 +119,7 @@ export class TraceStore {
         callerPurpose TEXT,
         conversationId TEXT,
         status TEXT NOT NULL DEFAULT 'pending',
-        error TEXT,
-        tokenReductionEnabled INTEGER,
-        tokenReductionProvider TEXT,
-        tokenReductionOriginalTokens INTEGER,
-        tokenReductionCompressedTokens INTEGER,
-        tokenReductionTimeMs INTEGER,
-        tokenReductionOriginalText TEXT,
-        tokenReductionCompressedText TEXT
-      )
-    `);
-
-    // Migration: add token reduction columns if missing (for existing databases)
-    const tokenReductionCols = [
-      'tokenReductionEnabled INTEGER',
-      'tokenReductionProvider TEXT',
-      'tokenReductionOriginalTokens INTEGER',
-      'tokenReductionCompressedTokens INTEGER',
-      'tokenReductionTimeMs INTEGER',
-      'tokenReductionOriginalText TEXT',
-      'tokenReductionCompressedText TEXT',
-    ];
-    for (const colDef of tokenReductionCols) {
-      try {
-        db.rawRun(`ALTER TABLE llm_calls ADD COLUMN ${colDef}`);
-      } catch {
-        // Column already exists, ignore
-      }
-    }
-
-    db.rawRun(`
-      CREATE TABLE IF NOT EXISTS token_reductions (
-        id TEXT PRIMARY KEY,
-        llmCallId TEXT NOT NULL REFERENCES llm_calls(id),
-        provider TEXT NOT NULL,
-        originalTokens INTEGER NOT NULL,
-        compressedTokens INTEGER NOT NULL,
-        compressionTimeMs INTEGER NOT NULL,
-        originalText TEXT,
-        compressedText TEXT,
-        createdAt TEXT NOT NULL
+        error TEXT
       )
     `);
 
@@ -200,7 +161,6 @@ export class TraceStore {
       CREATE INDEX IF NOT EXISTS idx_llm_calls_span ON llm_calls(spanId);
       CREATE INDEX IF NOT EXISTS idx_llm_calls_started ON llm_calls(startedAt DESC);
       CREATE INDEX IF NOT EXISTS idx_llm_calls_workload ON llm_calls(workload);
-      CREATE INDEX IF NOT EXISTS idx_token_reductions_llm_call ON token_reductions(llmCallId);
       CREATE INDEX IF NOT EXISTS idx_tool_calls_trace ON tool_calls(traceId);
       CREATE INDEX IF NOT EXISTS idx_tool_calls_span ON tool_calls(spanId);
     `);
@@ -557,42 +517,6 @@ export class TraceStore {
   }
 
   // ============================================================
-  // Token Reduction recording
-  // ============================================================
-
-  recordTokenReduction(callId: string, data: {
-    provider: string;
-    originalTokens: number;
-    compressedTokens: number;
-    compressionTimeMs: number;
-    originalText?: string;
-    compressedText?: string;
-  }): void {
-    const db = getDb();
-    const id = uuid();
-    const now = new Date().toISOString();
-    // Truncate texts for storage (keep first 2000 chars for inspection)
-    const originalText = data.originalText?.substring(0, 2000) || null;
-    const compressedText = data.compressedText?.substring(0, 2000) || null;
-
-    db.rawRun(
-      `INSERT INTO token_reductions (id, llmCallId, provider, originalTokens, compressedTokens, compressionTimeMs, originalText, compressedText, createdAt)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        id,
-        callId,
-        data.provider,
-        data.originalTokens,
-        data.compressedTokens,
-        data.compressionTimeMs,
-        originalText,
-        compressedText,
-        now,
-      ]
-    );
-  }
-
-  // ============================================================
   // Tool Call recording
   // ============================================================
 
@@ -738,17 +662,7 @@ export class TraceStore {
     ) as TraceSpan[];
 
     const llmCalls = db.rawQuery(
-      `SELECT c.*,
-        CASE WHEN tr.id IS NOT NULL THEN 1 ELSE NULL END AS tokenReductionEnabled,
-        tr.provider AS tokenReductionProvider,
-        tr.originalTokens AS tokenReductionOriginalTokens,
-        tr.compressedTokens AS tokenReductionCompressedTokens,
-        tr.compressionTimeMs AS tokenReductionTimeMs,
-        tr.originalText AS tokenReductionOriginalText,
-        tr.compressedText AS tokenReductionCompressedText
-      FROM llm_calls c
-      LEFT JOIN token_reductions tr ON tr.llmCallId = c.id
-      WHERE c.traceId = ? ORDER BY c.startedAt ASC`,
+      'SELECT * FROM llm_calls WHERE traceId = ? ORDER BY startedAt ASC',
       [traceId]
     ) as LlmCallRecord[];
 
@@ -776,20 +690,7 @@ export class TraceStore {
 
   getLlmCallById(callId: string): LlmCallRecord | undefined {
     const db = getDb();
-    const rows = db.rawQuery(
-      `SELECT c.*,
-        CASE WHEN tr.id IS NOT NULL THEN 1 ELSE NULL END AS tokenReductionEnabled,
-        tr.provider AS tokenReductionProvider,
-        tr.originalTokens AS tokenReductionOriginalTokens,
-        tr.compressedTokens AS tokenReductionCompressedTokens,
-        tr.compressionTimeMs AS tokenReductionTimeMs,
-        tr.originalText AS tokenReductionOriginalText,
-        tr.compressedText AS tokenReductionCompressedText
-      FROM llm_calls c
-      LEFT JOIN token_reductions tr ON tr.llmCallId = c.id
-      WHERE c.id = ?`,
-      [callId]
-    ) as LlmCallRecord[];
+    const rows = db.rawQuery('SELECT * FROM llm_calls WHERE id = ?', [callId]) as LlmCallRecord[];
     return rows[0];
   }
 
@@ -799,27 +700,27 @@ export class TraceStore {
     const params: unknown[] = [];
 
     if (options?.traceId) {
-      conditions.push('c.traceId = ?');
+      conditions.push('traceId = ?');
       params.push(options.traceId);
     }
     if (options?.spanId) {
-      conditions.push('c.spanId = ?');
+      conditions.push('spanId = ?');
       params.push(options.spanId);
     }
     if (options?.workload) {
-      conditions.push('c.workload = ?');
+      conditions.push('workload = ?');
       params.push(options.workload);
     }
     if (options?.provider) {
-      conditions.push('c.provider = ?');
+      conditions.push('provider = ?');
       params.push(options.provider);
     }
     if (options?.since) {
-      conditions.push('c.startedAt >= ?');
+      conditions.push('startedAt >= ?');
       params.push(options.since);
     }
     if (options?.conversationId) {
-      conditions.push('c.conversationId = ?');
+      conditions.push('conversationId = ?');
       params.push(options.conversationId);
     }
 
@@ -827,17 +728,7 @@ export class TraceStore {
     const db = getDb();
     params.push(limit);
     return db.rawQuery(
-      `SELECT c.*,
-        CASE WHEN tr.id IS NOT NULL THEN 1 ELSE NULL END AS tokenReductionEnabled,
-        tr.provider AS tokenReductionProvider,
-        tr.originalTokens AS tokenReductionOriginalTokens,
-        tr.compressedTokens AS tokenReductionCompressedTokens,
-        tr.compressionTimeMs AS tokenReductionTimeMs,
-        tr.originalText AS tokenReductionOriginalText,
-        tr.compressedText AS tokenReductionCompressedText
-      FROM llm_calls c
-      LEFT JOIN token_reductions tr ON tr.llmCallId = c.id
-      ${where} ORDER BY c.startedAt DESC LIMIT ?`,
+      `SELECT * FROM llm_calls ${where} ORDER BY startedAt DESC LIMIT ?`,
       params
     ) as LlmCallRecord[];
   }
@@ -900,27 +791,6 @@ export class TraceStore {
       params
     ) as Array<{ inputTok: number; outputTok: number; avgDur: number }>;
 
-    // Token reduction stats (from dedicated token_reductions table)
-    const trWhere = conditions.length > 0
-      ? `WHERE ${conditions.map(c => c.replace('startedAt', 'createdAt')).join(' AND ')}`
-      : '';
-    const trRows = db.rawQuery(
-      `SELECT
-        COUNT(*) as cnt,
-        COALESCE(SUM(originalTokens), 0) as origTok,
-        COALESCE(SUM(compressedTokens), 0) as compTok,
-        COALESCE(SUM(compressionTimeMs), 0) as totalTime,
-        AVG(compressionTimeMs) as avgTime
-      FROM token_reductions ${trWhere}`,
-      params
-    ) as Array<{ cnt: number; origTok: number; compTok: number; totalTime: number; avgTime: number }>;
-
-    const trData = trRows[0];
-    const tokensSaved = (trData?.origTok || 0) - (trData?.compTok || 0);
-    const overallSavingsPercent = trData?.origTok > 0
-      ? Math.round((tokensSaved / trData.origTok) * 10000) / 100
-      : 0;
-
     return {
       totalTraces: traceRows[0]?.cnt || 0,
       totalLlmCalls: llmRows[0]?.cnt || 0,
@@ -928,15 +798,6 @@ export class TraceStore {
       totalInputTokens: tokenRows[0]?.inputTok || 0,
       totalOutputTokens: tokenRows[0]?.outputTok || 0,
       avgDurationMs: Math.round(tokenRows[0]?.avgDur || 0),
-      tokenReduction: trData?.cnt > 0 ? {
-        totalCompressions: trData.cnt,
-        totalOriginalTokens: trData.origTok,
-        totalCompressedTokens: trData.compTok,
-        totalTokensSaved: tokensSaved,
-        overallSavingsPercent,
-        totalCompressionTimeMs: trData.totalTime,
-        avgCompressionTimeMs: Math.round(trData.avgTime || 0),
-      } : undefined,
     };
   }
 
@@ -949,8 +810,7 @@ export class TraceStore {
     const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
 
     const db = getDb();
-    // Delete in order: token_reductions, tool_calls, llm_calls, trace_spans, traces
-    db.rawRun('DELETE FROM token_reductions WHERE createdAt < ?', [cutoff]);
+    // Delete in order: tool_calls, llm_calls, trace_spans, traces
     const toolCount = db.rawRun('DELETE FROM tool_calls WHERE startedAt < ?', [cutoff]);
     const llmCount = db.rawRun('DELETE FROM llm_calls WHERE startedAt < ?', [cutoff]);
     db.rawRun('DELETE FROM trace_spans WHERE startedAt < ?', [cutoff]);
