@@ -41,6 +41,10 @@ export default defineConfig({
         // over MCP protocol for inspection; not user-facing production code
         'src/mcp-server/**',
       ],
+      // 'text' = terminal summary table (always on)
+      // 'html' = interactive line-by-line report at coverage/index.html
+      reporter: ['text', 'html'],
+      reportsDirectory: './coverage',
     },
   },
 });
