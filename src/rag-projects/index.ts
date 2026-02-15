@@ -61,6 +61,7 @@ export {
   DirectEmbeddingStrategy,
   KeywordEmbeddingStrategy,
   SummaryEmbeddingStrategy,
+  LLMBasedStrategy,
   ChunkPreprocessor,
 } from './strategies/index.js';
 
