@@ -63,9 +63,6 @@ export class LLMLingua2Provider implements TokenReductionProvider {
     console.log(`[TokenReduction:LLMLingua2] Initializing with model: bert-multilingual (${MODEL_NAME})`);
 
     try {
-      // Register the native C++ TensorFlow backend before anything imports @tensorflow/tfjs
-      await import('@tensorflow/tfjs-node');
-
       // Dynamic import to avoid loading heavy ML dependencies when disabled
       const { LLMLingua2 } = await import('@atjsh/llmlingua-2');
 
