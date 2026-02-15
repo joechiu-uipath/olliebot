@@ -6,7 +6,7 @@
  */
 
 import type { ToolResult } from '../tools/types.js';
-import type { SingleRunResult, ElementResult } from '../evaluation/types.js';
+import type { SingleRunResult, ElementMatchResult } from '../evaluation/types.js';
 import type { LogEntry } from '../mcp-server/log-buffer.js';
 import type { CitationSource } from '../citations/types.js';
 import {
@@ -43,7 +43,7 @@ export function buildToolResult(
 export function buildSingleRunResult(
   overrides?: Partial<SingleRunResult>
 ): SingleRunResult {
-  const defaultElementResults: ElementResult[] = [];
+  const defaultElementResults: ElementMatchResult[] = [];
   
   return {
     runId: `${TEST_RUN_ID_PREFIX}1`,
