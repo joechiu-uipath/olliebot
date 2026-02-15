@@ -32,7 +32,6 @@
     "@lancedb/lancedb": "^0.8.0",
     "@pydantic/monty": "^0.0.4",
     "@tensorflow/tfjs": "^4.22.0",
-    "@tensorflow/tfjs-node": "^4.22.0",
     "@types/multer": "^2.0.0",
     "async-mutex": "^0.5.0",
     "better-sqlite3": "^12.6.2",
@@ -59,11 +58,6 @@
     "vnc-rfb-client": "^0.2.0",
     "ws": "^8.18.0",
     "zod": "^3.23.8"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "@tensorflow/tfjs-node"
-    ]
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
