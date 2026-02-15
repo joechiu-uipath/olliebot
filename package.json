@@ -32,7 +32,6 @@
     "@lancedb/lancedb": "^0.8.0",
     "@pydantic/monty": "^0.0.4",
     "@tensorflow/tfjs": "^4.22.0",
-    "@types/multer": "^2.0.0",
     "async-mutex": "^0.5.0",
     "better-sqlite3": "^12.6.2",
     "chokidar": "^4.0.1",
@@ -64,6 +63,7 @@
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.0",
     "@types/html-to-text": "^9.0.4",
+    "@types/multer": "^2.0.0",
     "@types/node": "^22.7.4",
     "@types/pngjs": "^6.0.5",
     "@types/uuid": "^10.0.0",
@@ -75,7 +75,6 @@
     "tsx": "^4.19.1",
     "typescript": "^5.6.2",
     "vite": "^5.4.8",
-    "vitest": "^4.0.18",
-    "wait-on": "^9.0.3"
+    "vitest": "^4.0.18"
   }
 }
