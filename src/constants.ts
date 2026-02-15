@@ -244,6 +244,52 @@ export const RAG_DEFAULT_CHUNK_OVERLAP = 100;
  */
 export const RAG_DEFAULT_TOP_K = 10;
 
+/**
+ * Reciprocal Rank Fusion (RRF) constant.
+ * This dampens the influence of high ranks in the RRF formula: score = weight / (k + rank).
+ * Standard value from Cormack, Clarke & Buettcher (2009).
+ */
+export const RAG_RRF_K = 60;
+
+/**
+ * LLM re-ranker relevance score scale (0 to this value).
+ * Results are judged on this scale and normalized to 0-1.
+ */
+export const RAG_RERANKER_MAX_SCORE = 10;
+
+/**
+ * Number of chunks from the start of a document to use for generating file summaries.
+ */
+export const RAG_DOCUMENT_SUMMARY_CHUNK_COUNT = 10;
+
+/**
+ * Query word count threshold for keyword strategy.
+ * Queries shorter than this are used as-is; longer queries get keyword extraction.
+ */
+export const RAG_KEYWORD_QUERY_WORD_THRESHOLD = 5;
+
+/**
+ * Query word count threshold for summary strategy.
+ * Queries shorter than this are used as-is; longer queries get rephrased.
+ */
+export const RAG_SUMMARY_QUERY_WORD_THRESHOLD = 8;
+
+/**
+ * Keyword count range for extraction (lower bound).
+ */
+export const RAG_KEYWORD_EXTRACTION_MIN = 10;
+
+/**
+ * Keyword count range for extraction (upper bound).
+ */
+export const RAG_KEYWORD_EXTRACTION_MAX = 20;
+
+/**
+ * Multiplier for topK when querying individual strategies before fusion.
+ * Requesting more results gives fusion a better pool to work with.
+ */
+export const RAG_STRATEGY_TOPK_MULTIPLIER = 2;
+
 // ============================================================
 // QUERY & FETCH LIMITS
 // ============================================================

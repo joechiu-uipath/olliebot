@@ -10,6 +10,7 @@
  * similarity scores. This can catch relevance signals that vector search misses.
  */
 
+import { RAG_RERANKER_MAX_SCORE } from '../constants.js';
 import type { SearchResult, SummarizationProvider } from './types.js';
 
 /**
@@ -32,7 +33,7 @@ export interface Reranker {
  * LLM-based re-ranker.
  *
  * Sends the query and candidate chunk texts to an LLM, asking it to score
- * each chunk's relevance on a 0-10 scale. Results are re-ordered by the
+ * each chunk's relevance on a 0-MAX_SCORE scale. Results are re-ordered by the
  * LLM's relevance scores.
  *
  * The LLM sees the actual text, not embeddings, so it can catch semantic
@@ -56,7 +57,7 @@ export class LLMReranker implements Reranker {
 
     const prompt =
       `You are a relevance judge. Given a search query and candidate text chunks, ` +
-      `score each chunk's relevance to the query on a scale of 0-10.\n\n` +
+      `score each chunk's relevance to the query on a scale of 0-${RAG_RERANKER_MAX_SCORE}.\n\n` +
       `Respond with ONLY one line per chunk in this exact format:\n` +
       `[index] score\n\n` +
       `Example response:\n` +
@@ -81,10 +82,10 @@ export class LLMReranker implements Reranker {
         .map(({ result, llmScore }) => ({
           ...result,
           // Normalize LLM score to 0-1 range and use as the final score
-          score: llmScore / 10,
+          score: llmScore / RAG_RERANKER_MAX_SCORE,
           metadata: {
             ...result.metadata,
-            rerankerScore: llmScore / 10,
+            rerankerScore: llmScore / RAG_RERANKER_MAX_SCORE,
             preFusionScore: result.score,
           },
         }));
@@ -104,7 +105,7 @@ export class LLMReranker implements Reranker {
       const match = line.trim().match(/^\[(\d+)\]\s+([\d.]+)/);
       if (match) {
         const index = parseInt(match[1], 10);
-        const score = Math.min(10, Math.max(0, parseFloat(match[2])));
+        const score = Math.min(RAG_RERANKER_MAX_SCORE, Math.max(0, parseFloat(match[2])));
         if (index >= 0 && index < count && !isNaN(score)) {
           scores.set(index, score);
         }
