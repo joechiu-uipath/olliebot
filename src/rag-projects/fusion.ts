@@ -5,6 +5,7 @@
  * into a single unified ranking.
  */
 
+import { RAG_RRF_K } from '../constants.js';
 import type { SearchResult } from './types.js';
 import type { FusionMethod, StrategyConfig } from './strategies/types.js';
 
@@ -82,7 +83,7 @@ export function fuseResults(
  * A well-proven rank-based fusion method. For each chunk, the fused score is:
  *   score = Σ (weight_i / (k + rank_i))
  *
- * where k is a constant (typically 60) that dampens the influence of high ranks,
+ * where k is a constant that dampens the influence of high ranks,
  * and weight_i is the strategy's configured weight.
  *
  * RRF is robust because it uses ranks instead of raw scores, making it
@@ -96,7 +97,6 @@ function reciprocalRankFusion(
   strategyConfigs: StrategyConfig[],
   topK: number
 ): FusedSearchResult[] {
-  const RRF_K = 60; // Standard RRF constant
 
   // Build weight lookup
   const weightMap = new Map<string, number>();
@@ -116,7 +116,7 @@ function reciprocalRankFusion(
 
     for (let rank = 0; rank < results.length; rank++) {
       const result = results[rank];
-      const rrfContribution = weight / (RRF_K + rank + 1);
+      const rrfContribution = weight / (RAG_RRF_K + rank + 1);
 
       const existing = chunkMap.get(result.id);
       if (existing) {

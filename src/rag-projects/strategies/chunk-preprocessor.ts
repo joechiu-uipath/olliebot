@@ -102,7 +102,11 @@ export class ChunkPreprocessor {
         }
       }
     } catch (error) {
-      console.warn('[ChunkPreprocessor] Shared LLM call failed:', error);
+      console.warn(
+        '[ChunkPreprocessor] Shared LLM preprocessing failed. ' +
+        'Strategies will fall back to individual LLM calls. Error:',
+        error
+      );
       // Result map stays empty — strategies will fall back to their own LLM calls
     }
 

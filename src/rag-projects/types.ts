@@ -34,7 +34,7 @@ export interface RAGDocument {
   indexedAt?: string;
   /** Error message if indexing failed */
   error?: string;
-  /** AI-generated summary of the document (from first 10 chunks) */
+  /** AI-generated summary of the document (from first N chunks, see RAG_DOCUMENT_SUMMARY_CHUNK_COUNT) */
   summary?: string;
 }
 
