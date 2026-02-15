@@ -63,6 +63,11 @@ export class LLMLingua2Provider implements TokenReductionProvider {
     console.log(`[TokenReduction:LLMLingua2] Initializing with model: bert-multilingual (${MODEL_NAME})`);
 
     try {
+      // Suppress noisy ONNX Runtime C++ warnings (level 3 = errors only)
+      if (!process.env.ORT_LOG_LEVEL) {
+        process.env.ORT_LOG_LEVEL = '3';
+      }
+
       // Dynamic import to avoid loading heavy ML dependencies when disabled
       const { LLMLingua2 } = await import('@atjsh/llmlingua-2');
 
