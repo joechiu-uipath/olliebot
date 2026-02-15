@@ -60,6 +60,9 @@ export class LLMService {
 
   /**
    * Initialize async subsystems (token reduction provider, compression cache).
+   * Token reduction initializes in the background so it does not delay
+   * backend startup.  Until it is ready, isEnabled() returns false and
+   * LLM calls proceed without compression.
    * Call after construction.
    */
   async init(): Promise<void> {
@@ -68,15 +71,18 @@ export class LLMService {
     }
 
     const service = new TokenReductionService(this.tokenReductionConfig);
-    try {
-      await service.init();
-      this.tokenReduction = service;
-      console.log(`[LLMService] Token reduction initialized: ${this.tokenReductionConfig.provider} (level: ${this.tokenReductionConfig.compressionLevel})`);
-    } catch (error) {
+    // Assign immediately so applyTokenReduction can find the service;
+    // isEnabled() returns false until service.init() completes.
+    this.tokenReduction = service;
+
+    // Fire-and-forget: init runs in the background
+    service.init().then(() => {
+      console.log(`[LLMService] Token reduction ready (provider: ${this.tokenReductionConfig!.provider}, level: ${this.tokenReductionConfig!.compressionLevel})`);
+    }).catch((error) => {
       console.error('[LLMService] Failed to initialize token reduction:', error);
       console.log('[LLMService] Token reduction disabled due to initialization failure');
-      return;
-    }
+      this.tokenReduction = null;
+    });
   }
 
   // ============================================================
