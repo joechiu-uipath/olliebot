@@ -343,4 +343,174 @@ describe('MessageEventService', () => {
       expect(newChannel.broadcast).toHaveBeenCalled();
     });
   });
+
+  describe('emitToolEvent - progress events', () => {
+    const agentInfo = {
+      id: 'agent-1',
+      name: 'Worker',
+      emoji: '🔧',
+      type: 'coder',
+    };
+
+    it('broadcasts progress events and does NOT persist them', () => {
+      const progressEvent: ToolEvent = {
+        type: 'tool_progress',
+        toolName: 'long_running_task',
+        source: 'native',
+        requestId: 'req-progress',
+        timestamp: new Date('2024-01-15T10:00:00Z'),
+        progress: {
+          current: 3,
+          total: 10,
+          message: 'Processing step 3 of 10',
+        },
+      };
+
+      service.emitToolEvent(progressEvent, 'conv-123', agentInfo, 'turn-1');
+
+      expect(mockBroadcast).toHaveBeenCalledTimes(1);
+      expect(mockBroadcast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'tool_progress',
+          requestId: 'req-progress',
+          toolName: 'long_running_task',
+          progress: { current: 3, total: 10, message: 'Processing step 3 of 10' },
+          agentId: 'agent-1',
+          turnId: 'turn-1',
+        })
+      );
+      // Progress events should NOT be persisted
+      expect(mockMessagesCreate).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('emitToolEvent - no channel', () => {
+    it('still persists events when no channel is configured', () => {
+      const serviceNoChannel = new MessageEventService();
+
+      const event: ToolEvent = {
+        type: 'tool_execution_finished',
+        toolName: 'web_search',
+        source: 'native',
+        requestId: 'req-no-chan',
+        timestamp: new Date('2024-01-15T10:00:00Z'),
+        startTime: new Date('2024-01-15T09:59:58Z'),
+        endTime: new Date('2024-01-15T10:00:00Z'),
+        success: true,
+        durationMs: 2000,
+        parameters: {},
+        result: { data: 'result' },
+      };
+
+      serviceNoChannel.emitToolEvent(event, 'conv-123', {
+        id: 'a-1',
+        name: 'Agent',
+        emoji: '🤖',
+      });
+
+      // Should still persist to DB even without a channel
+      expect(mockMessagesCreate).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('emitToolEvent - nested audio detection', () => {
+    const agentInfo = {
+      id: 'agent-1',
+      name: 'Speaker',
+      emoji: '🔊',
+    };
+
+    it('detects audio in nested output object', () => {
+      const nestedAudioEvent: ToolEvent = {
+        type: 'tool_execution_finished',
+        toolName: 'text_to_speech',
+        source: 'native',
+        requestId: 'req-nested-audio',
+        timestamp: new Date('2024-01-15T10:00:00Z'),
+        startTime: new Date('2024-01-15T09:59:58Z'),
+        endTime: new Date('2024-01-15T10:00:00Z'),
+        success: true,
+        durationMs: 500,
+        parameters: {},
+        result: {
+          output: {
+            audio: 'base64nestedaudiodata',
+            mimeType: 'audio/mp3',
+            voice: 'shimmer',
+            model: 'tts-1',
+          },
+        },
+      };
+
+      service.emitToolEvent(nestedAudioEvent, 'conv-123', agentInfo);
+
+      // Should emit play_audio from nested result
+      expect(mockBroadcast).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'play_audio',
+          audio: 'base64nestedaudiodata',
+          mimeType: 'audio/mp3',
+          voice: 'shimmer',
+        })
+      );
+    });
+  });
+
+  describe('emitDelegationEvent - duplicate suppression', () => {
+    it('skips persistence for duplicate delegation events', () => {
+      const data = {
+        agentId: 'dup-agent',
+        agentName: 'Duplicate',
+        agentEmoji: '🔁',
+        agentType: 'researcher',
+        mission: 'Test duplicates',
+      };
+
+      // First call: created
+      mockMessagesFindById.mockReturnValueOnce(null);
+      service.emitDelegationEvent(data, 'conv-123');
+      expect(mockMessagesCreate).toHaveBeenCalledTimes(1);
+
+      // Second call: already exists
+      mockMessagesFindById.mockReturnValueOnce({ id: 'delegation-dup-agent' });
+      service.emitDelegationEvent(data, 'conv-123');
+      // Should NOT have been called again
+      expect(mockMessagesCreate).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('emitErrorEvent - null conversationId', () => {
+    it('logs error and skips persistence when conversationId is null', () => {
+      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+      service.emitErrorEvent(
+        { error: 'Something broke', details: 'stack trace' },
+        null
+      );
+
+      expect(mockBroadcast).toHaveBeenCalledTimes(1); // Still broadcasts
+      expect(mockMessagesCreate).not.toHaveBeenCalled();
+      expect(consoleSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Cannot save error event: conversationId is null')
+      );
+
+      consoleSpy.mockRestore();
+    });
+  });
+
+  describe('emitTaskRunEvent - with allowedTools', () => {
+    it('includes allowedTools in message metadata', () => {
+      const taskData = {
+        taskId: 'task-tools',
+        taskName: 'Restricted Task',
+        taskDescription: 'Task with limited tools',
+        content: 'Execute the task',
+        allowedTools: ['web_search', 'read_file'],
+      };
+
+      const message = service.emitTaskRunEvent(taskData, 'conv-123');
+
+      expect(message.metadata?.allowedTools).toEqual(['web_search', 'read_file']);
+    });
+  });
 });
