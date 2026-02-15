@@ -17,6 +17,21 @@ import {
   DEFAULT_TEST_DURATION_MS,
   SHORT_TEST_DURATION_MS,
 } from '../test-helpers/index.js';
+import {
+  SHORT_RESPONSE,
+  CODE_HEAVY_RESPONSE,
+  MODERATE_CODE_RESPONSE,
+  STANDARD_RESPONSE,
+  LONG_RESPONSE,
+  createSampleSource,
+  MOCK_LLM_CITATION_JSON,
+  MOCK_LLM_CITATION_WITH_FENCE,
+  MOCK_EMPTY_CITATIONS,
+  MOCK_INVALID_JSON,
+  MOCK_NONE_CONFIDENCE_CITATION,
+  MOCK_OUT_OF_BOUNDS_CITATION,
+  CITATION_THRESHOLDS,
+} from './__tests__/fixtures.js';
 import type { PostHocCitationResult } from './generator.js';
 import type { CitationSource } from './types.js';
 
@@ -153,7 +168,7 @@ describe('generatePostHocCitations - early returns', () => {
 
     const result = await generatePostHocCitations(
       mockLlmService,
-      'Short', // Less than CITATION_MIN_RESPONSE_LENGTH (50)
+      SHORT_RESPONSE, // Less than CITATION_THRESHOLDS.MIN_RESPONSE_LENGTH
       [source]
     );
 
@@ -166,13 +181,10 @@ describe('generatePostHocCitations - early returns', () => {
     const mockLlmService = {} as any;
     const source = buildCitationSource();
 
-    // Create a response that's >80% code blocks
-    const codeBlock = '```javascript\nconst x = 1;\nconst y = 2;\nconst z = x + y;\nconsole.log(z);\n```';
-    const response = `Here is the code:\n${codeBlock}\n${codeBlock}\n${codeBlock}\n${codeBlock}\n${codeBlock}`;
-
+    // Create a response that's >CITATION_THRESHOLDS.MAX_CODE_RATIO code blocks
     const result = await generatePostHocCitations(
       mockLlmService,
-      response,
+      CODE_HEAVY_RESPONSE,
       [source]
     );
 
@@ -181,18 +193,14 @@ describe('generatePostHocCitations - early returns', () => {
   });
 
   it('does NOT skip citation for response with moderate code', async () => {
-    // If the response has some code but < 80%, it should proceed (not early return)
+    // If the response has some code but < CITATION_THRESHOLDS.MAX_CODE_RATIO, it should proceed (not early return)
     // We mock the LLM to verify it gets called
     const mockLlmService = {
       quickGenerate: vi.fn().mockResolvedValue({ content: '{"citations": []}' }),
     } as any;
     const source = buildCitationSource({ snippet: 'Relevant content here' });
 
-    // More text than code
-    const response = 'This is a long explanation about how the system works. '.repeat(5)
-      + '```js\nconst x = 1;\n```';
-
-    await generatePostHocCitations(mockLlmService, response, [source]);
+    await generatePostHocCitations(mockLlmService, MODERATE_CODE_RESPONSE, [source]);
 
     // LLM should have been called since the response is not code-heavy
     expect(mockLlmService.quickGenerate).toHaveBeenCalled();
@@ -201,21 +209,15 @@ describe('generatePostHocCitations - early returns', () => {
 
 describe('generatePostHocCitations - LLM integration', () => {
   it('handles LLM returning JSON with markdown code fences', async () => {
-    const source = buildCitationSource({
-      id: 'src-1',
-      title: 'Test Source',
-      snippet: 'The capital of France is Paris.',
-    });
-
-    const response = 'According to sources, the capital of France is Paris. This is a well-known fact.';
+    const source = createSampleSource();
 
     const mockLlmService = {
       quickGenerate: vi.fn().mockResolvedValue({
-        content: '```json\n{"citations": [{"claim": "the capital of France is Paris", "sourceIndex": 1, "confidence": "full"}]}\n```',
+        content: MOCK_LLM_CITATION_WITH_FENCE,
       }),
     } as any;
 
-    const result = await generatePostHocCitations(mockLlmService, response, [source]);
+    const result = await generatePostHocCitations(mockLlmService, STANDARD_RESPONSE, [source]);
 
     expect(result.references.length).toBeGreaterThanOrEqual(1);
     expect(result.usedSources).toHaveLength(1);
@@ -224,15 +226,14 @@ describe('generatePostHocCitations - LLM integration', () => {
 
   it('handles LLM returning empty citations', async () => {
     const source = buildCitationSource();
-    const response = 'A response that has no citable claims but is long enough to process for citations.';
 
     const mockLlmService = {
       quickGenerate: vi.fn().mockResolvedValue({
-        content: '{"citations": []}',
+        content: MOCK_EMPTY_CITATIONS,
       }),
     } as any;
 
-    const result = await generatePostHocCitations(mockLlmService, response, [source]);
+    const result = await generatePostHocCitations(mockLlmService, LONG_RESPONSE, [source]);
 
     expect(result.references).toEqual([]);
     expect(result.usedSources).toEqual([]);
@@ -240,18 +241,17 @@ describe('generatePostHocCitations - LLM integration', () => {
 
   it('handles LLM returning malformed JSON gracefully', async () => {
     const source = buildCitationSource();
-    const response = 'A response with enough content to be processed for citation generation purposes.';
 
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 
     const mockLlmService = {
       quickGenerate: vi.fn().mockResolvedValue({
-        content: 'This is not valid JSON at all!',
+        content: MOCK_INVALID_JSON,
       }),
     } as any;
 
-    const result = await generatePostHocCitations(mockLlmService, response, [source]);
+    const result = await generatePostHocCitations(mockLlmService, LONG_RESPONSE, [source]);
 
     expect(result.references).toEqual([]);
     warnSpy.mockRestore();
@@ -260,20 +260,15 @@ describe('generatePostHocCitations - LLM integration', () => {
 
   it('skips citations with confidence "none"', async () => {
     const source = buildCitationSource({ id: 'src-1' });
-    const response = 'Some long response that contains enough text for citation analysis to proceed.';
 
     const mockLlmService = {
       quickGenerate: vi.fn().mockResolvedValue({
-        content: JSON.stringify({
-          citations: [
-            { claim: 'Some long response', sourceIndex: 1, confidence: 'none' },
-          ],
-        }),
+        content: MOCK_NONE_CONFIDENCE_CITATION,
       }),
     } as any;
 
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const result = await generatePostHocCitations(mockLlmService, response, [source]);
+    const result = await generatePostHocCitations(mockLlmService, LONG_RESPONSE, [source]);
     logSpy.mockRestore();
 
     expect(result.references).toEqual([]);
@@ -282,20 +277,15 @@ describe('generatePostHocCitations - LLM integration', () => {
 
   it('skips citations with out-of-bounds source index', async () => {
     const source = buildCitationSource({ id: 'src-1' });
-    const response = 'Some long response with text that is long enough to proceed with citation generation.';
 
     const mockLlmService = {
       quickGenerate: vi.fn().mockResolvedValue({
-        content: JSON.stringify({
-          citations: [
-            { claim: 'Some long response', sourceIndex: 99, confidence: 'full' },
-          ],
-        }),
+        content: MOCK_OUT_OF_BOUNDS_CITATION,
       }),
     } as any;
 
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
-    const result = await generatePostHocCitations(mockLlmService, response, [source]);
+    const result = await generatePostHocCitations(mockLlmService, LONG_RESPONSE, [source]);
     logSpy.mockRestore();
 
     expect(result.references).toEqual([]);
@@ -303,7 +293,6 @@ describe('generatePostHocCitations - LLM integration', () => {
 
   it('handles LLM error in batch gracefully', async () => {
     const source = buildCitationSource();
-    const response = 'A response with enough content to be processed for citation generation purposes.';
 
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -312,7 +301,7 @@ describe('generatePostHocCitations - LLM integration', () => {
       quickGenerate: vi.fn().mockRejectedValue(new Error('API timeout')),
     } as any;
 
-    const result = await generatePostHocCitations(mockLlmService, response, [source]);
+    const result = await generatePostHocCitations(mockLlmService, LONG_RESPONSE, [source]);
 
     expect(result.references).toEqual([]);
     warnSpy.mockRestore();

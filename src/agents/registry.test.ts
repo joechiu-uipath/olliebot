@@ -9,9 +9,7 @@
 import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
 import { AgentRegistry, getAgentRegistry } from './registry.js';
 import { getAgentCapabilities } from './capabilities.js';
-
-// Simulated skill IDs that would exist in a real system
-const SAMPLE_SKILL_IDS = ['frontend-modifier', 'docx', 'pdf', 'pptx'];
+import { createMockAgent, SAMPLE_SKILL_IDS, createMockCommunication } from './__tests__/fixtures.js';
 
 describe('AgentRegistry - Self-Coding Agents', () => {
   let registry: AgentRegistry;
@@ -210,18 +208,6 @@ describe('AgentRegistry - Agent Management', () => {
   beforeEach(() => {
     registry = new AgentRegistry();
   });
-
-  function createMockAgent(id: string, name: string): any {
-    return {
-      identity: { id, name, emoji: '🤖', role: 'worker', description: 'Test agent' },
-      state: { status: 'idle', lastActivity: new Date(), context: {} },
-      capabilities: { canSpawnAgents: false, canAccessTools: ['*'], canUseChannels: [], maxConcurrentTasks: 1 },
-      config: { identity: { id, name, emoji: '🤖', role: 'worker', description: 'Test agent' }, capabilities: { canSpawnAgents: false, canAccessTools: ['*'], canUseChannels: [], maxConcurrentTasks: 1 }, systemPrompt: '' },
-      receiveFromAgent: vi.fn(),
-      shutdown: vi.fn(),
-      setRegistry: vi.fn(),
-    };
-  }
 
   it('registers and retrieves an agent by id', () => {
     const agent = createMockAgent('agent-1', 'Researcher');
@@ -425,28 +411,11 @@ describe('AgentRegistry - Communication', () => {
     registry = new AgentRegistry();
   });
 
-  function createMockAgent(id: string, name: string): any {
-    return {
-      identity: { id, name, emoji: '🤖', role: 'worker', description: 'Test' },
-      state: { status: 'idle', lastActivity: new Date(), context: {} },
-      capabilities: { canSpawnAgents: false, canAccessTools: ['*'], canUseChannels: [], maxConcurrentTasks: 1 },
-      config: { identity: { id, name, emoji: '🤖', role: 'worker', description: 'Test' }, capabilities: { canSpawnAgents: false, canAccessTools: ['*'], canUseChannels: [], maxConcurrentTasks: 1 }, systemPrompt: '' },
-      receiveFromAgent: vi.fn(),
-      shutdown: vi.fn(),
-    };
-  }
-
   it('routeCommunication delivers message to target agent', async () => {
     const agent = createMockAgent('target-1', 'Target');
     registry.registerAgent(agent);
 
-    const comm = {
-      type: 'task_assignment' as const,
-      fromAgent: 'supervisor',
-      toAgent: 'target-1',
-      payload: { task: 'do something' },
-      timestamp: new Date(),
-    };
+    const comm = createMockCommunication('task_assignment', 'supervisor', 'target-1', { task: 'do something' });
 
     await registry.routeCommunication(comm, 'target-1');
     expect(agent.receiveFromAgent).toHaveBeenCalledWith(comm);
@@ -455,13 +424,7 @@ describe('AgentRegistry - Communication', () => {
   it('routeCommunication handles missing target gracefully', async () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-    const comm = {
-      type: 'task_assignment' as const,
-      fromAgent: 'supervisor',
-      toAgent: 'missing-agent',
-      payload: {},
-      timestamp: new Date(),
-    };
+    const comm = createMockCommunication('task_assignment', 'supervisor', 'missing-agent', {});
 
     await registry.routeCommunication(comm, 'missing-agent');
     expect(errorSpy).toHaveBeenCalledWith(
@@ -478,12 +441,7 @@ describe('AgentRegistry - Communication', () => {
     registry.registerAgent(a2);
     registry.registerAgent(a3);
 
-    const comm = {
-      type: 'status_update' as const,
-      fromAgent: 'a-1',
-      payload: { status: 'working' },
-      timestamp: new Date(),
-    };
+    const comm = createMockCommunication('status_update', 'a-1', undefined, { status: 'working' });
 
     await registry.broadcastToAll(comm, 'a-2');
 

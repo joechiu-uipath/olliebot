@@ -7,8 +7,27 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ToolRunner } from './runner.js';
-import type { NativeTool } from './native/types.js';
 import type { ToolEvent } from './types.js';
+import {
+  createMockTool,
+  createSlowMockTool,
+  createFailingMockTool,
+  createErrorResultMockTool,
+  createFileReturningMockTool,
+  createDisplayOnlyMockTool,
+  createMockMcpClient,
+} from './__tests__/fixtures.js';
+import {
+  TEST_REQUEST_ID,
+  MOCK_TOOL_NAMES,
+  SCREENSHOT_FILE_SIZE_BYTES,
+  SAMPLE_BASE64_IMAGE,
+  SAMPLE_QUERY,
+  SLOW_TOOL_DELAY_MS,
+  TOOL_EXECUTION_DURATION_MS,
+  LARGE_RESULT_SIZE_CHARS,
+  TRUNCATION_THRESHOLD_CHARS,
+} from './__tests__/constants.js';
 
 describe('ToolRunner', () => {
   let runner: ToolRunner;
@@ -19,27 +38,22 @@ describe('ToolRunner', () => {
 
   describe('executeTool', () => {
     it('executes a native tool and returns result', async () => {
-      const mockTool: NativeTool = {
-        name: 'mock_tool',
-        description: 'A mock tool',
-        inputSchema: { type: 'object', properties: {} },
-        execute: vi.fn().mockResolvedValue({
-          success: true,
-          output: { message: 'done' },
-        }),
-      };
+      const mockTool = createMockTool(MOCK_TOOL_NAMES.BASIC, {
+        success: true,
+        output: { message: 'done' },
+      });
       runner.registerNativeTool(mockTool);
 
       const result = await runner.executeTool({
-        id: 'test-id',
-        toolName: 'mock_tool',
+        id: TEST_REQUEST_ID,
+        toolName: MOCK_TOOL_NAMES.BASIC,
         source: 'native',
         parameters: { foo: 'bar' },
       });
 
       expect(result.success).toBe(true);
       expect(result.output).toEqual({ message: 'done' });
-      expect(result.toolName).toBe('mock_tool');
+      expect(result.toolName).toBe(MOCK_TOOL_NAMES.BASIC);
       expect(mockTool.execute).toHaveBeenCalledWith(
         { foo: 'bar' },
         expect.any(Object)
@@ -50,22 +64,13 @@ describe('ToolRunner', () => {
       const mockFiles = [
         {
           name: 'screenshot.png',
-          dataUrl: 'data:image/png;base64,iVBORw0KGgo=',
-          size: 1024,
+          dataUrl: SAMPLE_BASE64_IMAGE,
+          size: SCREENSHOT_FILE_SIZE_BYTES,
           mediaType: 'image/png',
         },
       ];
 
-      const mockTool: NativeTool = {
-        name: 'mock_screenshot',
-        description: 'Mock tool that returns files',
-        inputSchema: { type: 'object', properties: {} },
-        execute: vi.fn().mockResolvedValue({
-          success: true,
-          output: { format: 'png', capturedAt: '2024-01-01T00:00:00Z' },
-          files: mockFiles,
-        }),
-      };
+      const mockTool = createFileReturningMockTool(MOCK_TOOL_NAMES.SCREENSHOT, mockFiles);
       runner.registerNativeTool(mockTool);
 
       // Capture emitted events
@@ -73,8 +78,8 @@ describe('ToolRunner', () => {
       runner.onToolEvent((e) => events.push(e));
 
       const result = await runner.executeTool({
-        id: 'test-id',
-        toolName: 'mock_screenshot',
+        id: TEST_REQUEST_ID,
+        toolName: MOCK_TOOL_NAMES.SCREENSHOT,
         source: 'native',
         parameters: {},
       });
@@ -83,8 +88,8 @@ describe('ToolRunner', () => {
       expect(result.files).toBeDefined();
       expect(result.files).toHaveLength(1);
       expect(result.files![0].name).toBe('screenshot.png');
-      expect(result.files![0].dataUrl).toBe('data:image/png;base64,iVBORw0KGgo=');
-      expect(result.files![0].size).toBe(1024);
+      expect(result.files![0].dataUrl).toBe(SAMPLE_BASE64_IMAGE);
+      expect(result.files![0].size).toBe(SCREENSHOT_FILE_SIZE_BYTES);
       expect(result.files![0].mediaType).toBe('image/png');
 
       // Assert files propagated to event
@@ -101,22 +106,16 @@ describe('ToolRunner', () => {
     });
 
     it('propagates displayOnly and displayOnlySummary from tool result', async () => {
-      const mockTool: NativeTool = {
-        name: 'mock_display_only',
-        description: 'Mock tool with display-only output',
-        inputSchema: { type: 'object', properties: {} },
-        execute: vi.fn().mockResolvedValue({
-          success: true,
-          output: { urls: ['http://a.com', 'http://b.com', 'http://c.com'] },
-          displayOnly: true,
-          displayOnlySummary: 'Found 3 URLs',
-        }),
-      };
+      const mockTool = createDisplayOnlyMockTool(
+        MOCK_TOOL_NAMES.DISPLAY_ONLY,
+        { urls: ['http://a.com', 'http://b.com', 'http://c.com'] },
+        'Found 3 URLs'
+      );
       runner.registerNativeTool(mockTool);
 
       const result = await runner.executeTool({
-        id: 'test-id',
-        toolName: 'mock_display_only',
+        id: TEST_REQUEST_ID,
+        toolName: MOCK_TOOL_NAMES.DISPLAY_ONLY,
         source: 'native',
         parameters: {},
       });
@@ -126,20 +125,12 @@ describe('ToolRunner', () => {
     });
 
     it('handles tool execution failure', async () => {
-      const mockTool: NativeTool = {
-        name: 'mock_failing',
-        description: 'Mock tool that fails',
-        inputSchema: { type: 'object', properties: {} },
-        execute: vi.fn().mockResolvedValue({
-          success: false,
-          error: 'Something went wrong',
-        }),
-      };
+      const mockTool = createErrorResultMockTool(MOCK_TOOL_NAMES.FAILING, 'Something went wrong');
       runner.registerNativeTool(mockTool);
 
       const result = await runner.executeTool({
-        id: 'test-id',
-        toolName: 'mock_failing',
+        id: TEST_REQUEST_ID,
+        toolName: MOCK_TOOL_NAMES.FAILING,
         source: 'native',
         parameters: {},
       });
@@ -149,17 +140,12 @@ describe('ToolRunner', () => {
     });
 
     it('handles tool execution exception', async () => {
-      const mockTool: NativeTool = {
-        name: 'mock_throwing',
-        description: 'Mock tool that throws',
-        inputSchema: { type: 'object', properties: {} },
-        execute: vi.fn().mockRejectedValue(new Error('Unexpected error')),
-      };
+      const mockTool = createFailingMockTool(MOCK_TOOL_NAMES.THROWING, 'Unexpected error');
       runner.registerNativeTool(mockTool);
 
       const result = await runner.executeTool({
-        id: 'test-id',
-        toolName: 'mock_throwing',
+        id: TEST_REQUEST_ID,
+        toolName: MOCK_TOOL_NAMES.THROWING,
         source: 'native',
         parameters: {},
       });
@@ -169,23 +155,18 @@ describe('ToolRunner', () => {
     });
 
     it('emits tool_requested and tool_execution_finished events', async () => {
-      const mockTool: NativeTool = {
-        name: 'mock_events',
-        description: 'Mock tool for event testing',
-        inputSchema: { type: 'object', properties: {} },
-        execute: vi.fn().mockResolvedValue({
-          success: true,
-          output: 'done',
-        }),
-      };
+      const mockTool = createMockTool(MOCK_TOOL_NAMES.EVENTS, {
+        success: true,
+        output: 'done',
+      });
       runner.registerNativeTool(mockTool);
 
       const events: ToolEvent[] = [];
       runner.onToolEvent((e) => events.push(e));
 
       await runner.executeTool({
-        id: 'test-id',
-        toolName: 'mock_events',
+        id: TEST_REQUEST_ID,
+        toolName: MOCK_TOOL_NAMES.EVENTS,
         source: 'native',
         parameters: { input: 'value' },
       });
@@ -194,15 +175,15 @@ describe('ToolRunner', () => {
 
       const requestedEvent = events.find((e) => e.type === 'tool_requested');
       expect(requestedEvent).toBeDefined();
-      expect(requestedEvent?.toolName).toBe('mock_events');
-      expect(requestedEvent?.requestId).toBe('test-id');
+      expect(requestedEvent?.toolName).toBe(MOCK_TOOL_NAMES.EVENTS);
+      expect(requestedEvent?.requestId).toBe(TEST_REQUEST_ID);
 
       const finishedEvent = events.find(
         (e) => e.type === 'tool_execution_finished'
       );
       expect(finishedEvent).toBeDefined();
-      expect(finishedEvent?.toolName).toBe('mock_events');
-      expect(finishedEvent?.requestId).toBe('test-id');
+      expect(finishedEvent?.toolName).toBe(MOCK_TOOL_NAMES.EVENTS);
+      expect(finishedEvent?.requestId).toBe(TEST_REQUEST_ID);
       if (finishedEvent?.type === 'tool_execution_finished') {
         expect(finishedEvent.success).toBe(true);
         expect(finishedEvent.result).toBe('done');
@@ -212,13 +193,7 @@ describe('ToolRunner', () => {
 
   describe('registerNativeTool', () => {
     it('registers a native tool', () => {
-      const mockTool: NativeTool = {
-        name: 'test_tool',
-        description: 'Test tool',
-        inputSchema: { type: 'object', properties: {} },
-        execute: vi.fn(),
-      };
-
+      const mockTool = createMockTool('test_tool');
       runner.registerNativeTool(mockTool);
 
       const tools = runner.getToolsForLLM();
@@ -228,13 +203,7 @@ describe('ToolRunner', () => {
 
   describe('registerUserTool', () => {
     it('registers a user tool with user. prefix', () => {
-      const mockTool: NativeTool = {
-        name: 'my_tool',
-        description: 'User tool',
-        inputSchema: { type: 'object', properties: {} },
-        execute: vi.fn(),
-      };
-
+      const mockTool = createMockTool('my_tool');
       runner.registerUserTool(mockTool);
 
       const tools = runner.getToolsForLLM();
@@ -242,18 +211,8 @@ describe('ToolRunner', () => {
     });
 
     it('rejects user tool that conflicts with native tool', () => {
-      const nativeTool: NativeTool = {
-        name: 'shared_name',
-        description: 'Native tool',
-        inputSchema: { type: 'object', properties: {} },
-        execute: vi.fn(),
-      };
-      const userTool: NativeTool = {
-        name: 'shared_name',
-        description: 'User tool with same name',
-        inputSchema: { type: 'object', properties: {} },
-        execute: vi.fn(),
-      };
+      const nativeTool = createMockTool(MOCK_TOOL_NAMES.SHARED);
+      const userTool = createMockTool(MOCK_TOOL_NAMES.SHARED);
 
       runner.registerNativeTool(nativeTool);
       runner.registerUserTool(userTool);
@@ -261,10 +220,10 @@ describe('ToolRunner', () => {
       // Native tool should still be there, user tool should be rejected
       const tools = runner.getToolsForLLM();
       const matchingTools = tools.filter(
-        (t) => t.name === 'shared_name' || t.name === 'user.shared_name'
+        (t) => t.name === MOCK_TOOL_NAMES.SHARED || t.name === `user.${MOCK_TOOL_NAMES.SHARED}`
       );
       expect(matchingTools).toHaveLength(1);
-      expect(matchingTools[0].name).toBe('shared_name');
+      expect(matchingTools[0].name).toBe(MOCK_TOOL_NAMES.SHARED);
     });
   });
 
@@ -290,12 +249,7 @@ describe('ToolRunner', () => {
 
   describe('onToolEvent', () => {
     it('returns unsubscribe function', async () => {
-      const mockTool: NativeTool = {
-        name: 'test_unsub',
-        description: 'Test',
-        inputSchema: { type: 'object', properties: {} },
-        execute: vi.fn().mockResolvedValue({ success: true, output: 'ok' }),
-      };
+      const mockTool = createMockTool('test_unsub', { success: true, output: 'ok' });
       runner.registerNativeTool(mockTool);
 
       const events: ToolEvent[] = [];
@@ -324,12 +278,7 @@ describe('ToolRunner', () => {
     });
 
     it('swallows errors thrown by event listeners', async () => {
-      const mockTool: NativeTool = {
-        name: 'test_listener_error',
-        description: 'Test',
-        inputSchema: { type: 'object', properties: {} },
-        execute: vi.fn().mockResolvedValue({ success: true, output: 'ok' }),
-      };
+      const mockTool = createMockTool('test_listener_error', { success: true, output: 'ok' });
       runner.registerNativeTool(mockTool);
 
       const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -358,18 +307,13 @@ describe('ToolRunner', () => {
     });
 
     it('includes native and user tools with correct names', () => {
-      runner.registerNativeTool({
-        name: 'web_search',
+      runner.registerNativeTool(createMockTool('web_search', undefined, {
         description: 'Search the web',
         inputSchema: { type: 'object', properties: { query: { type: 'string' } } },
-        execute: vi.fn(),
-      });
-      runner.registerUserTool({
-        name: 'custom_fetch',
+      }));
+      runner.registerUserTool(createMockTool('custom_fetch', undefined, {
         description: 'Custom fetch',
-        inputSchema: { type: 'object', properties: {} },
-        execute: vi.fn(),
-      });
+      }));
 
       const tools = runner.getToolsForLLM();
       expect(tools).toHaveLength(2);
@@ -386,11 +330,9 @@ describe('ToolRunner', () => {
     });
 
     it('includes MCP tools when mcpClient is configured', () => {
-      const mockMcpClient = {
-        getToolsForLLM: vi.fn().mockReturnValue([
-          { name: 'mcp.github__create_issue', description: 'Create issue', input_schema: { type: 'object' } },
-        ]),
-      };
+      const mockMcpClient = createMockMcpClient([
+        { name: 'mcp.github__create_issue', description: 'Create issue', input_schema: { type: 'object' } },
+      ]);
 
       const runnerWithMcp = new ToolRunner({ mcpClient: mockMcpClient as any });
       const tools = runnerWithMcp.getToolsForLLM();
@@ -402,18 +344,12 @@ describe('ToolRunner', () => {
 
   describe('getToolDefinitions', () => {
     it('returns definitions with source metadata', () => {
-      runner.registerNativeTool({
-        name: 'search',
+      runner.registerNativeTool(createMockTool('search', undefined, {
         description: 'Search',
-        inputSchema: { type: 'object' },
-        execute: vi.fn(),
-      });
-      runner.registerUserTool({
-        name: 'my_tool',
+      }));
+      runner.registerUserTool(createMockTool('my_tool', undefined, {
         description: 'My tool',
-        inputSchema: { type: 'object' },
-        execute: vi.fn(),
-      });
+      }));
 
       const defs = runner.getToolDefinitions();
       expect(defs).toHaveLength(2);
@@ -428,11 +364,9 @@ describe('ToolRunner', () => {
     });
 
     it('parses MCP tool serverId from name', () => {
-      const mockMcpClient = {
-        getToolsForLLM: vi.fn().mockReturnValue([
-          { name: 'mcp.github__create_issue', description: 'Create issue', input_schema: { type: 'object' } },
-        ]),
-      };
+      const mockMcpClient = createMockMcpClient([
+        { name: 'mcp.github__create_issue', description: 'Create issue', input_schema: { type: 'object' } },
+      ]);
 
       const runnerWithMcp = new ToolRunner({ mcpClient: mockMcpClient as any });
       const defs = runnerWithMcp.getToolDefinitions();
@@ -453,10 +387,7 @@ describe('ToolRunner', () => {
 
     it('executes sequential requests in order', async () => {
       const executionOrder: string[] = [];
-      const makeTool = (name: string): NativeTool => ({
-        name,
-        description: name,
-        inputSchema: { type: 'object', properties: {} },
+      const makeTool = (name: string) => createMockTool(name, undefined, {
         execute: vi.fn().mockImplementation(async () => {
           executionOrder.push(name);
           return { success: true, output: name };
@@ -481,25 +412,22 @@ describe('ToolRunner', () => {
       let concurrentCount = 0;
       let maxConcurrent = 0;
 
-      const makeSlowTool = (name: string): NativeTool => ({
-        name,
-        description: name,
-        inputSchema: { type: 'object', properties: {} },
+      const makeSlowTool = (name: string) => createMockTool(name, undefined, {
         execute: vi.fn().mockImplementation(async () => {
           concurrentCount++;
           maxConcurrent = Math.max(maxConcurrent, concurrentCount);
-          await new Promise((resolve) => setTimeout(resolve, 10));
+          await new Promise((resolve) => setTimeout(resolve, SLOW_TOOL_DELAY_MS));
           concurrentCount--;
           return { success: true, output: name };
         }),
       });
 
-      runner.registerNativeTool(makeSlowTool('parallel_a'));
-      runner.registerNativeTool(makeSlowTool('parallel_b'));
+      runner.registerNativeTool(makeSlowTool(MOCK_TOOL_NAMES.PARALLEL_A));
+      runner.registerNativeTool(makeSlowTool(MOCK_TOOL_NAMES.PARALLEL_B));
 
       const results = await runner.executeTools([
-        { id: 'p-1', toolName: 'parallel_a', source: 'native', parameters: {}, groupId: 'group1' },
-        { id: 'p-2', toolName: 'parallel_b', source: 'native', parameters: {}, groupId: 'group1' },
+        { id: 'p-1', toolName: MOCK_TOOL_NAMES.PARALLEL_A, source: 'native', parameters: {}, groupId: 'group1' },
+        { id: 'p-2', toolName: MOCK_TOOL_NAMES.PARALLEL_B, source: 'native', parameters: {}, groupId: 'group1' },
       ]);
 
       expect(results).toHaveLength(2);
@@ -509,24 +437,15 @@ describe('ToolRunner', () => {
 
   describe('isPrivateTool', () => {
     it('returns true for private tools', () => {
-      runner.registerNativeTool({
-        name: 'delegate',
-        description: 'Delegate to agent',
-        inputSchema: { type: 'object' },
-        execute: vi.fn(),
+      runner.registerNativeTool(createMockTool('delegate', undefined, {
         private: true,
-      });
+      }));
 
       expect(runner.isPrivateTool('delegate')).toBe(true);
     });
 
     it('returns false for non-private tools', () => {
-      runner.registerNativeTool({
-        name: 'web_search',
-        description: 'Search',
-        inputSchema: { type: 'object' },
-        execute: vi.fn(),
-      });
+      runner.registerNativeTool(createMockTool('web_search'));
 
       expect(runner.isPrivateTool('web_search')).toBe(false);
     });
@@ -538,26 +457,13 @@ describe('ToolRunner', () => {
 
   describe('getPrivateToolNames', () => {
     it('returns only private tool names', () => {
-      runner.registerNativeTool({
-        name: 'delegate',
-        description: 'Delegate',
-        inputSchema: { type: 'object' },
-        execute: vi.fn(),
+      runner.registerNativeTool(createMockTool('delegate', undefined, {
         private: true,
-      });
-      runner.registerNativeTool({
-        name: 'remember',
-        description: 'Remember',
-        inputSchema: { type: 'object' },
-        execute: vi.fn(),
+      }));
+      runner.registerNativeTool(createMockTool('remember', undefined, {
         private: true,
-      });
-      runner.registerNativeTool({
-        name: 'web_search',
-        description: 'Search',
-        inputSchema: { type: 'object' },
-        execute: vi.fn(),
-      });
+      }));
+      runner.registerNativeTool(createMockTool('web_search'));
 
       const privateNames = runner.getPrivateToolNames();
       expect(privateNames).toContain('delegate');
@@ -608,16 +514,14 @@ describe('ToolRunner', () => {
 
   describe('executeTool - user tool routing', () => {
     it('executes a user tool via user source', async () => {
-      runner.registerUserTool({
-        name: 'my_user_tool',
-        description: 'User tool',
-        inputSchema: { type: 'object', properties: {} },
-        execute: vi.fn().mockResolvedValue({ success: true, output: 'user result' }),
-      });
+      runner.registerUserTool(createMockTool(MOCK_TOOL_NAMES.USER_TOOL, {
+        success: true,
+        output: 'user result',
+      }));
 
       const result = await runner.executeTool({
         id: 'u-1',
-        toolName: 'user.my_user_tool',
+        toolName: `user.${MOCK_TOOL_NAMES.USER_TOOL}`,
         source: 'user',
         parameters: {},
       });
@@ -654,10 +558,8 @@ describe('ToolRunner', () => {
 
     it('routes to MCP client with parsed serverId and toolName', async () => {
       const mockInvokeTool = vi.fn().mockResolvedValue({ success: true, output: 'mcp result' });
-      const mockMcpClient = {
-        getToolsForLLM: vi.fn().mockReturnValue([]),
-        invokeTool: mockInvokeTool,
-      };
+      const mockMcpClient = createMockMcpClient([]);
+      mockMcpClient.invokeTool = mockInvokeTool;
 
       const runnerWithMcp = new ToolRunner({ mcpClient: mockMcpClient as any });
       const result = await runnerWithMcp.executeTool({
