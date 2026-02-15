@@ -674,14 +674,25 @@ const LlmCallDetailView = memo(function LlmCallDetailView({ call, onBack }) {
       {/* Token Reduction (Prompt Compression) */}
       {call.tokenReductionEnabled === 1 && (
         <div className="logs-detail-section logs-token-reduction-section">
-          <h4 className="logs-collapsible" onClick={() => setShowTokenReduction(!showTokenReduction)}>
-            {showTokenReduction ? '▾' : '▸'} Token Reduction
-            <span className="logs-token-reduction-badge">
-              {savingsPercent(call.tokenReductionOriginalTokens, call.tokenReductionCompressedTokens)}% saved
-            </span>
+          <h4>
+            <button
+              type="button"
+              className="logs-collapsible"
+              onClick={() => setShowTokenReduction(!showTokenReduction)}
+              aria-expanded={showTokenReduction}
+              aria-controls="logs-token-reduction-panel"
+            >
+              {showTokenReduction ? '▾' : '▸'} Token Reduction
+              <span className="logs-token-reduction-badge">
+                {savingsPercent(call.tokenReductionOriginalTokens, call.tokenReductionCompressedTokens)}% saved
+              </span>
+            </button>
           </h4>
           {showTokenReduction && (
-            <div className="logs-token-reduction-detail">
+            <div
+              id="logs-token-reduction-panel"
+              className="logs-token-reduction-detail"
+            >
               <div className="logs-token-reduction-meta">
                 <span>Provider: <strong>{call.tokenReductionProvider}</strong></span>
                 <span>Original: <strong>{formatTokens(call.tokenReductionOriginalTokens)} tokens</strong></span>
