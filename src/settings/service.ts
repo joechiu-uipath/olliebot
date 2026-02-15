@@ -189,6 +189,7 @@ export class UserSettingsService {
   getDisabledTasks(): string[] {
     return [...this.settings.disabled_tasks];
   }
+
 }
 
 // Singleton instance

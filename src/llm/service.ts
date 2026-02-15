@@ -12,17 +12,22 @@ import { DATA_SIZE_THRESHOLDS } from './types.js';
 import { LLM_SUMMARIZE_MAX_TOKENS, LLM_TASK_CONFIG_MAX_TOKENS } from '../constants.js';
 import type { TraceStore } from '../tracing/trace-store.js';
 import type { TraceContext, LlmWorkload } from '../tracing/types.js';
+import { TokenReductionService } from './token-reduction/token-reduction-service.js';
+import type { TokenReductionConfig, CompressionResult, TokenReductionProviderType } from './token-reduction/types.js';
 
 export interface LLMServiceConfig {
   main: LLMProvider;
   fast: LLMProvider;
   traceStore?: TraceStore;
+  tokenReduction?: TokenReductionConfig;
 }
 
 export class LLMService {
   private main: LLMProvider;
   private fast: LLMProvider;
   private traceStore: TraceStore | null;
+  private tokenReduction: TokenReductionService | null = null;
+  private tokenReductionConfig: TokenReductionConfig | null;
 
   // AsyncLocalStorage provides request-scoped context that is safe for concurrent async operations.
   // Unlike a shared stack, each async execution chain maintains its own isolated context,
@@ -33,6 +38,65 @@ export class LLMService {
     this.main = config.main;
     this.fast = config.fast;
     this.traceStore = config.traceStore || null;
+    this.tokenReductionConfig = config.tokenReduction || null;
+  }
+
+  /**
+   * Build a TokenReductionConfig from process.env.
+   * Returns undefined when token reduction is not enabled, keeping the
+   * caller (index.ts) to a simple one-liner.
+   */
+  static buildTokenReductionConfig(
+    env: NodeJS.ProcessEnv
+  ): TokenReductionConfig | undefined {
+    if (env.TOKEN_REDUCTION_ENABLED !== 'true') return undefined;
+
+    const providerEnv = env.TOKEN_REDUCTION_PROVIDER;
+    const defaultProvider: TokenReductionProviderType = 'llmlingua2';
+    const supportedProviders: TokenReductionProviderType[] = [defaultProvider];
+    const provider = (providerEnv || defaultProvider) as TokenReductionProviderType;
+
+    if (!supportedProviders.includes(provider)) {
+      console.warn(
+        `[LLMService] Invalid TOKEN_REDUCTION_PROVIDER "${providerEnv}". ` +
+        `Supported providers are: ${supportedProviders.join(', ')}. ` +
+        'Token reduction will be disabled.'
+      );
+      return undefined;
+    }
+
+    return {
+      enabled: true,
+      provider,
+      compressionLevel: 'default',
+    };
+  }
+
+  /**
+   * Initialize async subsystems (token reduction provider, compression cache).
+   * Token reduction initializes in the background so it does not delay
+   * backend startup.  Until it is ready, isEnabled() returns false and
+   * LLM calls proceed without compression.
+   * Call after construction.
+   */
+  async init(): Promise<void> {
+    if (!this.tokenReductionConfig || !this.tokenReductionConfig.enabled) {
+      return;
+    }
+
+    const service = new TokenReductionService(this.tokenReductionConfig);
+    // Assign immediately so applyTokenReduction can find the service;
+    // isEnabled() returns false until service.init() completes.
+    this.tokenReduction = service;
+
+    // Fire-and-forget: init runs in the background
+    service.init().then(() => {
+      console.log(`[LLMService] Token reduction ready (provider: ${this.tokenReductionConfig!.provider}, level: ${this.tokenReductionConfig!.compressionLevel})`);
+    }).catch((error) => {
+      console.error('[LLMService] Failed to initialize token reduction:', error);
+      console.log('[LLMService] Token reduction disabled due to initialization failure');
+      this.tokenReduction = null;
+    });
   }
 
   // ============================================================
@@ -119,6 +183,83 @@ export class LLMService {
   }
 
   // ============================================================
+  // Token reduction (prompt compression)
+  // ============================================================
+
+  /**
+   * Apply token reduction to messages and options before an LLM call.
+   * Records compression stats to the trace if a callId is provided.
+   */
+  private async applyTokenReduction(
+    callId: string | null,
+    messages: LLMMessage[],
+    options?: LLMOptions,
+    workload: 'main' | 'fast' = 'main'
+  ): Promise<{ messages: LLMMessage[]; options?: LLMOptions }> {
+    if (!this.tokenReduction || !this.tokenReduction.isEnabled()) {
+      return { messages, options };
+    }
+
+    try {
+      const result = await this.tokenReduction.compressMessages(messages, options?.systemPrompt, workload);
+
+      // Record token reduction in trace (only if actual compression occurred)
+      if (callId && this.traceStore && result.results.length > 0) {
+        const totalOriginal = result.results.reduce((sum, r) => sum + r.originalTokenCount, 0);
+        const totalCompressed = result.results.reduce((sum, r) => sum + r.compressedTokenCount, 0);
+        const totalTimeMs = result.results.reduce((sum, r) => sum + r.compressionTimeMs, 0);
+        const tokensSaved = totalOriginal - totalCompressed;
+        const savingsPercent = totalOriginal > 0
+          ? Math.round((tokensSaved / totalOriginal) * 10000) / 100
+          : 0;
+
+        // Skip recording if no actual compression happened (e.g., below threshold)
+        if (tokensSaved > 0) {
+          const firstResult = result.results[0];
+
+          this.traceStore.recordTokenReduction(callId, {
+            provider: firstResult.provider,
+            originalTokens: totalOriginal,
+            compressedTokens: totalCompressed,
+            compressionTimeMs: totalTimeMs,
+            originalText: messages.length > 0 ? this.extractFirstUserText(messages) : undefined,
+            compressedText: result.messages.length > 0 ? this.extractFirstUserText(result.messages) : undefined,
+          });
+
+          console.log(`[LLMService] Token reduction: ${totalOriginal} -> ${totalCompressed} tokens (${savingsPercent}% saved, ${totalTimeMs}ms)`);
+        }
+      }
+
+      return {
+        messages: result.messages,
+        options: result.systemPrompt !== options?.systemPrompt
+          ? { ...options, systemPrompt: result.systemPrompt }
+          : options,
+      };
+    } catch (error) {
+      console.error('[LLMService] Token reduction failed, using original messages:', error);
+      return { messages, options };
+    }
+  }
+
+  /**
+   * Extract the first user text content from messages (for trace display).
+   */
+  private extractFirstUserText(messages: LLMMessage[]): string | undefined {
+    for (const msg of messages) {
+      if (msg.role === 'user') {
+        if (typeof msg.content === 'string') return msg.content;
+        if (Array.isArray(msg.content)) {
+          for (const block of msg.content) {
+            if (block.type === 'text' && block.text) return block.text;
+          }
+        }
+      }
+    }
+    return undefined;
+  }
+
+  // ============================================================
   // Data processing
   // ============================================================
 
@@ -162,7 +303,8 @@ export class LLMService {
 
     const callId = this.traceStart('fast', this.fast, messages, options, 'summarize', callerName || 'System');
     try {
-      const response = await this.fast.complete(messages, options);
+      const reduced = await this.applyTokenReduction(callId, messages, options, 'fast');
+      const response = await this.fast.complete(reduced.messages, reduced.options);
       this.traceComplete(callId, response);
       return response.content;
     } catch (error) {
@@ -180,7 +322,8 @@ export class LLMService {
   ): Promise<LLMResponse> {
     const callId = this.traceStart('main', this.main, messages, options, 'generate');
     try {
-      const response = await this.main.complete(messages, options);
+      const reduced = await this.applyTokenReduction(callId, messages, options);
+      const response = await this.main.complete(reduced.messages, reduced.options);
       this.traceComplete(callId, response);
       return response;
     } catch (error) {
@@ -203,8 +346,9 @@ export class LLMService {
     if (typeof this.main.completeWithTools === 'function') {
       const callId = this.traceStart('main', this.main, messages, options, 'generate_with_tools');
       try {
+        const reduced = await this.applyTokenReduction(callId, messages, options);
         const startTime = Date.now();
-        const response = await this.main.completeWithTools(messages, options);
+        const response = await this.main.completeWithTools(reduced.messages, reduced.options);
         const duration = Date.now() - startTime;
 
         // Log LLM API call details
@@ -224,7 +368,8 @@ export class LLMService {
     console.warn('[LLMService] ⚠ Provider does not support completeWithTools, tools unavailable');
     const callId = this.traceStart('main', this.main, messages, options, 'generate_with_tools');
     try {
-      const response = await this.main.complete(messages, options);
+      const reduced = await this.applyTokenReduction(callId, messages, options);
+      const response = await this.main.complete(reduced.messages, reduced.options);
       const result = { ...response, toolUse: undefined, stopReason: 'end_turn' as const };
       this.traceComplete(callId, result);
       return result;
@@ -244,6 +389,10 @@ export class LLMService {
     options?: LLMOptions
   ): Promise<void> {
     const callId = this.traceStart('main', this.main, messages, options, 'generate_stream');
+
+    // Apply token reduction before streaming
+    const reduced = await this.applyTokenReduction(callId, messages, options);
+
     const streamChunks: Array<{ text: string; timestamp: string }> = [];
     let assembledContent = '';
 
@@ -272,11 +421,11 @@ export class LLMService {
     };
 
     if (this.main.stream) {
-      return this.main.stream(messages, tracedCallbacks, options);
+      return this.main.stream(reduced.messages, tracedCallbacks, reduced.options);
     }
     // Fallback to non-streaming if not supported
     try {
-      const response = await this.main.complete(messages, options);
+      const response = await this.main.complete(reduced.messages, reduced.options);
       tracedCallbacks.onChunk(response.content);
       tracedCallbacks.onComplete(response);
     } catch (error) {
@@ -297,6 +446,10 @@ export class LLMService {
     options?: LLMOptions
   ): Promise<LLMResponseWithTools> {
     const callId = this.traceStart('main', this.main, messages, options, 'generate_with_tools_stream');
+
+    // Apply token reduction before streaming
+    const reduced = await this.applyTokenReduction(callId, messages, options);
+
     const streamChunks: Array<{ text: string; timestamp: string }> = [];
     let assembledContent = '';
 
@@ -321,7 +474,7 @@ export class LLMService {
     if (typeof this.main.streamWithTools === 'function') {
       console.log(`[LLMService] generateWithToolsStream: ${this.main.name} (streaming)`);
       try {
-        const response = await this.main.streamWithTools(messages, tracedCallbacks, options);
+        const response = await this.main.streamWithTools(reduced.messages, tracedCallbacks, reduced.options);
         // Record the assembled response (not raw chunks)
         this.traceComplete(callId, {
           ...response,
@@ -337,7 +490,7 @@ export class LLMService {
     // Fallback to non-streaming if streamWithTools not supported
     console.log(`[LLMService] generateWithToolsStream: ${this.main.name} (fallback to non-streaming)`);
     try {
-      const response = await this.generateWithTools(messages, options);
+      const response = await this.generateWithTools(reduced.messages, reduced.options);
       callbacks.onChunk(response.content);
       if (response.toolUse && callbacks.onToolUse) {
         callbacks.onToolUse(response.toolUse);
@@ -374,7 +527,8 @@ export class LLMService {
   ): Promise<LLMResponse> {
     const callId = this.traceStart('fast', this.fast, messages, options, 'quick_generate', callerName || 'System');
     try {
-      const response = await this.fast.complete(messages, options);
+      const reduced = await this.applyTokenReduction(callId, messages, options, 'fast');
+      const response = await this.fast.complete(reduced.messages, reduced.options);
       this.traceComplete(callId, response);
       return response;
     } catch (error) {

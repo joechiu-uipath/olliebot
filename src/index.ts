@@ -190,7 +190,7 @@ const CONFIG = {
 
   voiceProvider: (process.env.VOICE_PROVIDER || 'azure_openai') as 'openai' | 'azure_openai',
   voiceModel: process.env.VOICE_MODEL || 'gpt-4o-realtime-preview',
-  voiceVoice: 'alloy'
+  voiceVoice: 'alloy',
 };
 
 function createLLMProvider(provider: string, model: string): LLMProvider {
@@ -292,11 +292,15 @@ async function main(): Promise<void> {
   const mainProvider = createLLMProvider(CONFIG.mainProvider, CONFIG.mainModel);
   const fastProvider = createLLMProvider(CONFIG.fastProvider, CONFIG.fastModel);
 
+  const userSettings = getUserSettingsService();
+
   const llmService = new LLMService({
     main: mainProvider,
     fast: fastProvider,
     traceStore,
+    tokenReduction: LLMService.buildTokenReductionConfig(process.env),
   });
+  await llmService.init();
 
   console.log(`[Init] Main LLM: ${CONFIG.mainProvider}/${CONFIG.mainModel}`);
   console.log(`[Init] Fast LLM: ${CONFIG.fastProvider}/${CONFIG.fastModel}`);
@@ -310,8 +314,7 @@ async function main(): Promise<void> {
   console.log('[Init] Initializing MCP client...');
   const mcpClient = new MCPClient();
 
-  // Load user settings to check for disabled MCPs
-  const userSettings = getUserSettingsService();
+  // Check user settings for disabled MCPs
   const disabledMcps = userSettings.getDisabledMcps();
 
   const mcpServers = parseMCPServers(CONFIG.mcpServers);
