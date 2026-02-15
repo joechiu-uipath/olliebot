@@ -533,19 +533,22 @@ export class MCPClient {
       return server?.enabled === true;
     });
 
-    if (options?.whitelist && options.whitelist.length > 0) {
+    // Capture lists locally to avoid non-null assertions in callbacks
+    const whitelist = options?.whitelist;
+    if (whitelist && whitelist.length > 0) {
       tools = tools.filter(
         (t) =>
-          options.whitelist!.includes(t.serverId) ||
-          options.whitelist!.includes(`${t.serverId}:${t.name}`)
+          whitelist.includes(t.serverId) ||
+          whitelist.includes(`${t.serverId}:${t.name}`)
       );
     }
 
-    if (options?.blacklist && options.blacklist.length > 0) {
+    const blacklist = options?.blacklist;
+    if (blacklist && blacklist.length > 0) {
       tools = tools.filter(
         (t) =>
-          !options.blacklist!.includes(t.serverId) &&
-          !options.blacklist!.includes(`${t.serverId}:${t.name}`)
+          !blacklist.includes(t.serverId) &&
+          !blacklist.includes(`${t.serverId}:${t.name}`)
       );
     }
 

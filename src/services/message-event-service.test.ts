@@ -245,12 +245,17 @@ describe('MessageEventService', () => {
       taskId: 'task-456',
       taskName: 'Daily Briefing',
       taskDescription: 'Generate morning briefing',
+      content: '[Scheduled Task] Execute the "Daily Briefing" task now.',
     };
 
-    it('broadcasts task_run event and returns turnId', () => {
-      const turnId = service.emitTaskRunEvent(taskData, 'conv-123');
+    it('broadcasts task_run event and returns Message object for handleMessage', () => {
+      const message = service.emitTaskRunEvent(taskData, 'conv-123');
 
-      expect(turnId).toBe('task-run-task-456');
+      expect(message.id).toBe('task-run-task-456');
+      expect(message.role).toBe('system');
+      expect(message.content).toBe(taskData.content);
+      expect(message.metadata?.taskId).toBe('task-456');
+      expect(message.metadata?.turnId).toBe('task-run-task-456');
       expect(mockBroadcast).toHaveBeenCalledWith(
         expect.objectContaining({
           type: 'task_run',
@@ -261,29 +266,20 @@ describe('MessageEventService', () => {
       );
     });
 
-    it('persists task_run event to database', () => {
+    it('does NOT persist (persistence handled by saveMessageInternal via handleMessage)', () => {
       service.emitTaskRunEvent(taskData, 'conv-123');
 
-      expect(mockMessagesCreate).toHaveBeenCalledWith(
-        expect.objectContaining({
-          id: 'task-run-task-456',
-          conversationId: 'conv-123',
-          role: 'system',
-          metadata: expect.objectContaining({
-            type: 'task_run',
-            taskId: 'task-456',
-          }),
-        })
-      );
+      // Unlike delegation/tool/error events which are notifications,
+      // task_run messages go through handleMessage() which persists via saveMessageInternal()
+      expect(mockMessagesCreate).not.toHaveBeenCalled();
     });
 
-    it('returns turnId even when conversationId is null (for UI)', () => {
-      const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    it('returns Message even when conversationId is null', () => {
+      const message = service.emitTaskRunEvent(taskData, null);
 
-      const turnId = service.emitTaskRunEvent(taskData, null);
-
-      expect(turnId).toBe('task-run-task-456');
-      consoleSpy.mockRestore();
+      expect(message.id).toBe('task-run-task-456');
+      expect(message.role).toBe('system');
+      expect(mockMessagesCreate).not.toHaveBeenCalled();
     });
   });
 

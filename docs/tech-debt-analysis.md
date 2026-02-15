@@ -20,43 +20,17 @@ This document catalogs technical debt, improvement opportunities, and architectu
 10. [Tech Choices Review](#10-tech-choices-review)
 11. [Quick Wins](#quick-wins)
 12. [Roadmap](#roadmap)
+13. [Completed Items](#completed-items)
 
 ---
 
 ## 1. Security Issues
 
 ### 1.1 Environment Variable Validation
-**Severity: MEDIUM** | **Effort: Low**
-
-- **Location**: `src/index.ts` lines 150-194
-- **Issue**: Multiple `process.env` accesses with loose type casting:
-  ```typescript
-  webSearchProvider: (process.env.WEB_SEARCH_PROVIDER || 'tavily') as WebSearchProvider
-  voiceProvider: (process.env.VOICE_PROVIDER || 'azure_openai') as 'openai' | 'azure_openai'
-  ```
-- **Impact**: Invalid config values bypass validation; runtime errors possible
-- **Recommendation**: Use Zod to validate all env variables at startup:
-  ```typescript
-  const envSchema = z.object({
-    WEB_SEARCH_PROVIDER: z.enum(['tavily', 'serper', 'brave']).default('tavily'),
-    VOICE_PROVIDER: z.enum(['openai', 'azure_openai']).default('azure_openai'),
-    // ...
-  });
-  const env = envSchema.parse(process.env);
-  ```
+**~~RESOLVED~~ - See [Completed Items](#completed-items)**
 
 ### 1.2 PowerShell Command Construction
-**Severity: MEDIUM** | **Effort: Low**
-
-- **Location**: `src/desktop/manager.ts` line 133
-- **Issue**: Shell command string construction:
-  ```typescript
-  const { stdout } = await execAsync(
-    'powershell -NoProfile -Command "Get-Process WindowsSandbox..."'
-  );
-  ```
-- **Impact**: If user input ever reaches these commands, injection is possible
-- **Recommendation**: Use `spawn` with argument arrays instead of shell strings
+**~~RESOLVED~~ - See [Completed Items](#completed-items)**
 
 ### 1.3 Input Sanitization for AI Instructions
 **Severity: MEDIUM** | **Effort: Medium**
@@ -136,22 +110,10 @@ This document catalogs technical debt, improvement opportunities, and architectu
 ## 3. Type Safety & Code Quality
 
 ### 3.1 `as any` Type Casts in Tests
-**Severity: LOW** | **Effort: Low**
-
-- **Location**: `src/agents/base-agent.test.ts` (14 occurrences)
-- **Issue**:
-  ```typescript
-  agent = new TestAgent(createTestConfig(), mockLLMService as any);
-  ```
-- **Impact**: Bypasses type safety; tests may not catch type errors
-- **Recommendation**: Use Vitest's proper mocking APIs
+**~~RESOLVED~~ - See [Completed Items](#completed-items)**
 
 ### 3.2 Non-null Assertion Overuse
-**Severity: LOW** | **Effort: Low**
-
-- **Location**: Multiple files with `!` operator
-- **Issue**: Lines like `this.tokenReductionConfig!.provider` bypass null safety
-- **Recommendation**: Add proper null guards or use optional chaining
+**~~RESOLVED~~ - See [Completed Items](#completed-items)**
 
 ---
 
@@ -171,17 +133,7 @@ This document catalogs technical debt, improvement opportunities, and architectu
   - Create feature flags for optional services
 
 ### 4.2 Race Conditions in Shared State
-**Severity: MEDIUM** | **Effort: Medium**
-
-- **Location**: `src/agents/supervisor.ts` lines 92-98
-  ```typescript
-  private subAgents: Map<string, WorkerAgent> = new Map();
-  private tasks: Map<string, TaskAssignment> = new Map();
-  private processingMessages: Set<string> = new Set();
-  ```
-- **Issue**: Multiple concurrent operations on shared maps without locking
-- **Impact**: Race conditions possible; task state corruption
-- **Recommendation**: Use `async-mutex` (already in deps) to guard map access
+**~~RESOLVED~~ - See [Completed Items](#completed-items)**
 
 ### 4.3 Platform-Specific Paths
 **Severity: MEDIUM** | **Effort: Medium**
@@ -199,17 +151,7 @@ This document catalogs technical debt, improvement opportunities, and architectu
 ## 5. Performance & Efficiency
 
 ### 5.1 Missing Database Indexes
-**Severity: MEDIUM** | **Effort: Low**
-
-- **Location**: `src/db/index.ts`
-- **Issue**: No indexes on frequently queried columns
-- **Impact**: O(n) queries for large datasets
-- **Recommendation**: Add indexes:
-  ```sql
-  CREATE INDEX idx_messages_conversation ON messages(conversationId, createdAt);
-  CREATE INDEX idx_conversations_updated ON conversations(updatedAt);
-  CREATE INDEX idx_traces_conversation ON traces(conversationId, startedAt);
-  ```
+**~~RESOLVED~~ - See [Completed Items](#completed-items)** *(indexes already existed)*
 
 ### 5.2 Full History Loaded Per Turn
 **Severity: MEDIUM** | **Effort: Medium**
@@ -261,22 +203,10 @@ This document catalogs technical debt, improvement opportunities, and architectu
 ## 7. Dependencies & Packages
 
 ### 7.1 Heavy Optional Dependencies
-**Severity: LOW** | **Effort: Medium**
-
-| Package | Size | Purpose | Recommendation |
-|---------|------|---------|----------------|
-| `@huggingface/transformers` | Large | Token reduction | Lazy-load |
-| `@tensorflow/tfjs` | 20MB+ | ML operations | Make optional |
-| `pyodide` | Very Large | Python runtime | Lazy-load |
-
-- **Recommendation**: Make ML/Python features lazy-loaded or split into optional workspace
+**~~RESOLVED~~ - See [Completed Items](#completed-items)** *(already lazy-loaded, pyodide fixed)*
 
 ### 7.2 Potentially Unused Dependencies
-**Severity: LOW** | **Effort: Low**
-
-- `simple-git` - Git operations, unclear usage
-- `unpdf` - PDF parsing, verify usage
-- **Recommendation**: Audit with `depcheck` tool
+**~~RESOLVED~~ - See [Completed Items](#completed-items)** *(both verified in use)*
 
 ---
 
@@ -354,23 +284,23 @@ This document catalogs technical debt, improvement opportunities, and architectu
 
 High impact, low effort improvements:
 
-| Task | Effort | Impact | Priority |
-|------|--------|--------|----------|
-| Add Zod validation for env vars | 30 min | Security | HIGH |
-| Add health check endpoint | 15 min | Operations | HIGH |
-| Add database indexes | 30 min | Performance | MEDIUM |
-| Add rate limiting middleware | 1 hour | Security | MEDIUM |
-| Consolidate logging to single module | 2 hours | Debugging | MEDIUM |
-| Add error event emissions | 1 hour | Reliability | MEDIUM |
+| Task | Effort | Impact | Priority | Status |
+|------|--------|--------|----------|--------|
+| ~~Add Zod validation for env vars~~ | ~~30 min~~ | ~~Security~~ | ~~HIGH~~ | ✅ Done |
+| Add health check endpoint | 15 min | Operations | HIGH | Pending |
+| ~~Add database indexes~~ | ~~30 min~~ | ~~Performance~~ | ~~MEDIUM~~ | ✅ Already existed |
+| Add rate limiting middleware | 1 hour | Security | MEDIUM | Pending |
+| Consolidate logging to single module | 2 hours | Debugging | MEDIUM | Pending |
+| Add error event emissions | 1 hour | Reliability | MEDIUM | Pending |
 
 ---
 
 ## Roadmap
 
 ### Short-term (1-2 weeks)
-- [ ] Environment variable validation with Zod
+- [x] Environment variable validation with Zod ✅ *Feb 2026*
 - [ ] Health check endpoint
-- [ ] Database indexes
+- [x] Database indexes ✅ *Already existed*
 - [ ] Rate limiting
 - [ ] Centralized logging module
 
@@ -386,3 +316,88 @@ High impact, low effort improvements:
 - [ ] Prometheus metrics
 - [ ] Cross-platform desktop support
 - [ ] Plugin architecture for providers
+
+---
+
+## Completed Items
+
+*Resolved: February 2026*
+
+### Environment Variable Validation ✅
+**Originally: Section 1.1**
+
+- **Resolution**: Created `src/config/env.ts` with comprehensive Zod schema validation
+- **Changes**:
+  - Added `envSchema` with all environment variables and proper defaults
+  - `validateEnv()` function validates at startup with clear error messages
+  - `buildConfig()` creates typed CONFIG object from validated environment
+  - Updated `src/index.ts` to use the new validation system
+- **Result**: Invalid config values now caught at startup with descriptive error messages
+
+### PowerShell Command Construction ✅
+**Originally: Section 1.2**
+
+- **Resolution**: Fixed in `src/desktop/manager.ts` to use `spawn` with argument arrays
+- **Changes**:
+  - Replaced `execAsync('powershell -Command "..."')` with `spawn('powershell', ['-NoProfile', '-Command', '...'])`
+  - Updated `isSandboxRunning()`, `launchHyperVVM()`, and `stopSandbox()` methods
+- **Result**: Eliminated shell string interpolation, preventing potential command injection
+
+### `as any` Type Casts in Tests ✅
+**Originally: Section 3.1**
+
+- **Resolution**: Fixed in `src/agents/base-agent.test.ts` with properly typed mocks
+- **Changes**:
+  - Created `createMockLLMService()` factory function with typed vi.fn() methods
+  - Created `createMockToolRunner()` factory function with proper LLMTool[] return type
+  - Replaced all 14 `as any` casts with properly typed mock function calls
+- **Result**: Tests now have full type safety without bypassing TypeScript checks
+
+### Non-null Assertion Overuse ✅
+**Originally: Section 3.2**
+
+- **Resolution**: Fixed key instances in `src/llm/service.ts` and `src/mcp/client.ts`
+- **Changes**:
+  - `llm/service.ts`: Captured `tokenReductionConfig` in local variable before async callback
+  - `mcp/client.ts`: Extracted `whitelist`/`blacklist` to local variables before filter callbacks
+- **Result**: Removed risky non-null assertions where TypeScript narrowing didn't apply
+
+### Race Conditions in Shared State ✅
+**Originally: Section 4.2**
+
+- **Resolution**: Added mutex protection in `src/agents/supervisor.ts`
+- **Changes**:
+  - Added `messageProcessingMutex = new Mutex()` to supervisor
+  - Wrapped `processingMessages` check-then-add pattern with `runExclusive()`
+  - Wrapped `delegatedMessages` check-then-add pattern with `runExclusive()`
+- **Result**: Atomic operations prevent duplicate message processing and re-delegation
+
+### Missing Database Indexes ✅
+**Originally: Section 5.1**
+
+- **Resolution**: Verified indexes already exist in the codebase
+- **Existing indexes** in `src/db/index.ts`:
+  - `idx_messages_conversation` ON messages(conversationId, createdAt, id)
+  - `idx_conversations_updatedAt` ON conversations(updatedAt DESC)
+- **Existing indexes** in `src/tracing/trace-store.ts`:
+  - `idx_traces_conversation` ON traces(conversationId)
+  - `idx_traces_started` ON traces(startedAt DESC)
+- **Result**: All recommended indexes were already implemented
+
+### Heavy Optional Dependencies ✅
+**Originally: Section 7.1**
+
+- **Resolution**: Verified lazy-loading and fixed pyodide import
+- **Changes**:
+  - `@huggingface/transformers` and `@tensorflow/tfjs`: Already lazy-loaded via dynamic import in `llmlingua2-provider.ts`
+  - `pyodide`: Fixed `run-python.ts` to use dynamic import via `getPyodideModule()` instead of top-level import
+- **Result**: Heavy ML/Python dependencies only loaded when features are actually used
+
+### Potentially Unused Dependencies ✅
+**Originally: Section 7.2**
+
+- **Resolution**: Audited and verified both are legitimately used
+- **Findings**:
+  - `simple-git`: Used in `src/config/watcher.ts` for versioning config files
+  - `unpdf`: Used in `src/rag-projects/document-loader.ts` for PDF parsing (already lazy-loaded)
+- **Result**: No unused dependencies found; both serve legitimate purposes

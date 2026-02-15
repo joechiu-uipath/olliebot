@@ -9,10 +9,20 @@
  * Set PYTHON_ENGINE env var to 'monty' or 'pyodide' (default: 'pyodide')
  */
 
-import { loadPyodide } from 'pyodide';
 import type { PyodideInterface } from 'pyodide';
 import { Mutex } from 'async-mutex';
 import type { NativeTool, NativeToolResult } from './types.js';
+
+// Dynamic import for pyodide (large package, lazy-load)
+type PyodideModule = typeof import('pyodide');
+let pyodideModule: PyodideModule | null = null;
+
+async function getPyodideModule(): Promise<PyodideModule> {
+  if (!pyodideModule) {
+    pyodideModule = await import('pyodide');
+  }
+  return pyodideModule;
+}
 
 // Dynamic import for monty (ES module)
 type MontyModule = typeof import('@pydantic/monty');
@@ -96,6 +106,8 @@ export class RunPythonTool implements NativeTool {
     this.initPromise = (async () => {
       try {
         console.log('Loading Pyodide...');
+        // Dynamic import to avoid loading heavy dependency at module load
+        const { loadPyodide } = await getPyodideModule();
         // In Node.js, loadPyodide uses the bundled files from the npm package
         this.pyodide = await loadPyodide();
 

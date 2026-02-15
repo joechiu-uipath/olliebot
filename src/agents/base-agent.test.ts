@@ -25,6 +25,8 @@ vi.mock('uuid', () => ({
 import { AbstractAgent } from './base-agent.js';
 import type { AgentConfig, AgentCommunication } from './types.js';
 import type { Message } from '../channels/types.js';
+import type { LLMService } from '../llm/service.js';
+import type { ToolRunner, LLMTool } from '../tools/index.js';
 
 class TestAgent extends AbstractAgent {
   async handleMessage(_message: Message): Promise<void> {
@@ -41,25 +43,63 @@ class TestAgent extends AbstractAgent {
   }
 
   public testNormalizeToolName(name: string) {
-    return (this as any).normalizeToolName(name);
+    return (this as unknown as { normalizeToolName: (name: string) => string }).normalizeToolName(name);
   }
 
   public testMatchesToolPattern(toolName: string, pattern: string) {
-    return (this as any).matchesToolPattern(toolName, pattern);
+    return this.matchesToolPattern(toolName, pattern);
   }
 }
 
-// Mock LLM service
-const mockLLMService = {
-  generate: vi.fn(),
-  supportsStreaming: vi.fn(() => true),
-};
+/**
+ * Create a mock LLMService with typed vi.fn() methods.
+ * Only includes methods actually used by AbstractAgent.
+ */
+function createMockLLMService(): LLMService {
+  return {
+    generate: vi.fn(),
+    supportsStreaming: vi.fn(() => true),
+    // Unused methods stubbed to satisfy type
+    init: vi.fn(),
+    summarize: vi.fn(),
+    generateWithTools: vi.fn(),
+    generateStream: vi.fn(),
+    generateWithToolsStream: vi.fn(),
+    quickGenerate: vi.fn(),
+    processData: vi.fn(),
+    parseTaskConfig: vi.fn(),
+    parseMissionConfig: vi.fn(),
+    runWithContext: vi.fn(),
+    isTokenReductionEnabled: vi.fn(() => false),
+    getMainModel: vi.fn(() => 'test-model'),
+    getFastModel: vi.fn(() => 'test-fast-model'),
+  } as unknown as LLMService;
+}
 
-// Mock tool runner
-const createMockToolRunner = (tools: { name: string; isPrivate?: boolean }[]) => ({
-  getToolsForLLM: vi.fn(() => tools.map(t => ({ name: t.name, description: 'Test tool' }))),
-  isPrivateTool: vi.fn((name: string) => tools.find(t => t.name === name)?.isPrivate ?? false),
-});
+/**
+ * Create a mock ToolRunner with typed vi.fn() methods.
+ * Only includes methods actually used by AbstractAgent.getToolsForLLM.
+ */
+function createMockToolRunner(tools: { name: string; isPrivate?: boolean }[]): ToolRunner {
+  const llmTools: LLMTool[] = tools.map(t => ({
+    name: t.name,
+    description: 'Test tool',
+    input_schema: {},
+  }));
+  return {
+    getToolsForLLM: vi.fn(() => llmTools),
+    isPrivateTool: vi.fn((name: string) => tools.find(t => t.name === name)?.isPrivate ?? false),
+    // Unused methods stubbed to satisfy type
+    registerNativeTool: vi.fn(),
+    registerUserTool: vi.fn(),
+    unregisterUserTool: vi.fn(),
+    onToolEvent: vi.fn(() => vi.fn()),
+    execute: vi.fn(),
+    getToolDefinitions: vi.fn(() => []),
+    hasNativeTool: vi.fn(() => false),
+    refreshUserTools: vi.fn(),
+  } as unknown as ToolRunner;
+}
 
 const createTestConfig = (canAccessTools: string[] = ['*']): AgentConfig => ({
   identity: {
@@ -83,7 +123,7 @@ describe('AbstractAgent', () => {
     let agent: TestAgent;
 
     beforeEach(() => {
-      agent = new TestAgent(createTestConfig(), mockLLMService as any);
+      agent = new TestAgent(createTestConfig(), createMockLLMService());
     });
 
     it('returns non-MCP tool names unchanged', () => {
@@ -114,7 +154,7 @@ describe('AbstractAgent', () => {
     let agent: TestAgent;
 
     beforeEach(() => {
-      agent = new TestAgent(createTestConfig(), mockLLMService as any);
+      agent = new TestAgent(createTestConfig(), createMockLLMService());
     });
 
     it('matches wildcard (*) against any tool', () => {
@@ -143,7 +183,7 @@ describe('AbstractAgent', () => {
   describe('getToolsForLLM', () => {
     describe('with no tool runner', () => {
       it('returns empty array when toolRunner is not set', () => {
-        const agent = new TestAgent(createTestConfig(), mockLLMService as any);
+        const agent = new TestAgent(createTestConfig(), createMockLLMService());
         expect(agent.testGetToolsForLLM()).toEqual([]);
       });
     });
@@ -158,8 +198,8 @@ describe('AbstractAgent', () => {
       ];
 
       beforeEach(() => {
-        agent = new TestAgent(createTestConfig(), mockLLMService as any);
-        agent.setToolRunner(createMockToolRunner(mockTools) as any);
+        agent = new TestAgent(createTestConfig(), createMockLLMService());
+        agent.setToolRunner(createMockToolRunner(mockTools));
       });
 
       it('filters to only allowed tools', () => {
@@ -189,8 +229,8 @@ describe('AbstractAgent', () => {
           { name: 'web_search' },
           { name: 'user.lottery' },
         ];
-        const agent = new TestAgent(createTestConfig(['*']), mockLLMService as any);
-        agent.setToolRunner(createMockToolRunner(mockTools) as any);
+        const agent = new TestAgent(createTestConfig(['*']), createMockLLMService());
+        agent.setToolRunner(createMockToolRunner(mockTools));
 
         const tools = agent.testGetToolsForLLM();
         expect(tools.map(t => t.name)).toEqual(['web_search', 'user.lottery']);
@@ -198,8 +238,8 @@ describe('AbstractAgent', () => {
 
       it('returns empty array with no patterns', () => {
         const mockTools = [{ name: 'web_search' }];
-        const agent = new TestAgent(createTestConfig([]), mockLLMService as any);
-        agent.setToolRunner(createMockToolRunner(mockTools) as any);
+        const agent = new TestAgent(createTestConfig([]), createMockLLMService());
+        agent.setToolRunner(createMockToolRunner(mockTools));
 
         const tools = agent.testGetToolsForLLM();
         expect(tools).toEqual([]);
@@ -211,8 +251,8 @@ describe('AbstractAgent', () => {
           { name: 'mcp.slack__send' },
           { name: 'web_search' },
         ];
-        const agent = new TestAgent(createTestConfig(['mcp.*']), mockLLMService as any);
-        agent.setToolRunner(createMockToolRunner(mockTools) as any);
+        const agent = new TestAgent(createTestConfig(['mcp.*']), createMockLLMService());
+        agent.setToolRunner(createMockToolRunner(mockTools));
 
         const tools = agent.testGetToolsForLLM();
         expect(tools.map(t => t.name)).toEqual(['mcp.github__list_repos', 'mcp.slack__send']);
@@ -223,8 +263,8 @@ describe('AbstractAgent', () => {
           { name: 'web_search' },
           { name: 'user.lottery' },
         ];
-        const agent = new TestAgent(createTestConfig(['web_search']), mockLLMService as any);
-        agent.setToolRunner(createMockToolRunner(mockTools) as any);
+        const agent = new TestAgent(createTestConfig(['web_search']), createMockLLMService());
+        agent.setToolRunner(createMockToolRunner(mockTools));
 
         const tools = agent.testGetToolsForLLM();
         expect(tools.map(t => t.name)).toEqual(['web_search']);
@@ -236,8 +276,8 @@ describe('AbstractAgent', () => {
           { name: 'user.lottery' },
           { name: 'remember' },
         ];
-        const agent = new TestAgent(createTestConfig(['web_search', 'remember']), mockLLMService as any);
-        agent.setToolRunner(createMockToolRunner(mockTools) as any);
+        const agent = new TestAgent(createTestConfig(['web_search', 'remember']), createMockLLMService());
+        agent.setToolRunner(createMockToolRunner(mockTools));
 
         const tools = agent.testGetToolsForLLM();
         expect(tools.map(t => t.name)).toEqual(['web_search', 'remember']);
@@ -251,8 +291,8 @@ describe('AbstractAgent', () => {
           { name: 'delegate' },
           { name: 'remember' },
         ];
-        const agent = new TestAgent(createTestConfig(['*', '!delegate']), mockLLMService as any);
-        agent.setToolRunner(createMockToolRunner(mockTools) as any);
+        const agent = new TestAgent(createTestConfig(['*', '!delegate']), createMockLLMService());
+        agent.setToolRunner(createMockToolRunner(mockTools));
 
         const tools = agent.testGetToolsForLLM();
         expect(tools.map(t => t.name)).toEqual(['web_search', 'remember']);
@@ -265,8 +305,8 @@ describe('AbstractAgent', () => {
           { name: 'spawn_agent' },
           { name: 'remember' },
         ];
-        const agent = new TestAgent(createTestConfig(['*', '!delegate', '!spawn_agent']), mockLLMService as any);
-        agent.setToolRunner(createMockToolRunner(mockTools) as any);
+        const agent = new TestAgent(createTestConfig(['*', '!delegate', '!spawn_agent']), createMockLLMService());
+        agent.setToolRunner(createMockToolRunner(mockTools));
 
         const tools = agent.testGetToolsForLLM();
         expect(tools.map(t => t.name)).toEqual(['web_search', 'remember']);
@@ -276,8 +316,8 @@ describe('AbstractAgent', () => {
         const mockTools = [
           { name: 'delegate' },
         ];
-        const agent = new TestAgent(createTestConfig(['delegate', '!delegate']), mockLLMService as any);
-        agent.setToolRunner(createMockToolRunner(mockTools) as any);
+        const agent = new TestAgent(createTestConfig(['delegate', '!delegate']), createMockLLMService());
+        agent.setToolRunner(createMockToolRunner(mockTools));
 
         const tools = agent.testGetToolsForLLM();
         expect(tools).toEqual([]);
@@ -290,8 +330,8 @@ describe('AbstractAgent', () => {
           { name: 'web_search', isPrivate: false },
           { name: 'delegate', isPrivate: true },
         ];
-        const agent = new TestAgent(createTestConfig(['*']), mockLLMService as any);
-        agent.setToolRunner(createMockToolRunner(mockTools) as any);
+        const agent = new TestAgent(createTestConfig(['*']), createMockLLMService());
+        agent.setToolRunner(createMockToolRunner(mockTools));
 
         const tools = agent.testGetToolsForLLM();
         expect(tools.map(t => t.name)).toEqual(['web_search']);
@@ -302,8 +342,8 @@ describe('AbstractAgent', () => {
           { name: 'web_search', isPrivate: false },
           { name: 'delegate', isPrivate: true },
         ];
-        const agent = new TestAgent(createTestConfig(['*', 'delegate']), mockLLMService as any);
-        agent.setToolRunner(createMockToolRunner(mockTools) as any);
+        const agent = new TestAgent(createTestConfig(['*', 'delegate']), createMockLLMService());
+        agent.setToolRunner(createMockToolRunner(mockTools));
 
         const tools = agent.testGetToolsForLLM();
         expect(tools.map(t => t.name)).toEqual(['web_search', 'delegate']);
@@ -314,8 +354,8 @@ describe('AbstractAgent', () => {
           { name: 'private.secret_tool', isPrivate: true },
           { name: 'web_search', isPrivate: false },
         ];
-        const agent = new TestAgent(createTestConfig(['*', 'private.*']), mockLLMService as any);
-        agent.setToolRunner(createMockToolRunner(mockTools) as any);
+        const agent = new TestAgent(createTestConfig(['*', 'private.*']), createMockLLMService());
+        agent.setToolRunner(createMockToolRunner(mockTools));
 
         const tools = agent.testGetToolsForLLM();
         expect(tools.map(t => t.name)).toEqual(['private.secret_tool', 'web_search']);
@@ -330,8 +370,8 @@ describe('AbstractAgent', () => {
           { name: 'delegate', isPrivate: true },
         ];
         // Agent has broad access via patterns
-        const agent = new TestAgent(createTestConfig(['*', 'delegate']), mockLLMService as any);
-        agent.setToolRunner(createMockToolRunner(mockTools) as any);
+        const agent = new TestAgent(createTestConfig(['*', 'delegate']), createMockLLMService());
+        agent.setToolRunner(createMockToolRunner(mockTools));
 
         // But allowedTools restricts to just one tool
         const tools = agent.testGetToolsForLLM(['user.lottery']);

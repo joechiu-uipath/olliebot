@@ -15,7 +15,7 @@
 
 import { v4 as uuid } from 'uuid';
 import { getDb } from '../db/index.js';
-import type { Channel } from '../channels/types.js';
+import type { Channel, Message } from '../channels/types.js';
 import type { ToolEvent } from '../tools/types.js';
 import { TOOL_RESULT_MEDIA_LIMIT_BYTES, TOOL_RESULT_TEXT_LIMIT_BYTES } from '../constants.js';
 
@@ -41,6 +41,10 @@ export interface TaskRunEventData {
   taskId: string;
   taskName: string;
   taskDescription: string;
+  /** Content for LLM context (the task configuration) */
+  content: string;
+  /** Optional list of allowed tool names for this task */
+  allowedTools?: string[];
 }
 
 export interface ErrorEventData {
@@ -346,21 +350,42 @@ export class MessageEventService {
   }
 
   /**
-   * Emit a task_run event - broadcasts to UI AND persists to database.
-   * Returns the turnId (messageId) for this task run, which should be used
-   * for all subsequent messages in this turn.
+   * Emit a task_run event - broadcasts to UI and returns Message for processing.
+   *
+   * Unlike delegation/tool/error events (which are notifications that never enter
+   * handleMessage), task_run messages ARE processed by supervisor.handleMessage().
+   * Therefore persistence is handled by saveMessageInternal(), not here.
+   *
+   * Pattern:
+   * - Notifications (delegation, tool, error): broadcast + persist here, never enter handleMessage
+   * - Triggers (user, task_run): broadcast here, persist in saveMessageInternal via handleMessage
    */
   emitTaskRunEvent(
     data: TaskRunEventData,
     conversationId: string | null
-  ): string {
-    const timestamp = new Date().toISOString();
+  ): Message {
+    const timestamp = new Date();
     const messageId = `task-run-${data.taskId}`;
-
-    // The task_run event is the start of a turn - its ID is the turnId
     const turnId = messageId;
 
-    // Broadcast to UI
+    // Build the message object to return for handleMessage() processing
+    const message: Message = {
+      id: messageId,
+      role: 'system',
+      content: data.content,
+      metadata: {
+        type: 'task_run',
+        taskId: data.taskId,
+        taskName: data.taskName,
+        taskDescription: data.taskDescription,
+        turnId,
+        conversationId: conversationId || undefined,
+        allowedTools: data.allowedTools,
+      },
+      createdAt: timestamp,
+    };
+
+    // Broadcast to UI for real-time updates
     if (this.channel) {
       this.channel.broadcast({
         type: 'task_run',
@@ -369,46 +394,14 @@ export class MessageEventService {
         taskDescription: data.taskDescription,
         conversationId: conversationId || undefined,
         turnId,
-        timestamp,
+        timestamp: timestamp.toISOString(),
       });
     }
 
-    // Persist to database
-    if (!conversationId) {
-      console.error(
-        `[MessageEventService] Cannot save task_run event: conversationId is null (task: ${data.taskName})`
-      );
-      return turnId;
-    }
+    // No persistence here - handled by saveMessageInternal() when
+    // this message goes through supervisor.handleMessage()
 
-    try {
-      const db = getDb();
-
-      // Check if already saved (avoid duplicates)
-      const existing = db.messages.findById(messageId);
-      if (existing) {
-        return turnId;
-      }
-
-      db.messages.create({
-        id: messageId,
-        conversationId,
-        role: 'system',
-        content: '',
-        metadata: {
-          type: 'task_run',
-          taskId: data.taskId,
-          taskName: data.taskName,
-          taskDescription: data.taskDescription,
-        },
-        createdAt: timestamp,
-        turnId, // task_run's turnId is itself
-      });
-    } catch (error) {
-      console.error(`[MessageEventService] Failed to save task_run event:`, error);
-    }
-
-    return turnId;
+    return message;
   }
 
   /**

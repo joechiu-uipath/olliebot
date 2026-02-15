@@ -124,15 +124,27 @@ export class DesktopSessionManager {
 
   /**
    * Checks if Windows Sandbox is currently running.
+   * Uses spawn with argument array to prevent potential command injection.
    */
   private async isWindowsSandboxRunning(): Promise<boolean> {
     if (os.platform() !== 'win32') return false;
 
     try {
-      const { stdout } = await execAsync(
-        'powershell -NoProfile -Command "Get-Process WindowsSandbox -ErrorAction SilentlyContinue | Select-Object -First 1"'
-      );
-      return stdout.trim().length > 0;
+      const result = await new Promise<string>((resolve, reject) => {
+        const proc = spawn('powershell', [
+          '-NoProfile',
+          '-Command',
+          'Get-Process WindowsSandbox -ErrorAction SilentlyContinue | Select-Object -First 1',
+        ]);
+        let stdout = '';
+        proc.stdout.on('data', (data) => { stdout += data; });
+        proc.on('error', reject);
+        proc.on('close', (code) => {
+          if (code === 0) resolve(stdout);
+          else reject(new Error(`PowerShell exited with code ${code}`));
+        });
+      });
+      return result.trim().length > 0;
     } catch {
       return false;
     }
@@ -1143,6 +1155,7 @@ Write-Log "Password: ${vncPassword}"
 
   /**
    * Launches Hyper-V VM.
+   * Uses spawn with argument array to prevent command injection.
    */
   private async launchHyperVVM(sessionId: string, config: SandboxConfig): Promise<void> {
     if (os.platform() !== 'win32') {
@@ -1151,8 +1164,15 @@ Write-Log "Password: ${vncPassword}"
 
     const vmName = config.configPath || 'OllieBot-Desktop';
 
-    // Check if VM exists and start it
-    await execAsync(`powershell -Command "Start-VM -Name '${vmName}'"`);
+    // Check if VM exists and start it using spawn with argument array
+    await new Promise<void>((resolve, reject) => {
+      const proc = spawn('powershell', ['-Command', `Start-VM -Name '${vmName}'`]);
+      proc.on('error', reject);
+      proc.on('close', (code) => {
+        if (code === 0) resolve();
+        else reject(new Error(`Start-VM failed with exit code ${code}`));
+      });
+    });
 
     // Store reference (Hyper-V manages its own process)
     console.log(`[Desktop] Hyper-V VM '${vmName}' started`);
@@ -1227,18 +1247,25 @@ Write-Log "Password: ${vncPassword}"
             }
           }
           // Last resort: PowerShell Stop-Process (catches renamed / wrapped processes)
-          try {
-            await execAsync(
-              'powershell -NoProfile -Command "Get-Process WindowsSandbox*,WindowsSandboxClient* -ErrorAction SilentlyContinue | Stop-Process -Force"'
-            );
-          } catch {
-            // Ignore
-          }
+          // Uses spawn with argument array for consistency
+          await new Promise<void>((resolve) => {
+            const proc = spawn('powershell', [
+              '-NoProfile',
+              '-Command',
+              'Get-Process WindowsSandbox*,WindowsSandboxClient* -ErrorAction SilentlyContinue | Stop-Process -Force',
+            ]);
+            proc.on('close', () => resolve());
+            proc.on('error', () => resolve()); // Ignore errors
+          });
           break;
 
         case 'hyperv':
-          // Stop Hyper-V VM
-          await execAsync(`powershell -Command "Stop-VM -Name 'OllieBot-Desktop' -Force"`);
+          // Stop Hyper-V VM using spawn with argument array
+          await new Promise<void>((resolve) => {
+            const proc = spawn('powershell', ['-Command', "Stop-VM -Name 'OllieBot-Desktop' -Force"]);
+            proc.on('close', () => resolve());
+            proc.on('error', () => resolve()); // Ignore errors, VM may not be running
+          });
           break;
 
         case 'virtualbox':

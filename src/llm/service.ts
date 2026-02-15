@@ -84,14 +84,16 @@ export class LLMService {
       return;
     }
 
-    const service = new TokenReductionService(this.tokenReductionConfig);
+    // Capture config locally for use in async callback (avoids non-null assertion)
+    const config = this.tokenReductionConfig;
+    const service = new TokenReductionService(config);
     // Assign immediately so applyTokenReduction can find the service;
     // isEnabled() returns false until service.init() completes.
     this.tokenReduction = service;
 
     // Fire-and-forget: init runs in the background
     service.init().then(() => {
-      console.log(`[LLMService] Token reduction ready (provider: ${this.tokenReductionConfig!.provider}, level: ${this.tokenReductionConfig!.compressionLevel})`);
+      console.log(`[LLMService] Token reduction ready (provider: ${config.provider}, level: ${config.compressionLevel})`);
     }).catch((error) => {
       console.error('[LLMService] Failed to initialize token reduction:', error);
       console.log('[LLMService] Token reduction disabled due to initialization failure');

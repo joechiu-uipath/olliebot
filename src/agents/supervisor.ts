@@ -1,6 +1,7 @@
 // Supervisor Agent - orchestrates sub-agents
 
 import { v4 as uuid } from 'uuid';
+import { Mutex } from 'async-mutex';
 import { AbstractAgent, type AgentRegistry } from './base-agent.js';
 import type {
   SupervisorAgent as ISupervisorAgent,
@@ -96,6 +97,8 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
   private processingMessages: Set<string> = new Set();
   // Track which messages have had delegation performed to prevent re-delegation
   private delegatedMessages: Set<string> = new Set();
+  // Mutex for message deduplication to prevent race conditions
+  private messageProcessingMutex = new Mutex();
 
   // Override to make registry non-nullable in supervisor
   protected declare agentRegistry: AgentRegistry;
@@ -176,16 +179,22 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
 
   async handleMessage(message: Message): Promise<void> {
     // Prevent re-processing of the same message (can happen due to timeouts/retries)
-    if (this.processingMessages.has(message.id)) {
-      console.log(`[${this.identity.name}] Message ${message.id} already being processed, skipping`);
+    // Use mutex to make check-then-add atomic and prevent race conditions
+    const shouldProcess = await this.messageProcessingMutex.runExclusive(() => {
+      if (this.processingMessages.has(message.id)) {
+        console.log(`[${this.identity.name}] Message ${message.id} already being processed, skipping`);
+        return false;
+      }
+      this.processingMessages.add(message.id);
+      return true;
+    });
+
+    if (!shouldProcess) {
       return;
     }
 
     this._state.lastActivity = new Date();
     this._state.status = 'working';
-
-    // Mark message as being processed
-    this.processingMessages.add(message.id);
 
     // Determine conversationId from message metadata (request-scoped, not instance state).
     // IMPORTANT: Well-known conversations (like 'feed') should ONLY be used for scheduled tasks,
@@ -514,8 +523,17 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
             const delegateResult = results.find(r => r.toolName === 'delegate' && r.success);
             if (delegateResult) {
               // Check if we've already delegated for this message (prevent re-delegation on retries)
-              if (this.delegatedMessages.has(message.id)) {
-                console.log(`[${this.identity.name}] Already delegated for message ${message.id}, skipping`);
+              // Use mutex to make check-then-add atomic and prevent race conditions
+              const shouldDelegate = await this.messageProcessingMutex.runExclusive(() => {
+                if (this.delegatedMessages.has(message.id)) {
+                  console.log(`[${this.identity.name}] Already delegated for message ${message.id}, skipping`);
+                  return false;
+                }
+                this.delegatedMessages.add(message.id);
+                return true;
+              });
+
+              if (!shouldDelegate) {
                 // End stream and return without re-delegating
                 this.endStreamWithCitations(channel, streamId, conversationId, undefined, turnUsage);
                 if (unsubscribeTool) {
@@ -523,9 +541,6 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
                 }
                 return;
               }
-
-              // Mark this message as having delegation performed
-              this.delegatedMessages.add(message.id);
 
               // Extract delegation params from tool output
               const delegationParams = delegateResult.output as {

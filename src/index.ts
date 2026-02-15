@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import { join } from 'path';
+import { validateEnv, buildConfig } from './config/index.js';
 import { initDb, closeDb, getDb } from './db/index.js';
 import { ensureWellKnownConversations, WellKnownConversations } from './db/well-known-conversations.js';
 import { SUPERVISOR_ICON, SUPERVISOR_NAME } from './constants.js';
@@ -135,63 +136,10 @@ function parseMCPServers(configStr: string): MCPServerConfig[] {
   }
 }
 
-// Configuration
-const CONFIG = {
-  port: parseInt(process.env.PORT || '3000', 10),
-  dbPath: process.env.DB_PATH || join(process.cwd(), 'user', 'data', 'olliebot.db'),
-  tasksDir: join(process.cwd(), 'user', 'tasks'),
-  missionsDir: join(process.cwd(), 'user', 'missions'),
-  skillsDir: join(process.cwd(), 'user', 'skills'),
-  userToolsDir: join(process.cwd(), 'user', 'tools'),
-  ragDir: join(process.cwd(), 'user', 'rag'),
-
-  // LLM Configuration
-  // Supported providers: 'anthropic', 'google', 'openai', 'azure_openai'
-  mainProvider: process.env.MAIN_PROVIDER || 'openai',
-  mainModel: process.env.MAIN_MODEL || 'gpt-5.2',
-  fastProvider: process.env.FAST_PROVIDER || 'openai',
-  fastModel: process.env.FAST_MODEL || 'gpt-4.1-mini',
-
-  // API Keys
-  anthropicApiKey: process.env.ANTHROPIC_API_KEY || '',
-  googleApiKey: process.env.GOOGLE_API_KEY || '',
-  openaiApiKey: process.env.OPENAI_API_KEY || '',
-
-  // Azure OpenAI Configuration
-  azureOpenaiApiKey: process.env.AZURE_OPENAI_API_KEY || '',
-  azureOpenaiEndpoint: process.env.AZURE_OPENAI_ENDPOINT || '',
-  azureOpenaiApiVersion: process.env.AZURE_OPENAI_API_VERSION || '2024-02-15-preview',
-
-  // Embedding provider: 'google', 'openai', 'azure_openai'
-  embeddingProvider: process.env.EMBEDDING_PROVIDER || 'openai',
-
-  // MCP Configuration (JSON string of server configs)
-  mcpServers: process.env.MCP_SERVERS || '[]',
-
-  // MCP Server (OllieBot as MCP server) — disabled by default
-  mcpServerEnabled: process.env.MCP_SERVER_ENABLED === 'true',
-  // MCP Server authentication
-  mcpServerSecret: process.env.MCP_SERVER_SECRET || '',
-  mcpServerAuthDisabled: process.env.MCP_SERVER_AUTH_DISABLED === 'true',
-
-  // Native tool API keys
-  imageGenProvider: (process.env.IMAGE_GEN_PROVIDER || 'openai') as 'openai' | 'azure_openai',
-  imageGenModel: process.env.IMAGE_GEN_MODEL || 'dall-e-3',
-
-  // Web search configuration
-  webSearchProvider: (process.env.WEB_SEARCH_PROVIDER || 'tavily') as WebSearchProvider,
-  webSearchApiKey: process.env.WEB_SEARCH_API_KEY || '',
-  googleCustomSearchEngineId: process.env.GOOGLE_CUSTOM_SEARCH_ENGINE_ID || '',
-
-  // Deep Research configuration
-  // Falls back to main provider/model if not specified
-  deepResearchProvider: process.env.DEEP_RESEARCH_PROVIDER || process.env.MAIN_PROVIDER || 'anthropic',
-  deepResearchModel: process.env.DEEP_RESEARCH_MODEL || process.env.MAIN_MODEL || 'claude-sonnet-4-20250514',
-
-  voiceProvider: (process.env.VOICE_PROVIDER || 'azure_openai') as 'openai' | 'azure_openai',
-  voiceModel: process.env.VOICE_MODEL || 'gpt-4o-realtime-preview',
-  voiceVoice: 'alloy',
-};
+// Configuration - validated at startup via Zod schema
+// Throws with clear error messages if invalid env values are provided
+const validatedEnv = validateEnv();
+const CONFIG = buildConfig(validatedEnv);
 
 function createLLMProvider(provider: string, model: string): LLMProvider {
   switch (provider) {

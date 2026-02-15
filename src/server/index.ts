@@ -953,36 +953,20 @@ export class AssistantServer {
           .filter(Boolean);
 
         // Emit task_run event via MessageEventService (broadcasts AND persists)
-        // Returns the turnId which should be used for all subsequent messages in this turn
+        // Returns the Message object to pass to supervisor.handleMessage()
+        // This follows the same pattern as delegation - message-event layer handles
+        // both broadcast and persistence, ensuring a single source of truth.
         const messageEventService = getMessageEventService();
-        const turnId = messageEventService.emitTaskRunEvent(
+        const taskMessage = messageEventService.emitTaskRunEvent(
           {
             taskId: task.id,
             taskName: task.name,
             taskDescription,
+            content: `[Scheduled Task] Execute the "${task.name}" task now.\n\nTask configuration:\n${JSON.stringify(task.jsonConfig, null, 2)}`,
+            allowedTools: allowedToolNames.length > 0 ? allowedToolNames : undefined,
           },
           conversationId || null
         );
-
-        // Create a message to trigger the task execution via the supervisor
-        // The message content is for the LLM, metadata is for UI display
-        // conversationId is passed in metadata - supervisor reads it from there
-        const taskMessage = {
-          id: crypto.randomUUID(),
-          role: 'user' as const,
-          content: `Run the "${task.name}" task now. Here is the task configuration:\n\n${JSON.stringify(task.jsonConfig, null, 2)}`,
-          createdAt: new Date(),
-          metadata: {
-            type: 'task_run',
-            taskId: task.id,
-            taskName: task.name,
-            taskDescription,
-            turnId, // Pass the turnId from the task_run event
-            conversationId: conversationId || undefined, // Conversation context for this task
-            // Only allow tools specified in task config (empty = no tool restrictions)
-            allowedTools: allowedToolNames.length > 0 ? allowedToolNames : undefined,
-          },
-        };
 
         // Mark task as executed (updates lastRun and nextRun)
         if (this.taskManager) {
