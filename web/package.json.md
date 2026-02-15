@@ -54,8 +54,8 @@ See root `package.json.md` for explanation of workspace hoisting.
 
 ### React Compiler
 
-The React Compiler (`babel-plugin-react-compiler`) is enabled in `vite.config.js` with custom configuration:
-- Skips `App.jsx` due to ref usage patterns the compiler misidentifies
+The React Compiler (`babel-plugin-react-compiler`) is enabled in `vite.config.js`:
+- All components are compiled (no exclusions)
 - Logs compilation success/failure during development
 
-This is an experimental feature from React 19 that auto-optimizes renders.
+This is an experimental feature from React 19 that auto-memoizes components and hooks, reducing the need for manual `useMemo`/`useCallback` optimization.

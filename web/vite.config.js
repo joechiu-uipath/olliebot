@@ -4,11 +4,6 @@ import react from '@vitejs/plugin-react';
 // React Compiler (experimental) - auto-memoizes components and hooks
 // Reduces need for manual useMemo/useCallback optimization
 const ReactCompilerConfig = {
-  // Skip App.jsx - it uses refs in useState initializers for WebSocket handler
-  // which the compiler incorrectly flags as "ref access during render"
-  sources(filename) {
-    return !filename.endsWith('App.jsx');
-  },
   // Log compilation results during development (helps debug compiler issues)
   logger: {
     logEvent(filename, event) {

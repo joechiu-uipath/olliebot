@@ -272,41 +272,51 @@ function App() {
     setPdfViewerState((prev) => ({ ...prev, isOpen: false }));
   }, []);
 
-  // WebSocket message handler - created once using useState lazy initializer
-  // (useState initializer only runs once and avoids ref-access-during-render)
-  const [handleMessage] = useState(() => createMessageHandler({
-    // Getter/setter functions for ref values (called at message time, not render time)
-    getCurrentConversationId: () => currentConversationIdRef.current,
-    setCurrentConversationIdRef: (id) => { currentConversationIdRef.current = id; },
-    getNavigate: () => navigateRef.current,
-    // State setters (stable by React guarantee)
-    setMessages,
-    setIsResponsePending,
-    setIsConnected,
-    setConversations,
-    setCurrentConversationId,
-    setAgentTasks,
-    setBrowserSessions,
-    setBrowserScreenshots,
-    setSelectedBrowserSessionId,
-    setClickMarkers,
-    setExpandedAccordions,
-    // Desktop session state setters
-    setDesktopSessions,
-    setDesktopScreenshots,
-    setSelectedDesktopSessionId,
-    setDesktopClickMarkers,
-    setRagProjects,
-    setRagIndexingProgress,
-    // Eval state (shared WebSocket, no separate connection needed)
-    getEvalJobId: () => evalJobIdRef.current,
-    setEvalProgress,
-    setEvalResults,
-    setEvalError,
-    setEvalLoading,
-    // Scroll callback (accessed via ref since it's defined later)
-    scrollToBottom: () => scrollToBottomRef.current?.(),
-  }));
+  // WebSocket message handler - stored in ref, created in useEffect (React Compiler compatible)
+  // The handler is created after first render but before any WebSocket messages arrive
+  const messageHandlerRef = useRef(null);
+
+  // Initialize message handler in effect (not during render - React Compiler requirement)
+  useEffect(() => {
+    messageHandlerRef.current = createMessageHandler({
+      // Getter/setter functions for ref values (called at message time, not render time)
+      getCurrentConversationId: () => currentConversationIdRef.current,
+      setCurrentConversationIdRef: (id) => { currentConversationIdRef.current = id; },
+      getNavigate: () => navigateRef.current,
+      // State setters (stable by React guarantee)
+      setMessages,
+      setIsResponsePending,
+      setIsConnected,
+      setConversations,
+      setCurrentConversationId,
+      setAgentTasks,
+      setBrowserSessions,
+      setBrowserScreenshots,
+      setSelectedBrowserSessionId,
+      setClickMarkers,
+      setExpandedAccordions,
+      // Desktop session state setters
+      setDesktopSessions,
+      setDesktopScreenshots,
+      setSelectedDesktopSessionId,
+      setDesktopClickMarkers,
+      setRagProjects,
+      setRagIndexingProgress,
+      // Eval state (shared WebSocket, no separate connection needed)
+      getEvalJobId: () => evalJobIdRef.current,
+      setEvalProgress,
+      setEvalResults,
+      setEvalError,
+      setEvalLoading,
+      // Scroll callback (accessed via ref since it's defined later)
+      scrollToBottom: () => scrollToBottomRef.current?.(),
+    });
+  }, []); // Empty deps - handler created once after mount
+
+  // Stable wrapper that delegates to the ref (safe for React Compiler)
+  const handleMessage = useCallback((data) => {
+    messageHandlerRef.current?.(data);
+  }, []);
 
   // Callback to set evalJobId - updates both ref (for WebSocket handler) and state
   const setEvalJobIdWithRef = useCallback((jobId) => {
@@ -442,18 +452,17 @@ function App() {
   useEffect(() => { dispatchConversationRef.current = dispatchConversation; }, [dispatchConversation]);
 
   // Combined WebSocket handler: main handler + logs handler + conversation subscriptions
-  const [combinedMessageHandler] = useState(() => {
-    return (data) => {
-      // Dispatch to conversation subscribers first (embedded mission chats, etc.)
-      dispatchConversationRef.current?.(data);
-      // Main chat handler
-      handleMessage(data);
-      // Forward log events to logs mode
-      if (data.type && data.type.startsWith('log_')) {
-        logsHandlerRef.current?.(data);
-      }
-    };
-  });
+  // Uses useCallback with stable deps (handleMessage is stable, refs accessed via ?.current)
+  const combinedMessageHandler = useCallback((data) => {
+    // Dispatch to conversation subscribers first (embedded mission chats, etc.)
+    dispatchConversationRef.current?.(data);
+    // Main chat handler
+    handleMessage(data);
+    // Forward log events to logs mode
+    if (data.type && data.type.startsWith('log_')) {
+      logsHandlerRef.current?.(data);
+    }
+  }, [handleMessage]);
 
   const { sendMessage, connectionState } = useWebSocket({
     onMessage: combinedMessageHandler,
@@ -1920,7 +1929,7 @@ function App() {
         </div>
       </div>
     );
-  }, [expandedTools, expandedAgentMessages, handleAction, formatFileSize, renderToolResult, toggleToolExpand, toggleAgentMessageExpand, agentTemplates]);
+  }, [expandedTools, expandedAgentMessages, handleAction, formatFileSize, renderToolResult, toggleToolExpand, toggleAgentMessageExpand, agentTemplates, navigate]);
 
   // Virtuoso header component for loading indicator
   const VirtuosoHeader = useCallback(() => {
