@@ -26,8 +26,9 @@ export function createStrategy(
     case 'keyword':
       if (!options.summarizationProvider) {
         throw new Error(
-          'KeywordEmbeddingStrategy requires a summarization provider (LLM). ' +
-          'Ensure a summarization provider is configured.'
+          `Cannot create KeywordEmbeddingStrategy: missing summarization provider (LLM). ` +
+          `This strategy requires LLM access to extract keywords. ` +
+          `Check that your LLM configuration is valid and a summarization provider is available.`
         );
       }
       return new KeywordEmbeddingStrategy(options.summarizationProvider);
@@ -35,14 +36,19 @@ export function createStrategy(
     case 'summary':
       if (!options.summarizationProvider) {
         throw new Error(
-          'SummaryEmbeddingStrategy requires a summarization provider (LLM). ' +
-          'Ensure a summarization provider is configured.'
+          `Cannot create SummaryEmbeddingStrategy: missing summarization provider (LLM). ` +
+          `This strategy requires LLM access to generate summaries. ` +
+          `Check that your LLM configuration is valid and a summarization provider is available.`
         );
       }
       return new SummaryEmbeddingStrategy(options.summarizationProvider);
 
     default:
-      throw new Error(`Unknown strategy type: ${type}`);
+      throw new Error(
+        `Unknown strategy type '${type}'. ` +
+        `Available types: 'direct', 'keyword', 'summary'. ` +
+        `Check your project's strategy configuration.`
+      );
   }
 }
 
@@ -55,6 +61,7 @@ export function createStrategiesFromConfig(
   options: StrategyFactoryOptions = {}
 ): RetrievalStrategy[] {
   const strategies: RetrievalStrategy[] = [];
+  const failures: string[] = [];
 
   for (const config of configs) {
     if (!config.enabled) continue;
@@ -62,11 +69,17 @@ export function createStrategiesFromConfig(
     try {
       strategies.push(createStrategy(config.type, options));
     } catch (error) {
-      console.warn(
-        `[Strategies] Failed to create strategy '${config.type}':`,
-        error instanceof Error ? error.message : error
-      );
+      const message = error instanceof Error ? error.message : String(error);
+      failures.push(`${config.type}: ${message}`);
+      console.warn(`[Strategies] Failed to create strategy '${config.type}':`, message);
     }
+  }
+
+  if (strategies.length === 0 && failures.length > 0) {
+    console.warn(
+      `[Strategies] No strategies could be created. All ${failures.length} strategy(ies) failed. ` +
+      `Falling back to legacy single-strategy mode.`
+    );
   }
 
   return strategies;

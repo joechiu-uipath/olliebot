@@ -90,7 +90,11 @@ export class LLMReranker implements Reranker {
           },
         }));
     } catch (error) {
-      console.warn('[LLMReranker] Re-ranking failed, returning fusion order:', error);
+      console.warn(
+        '[LLMReranker] Re-ranking failed, returning results in original fusion order. ' +
+        'Check LLM provider availability. Error:',
+        error
+      );
       return results.slice(0, topK);
     }
   }
@@ -127,7 +131,11 @@ export function createReranker(
   switch (method) {
     case 'llm':
       if (!summarizationProvider) {
-        console.warn('[Reranker] LLM reranker requires a summarization provider');
+        console.warn(
+          '[Reranker] Cannot create LLM re-ranker: summarization provider not available. ' +
+          'LLM re-ranking requires a configured LLM provider. ' +
+          'Queries will use fusion results without re-ranking.'
+        );
         return null;
       }
       return new LLMReranker(summarizationProvider);

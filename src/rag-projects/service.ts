@@ -653,6 +653,11 @@ export class RAGProjectService extends EventEmitter {
     const contentType = request.contentType || 'all';
     const fusionMethod = request.fusionMethod || defaultFusionMethod;
 
+    console.log(
+      `[RAGProjects] Multi-strategy query: ${strategies.length} strategies ` +
+      `(${strategies.map((s) => s.id).join(', ')}), fusion=${fusionMethod}, reranker=${rerankerMethod}`
+    );
+
     // ── Step 1: Query each strategy in parallel ──────────────────
     const strategyResultPromises = strategies.map(async (strategy): Promise<StrategySearchResult> => {
       const preparedQuery = await strategy.prepareQueryText(request.query);
@@ -674,6 +679,10 @@ export class RAGProjectService extends EventEmitter {
     });
 
     const strategyResults = await Promise.all(strategyResultPromises);
+    
+    // Log strategy contributions
+    const strategyCounts = strategyResults.map((sr) => `${sr.strategyId}=${sr.results.length}`).join(', ');
+    console.log(`[RAGProjects] Strategy results before fusion: ${strategyCounts}`);
 
     // ── Step 2: Fuse results from all strategies ─────────────────
     const fusedResults = fuseResults(
@@ -683,6 +692,8 @@ export class RAGProjectService extends EventEmitter {
       // Give reranker more candidates to work with if it's enabled
       rerankerMethod !== 'none' ? topK * RAG_STRATEGY_TOPK_MULTIPLIER : topK
     );
+
+    console.log(`[RAGProjects] Fusion produced ${fusedResults.length} results`);
 
     // Map fused results to SearchResult format
     let results: SearchResult[] = fusedResults.map((fused) => ({
@@ -704,8 +715,15 @@ export class RAGProjectService extends EventEmitter {
     if (rerankerMethod !== 'none') {
       const reranker = createReranker(rerankerMethod, this.summarizationProvider);
       if (reranker) {
+        console.log(`[RAGProjects] Applying ${rerankerMethod} re-ranker to ${results.length} results`);
         results = await reranker.rerank(request.query, results, topK);
         appliedReranker = rerankerMethod;
+        console.log(`[RAGProjects] Re-ranking complete, final count: ${results.length}`);
+      } else {
+        console.warn(
+          `[RAGProjects] Re-ranker '${rerankerMethod}' requested but not available. ` +
+          `Ensure summarization provider is configured.`
+        );
       }
     }
 
