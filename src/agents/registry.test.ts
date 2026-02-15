@@ -6,12 +6,10 @@
  * might accidentally get access to skills or tools they shouldn't have.
  */
 
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest';
 import { AgentRegistry, getAgentRegistry } from './registry.js';
 import { getAgentCapabilities } from './capabilities.js';
-
-// Simulated skill IDs that would exist in a real system
-const SAMPLE_SKILL_IDS = ['frontend-modifier', 'docx', 'pdf', 'pptx'];
+import { createMockAgent, SAMPLE_SKILL_IDS, createMockCommunication } from './__tests__/fixtures.js';
 
 describe('AgentRegistry - Self-Coding Agents', () => {
   let registry: AgentRegistry;
@@ -201,5 +199,268 @@ describe('AgentRegistry - getAllowedSkillsForSpecialist', () => {
   it('returns null for unknown agent type', () => {
     const allowedSkills = registry.getAllowedSkillsForSpecialist('non-existent-agent');
     expect(allowedSkills).toBeNull();
+  });
+});
+
+describe('AgentRegistry - Agent Management', () => {
+  let registry: AgentRegistry;
+
+  beforeEach(() => {
+    registry = new AgentRegistry();
+  });
+
+  it('registers and retrieves an agent by id', () => {
+    const agent = createMockAgent('agent-1', 'Researcher');
+    registry.registerAgent(agent);
+
+    expect(registry.getAgent('agent-1')).toBe(agent);
+    expect((agent as any).setRegistry).toHaveBeenCalledWith(registry);
+  });
+
+  it('retrieves an agent by name (case-insensitive)', () => {
+    const agent = createMockAgent('agent-1', 'Researcher');
+    registry.registerAgent(agent);
+
+    expect(registry.getAgentByName('researcher')).toBe(agent);
+    expect(registry.getAgentByName('RESEARCHER')).toBe(agent);
+  });
+
+  it('returns undefined for unknown agent id', () => {
+    expect(registry.getAgent('nonexistent')).toBeUndefined();
+  });
+
+  it('returns undefined for unknown agent name', () => {
+    expect(registry.getAgentByName('nonexistent')).toBeUndefined();
+  });
+
+  it('unregisters an agent', () => {
+    const agent = createMockAgent('agent-1', 'Researcher');
+    registry.registerAgent(agent);
+    expect(registry.getAgent('agent-1')).toBe(agent);
+
+    registry.unregisterAgent('agent-1');
+    expect(registry.getAgent('agent-1')).toBeUndefined();
+    expect(registry.getAgentByName('Researcher')).toBeUndefined();
+  });
+
+  it('unregisterAgent is a no-op for unknown agents', () => {
+    // Should not throw
+    registry.unregisterAgent('nonexistent');
+  });
+
+  it('getAllAgents returns all registered agents', () => {
+    const a1 = createMockAgent('a-1', 'Agent One');
+    const a2 = createMockAgent('a-2', 'Agent Two');
+    registry.registerAgent(a1);
+    registry.registerAgent(a2);
+
+    const agents = registry.getAllAgents();
+    expect(agents).toHaveLength(2);
+  });
+
+  it('getAgentIdentities returns identity objects', () => {
+    const agent = createMockAgent('a-1', 'Researcher');
+    registry.registerAgent(agent);
+
+    const identities = registry.getAgentIdentities();
+    expect(identities).toHaveLength(1);
+    expect(identities[0].id).toBe('a-1');
+    expect(identities[0].name).toBe('Researcher');
+  });
+});
+
+describe('AgentRegistry - canDelegate', () => {
+  let registry: AgentRegistry;
+
+  beforeAll(() => {
+    registry = getAgentRegistry();
+  });
+
+  it('allows coding-lead to delegate to coding-planner within self-coding workflow', () => {
+    expect(registry.canDelegate('coding-lead', 'coding-planner', 'self-coding')).toBe(true);
+  });
+
+  it('throws when source cannot delegate', () => {
+    // coding-worker has canDelegate: false
+    expect(() => {
+      registry.canDelegate('coding-worker', 'coding-planner', null);
+    }).toThrow("cannot delegate");
+  });
+
+  it('throws when source is not allowed to delegate to target', () => {
+    // coding-lead can only delegate to coding-planner and coding-fixer
+    expect(() => {
+      registry.canDelegate('coding-lead', 'researcher', null);
+    }).toThrow("not allowed to delegate to");
+  });
+
+  it('throws when target has workflow restriction and workflow does not match', () => {
+    // research-worker is restricted to deep-research workflow
+    const template = registry.getSpecialistTemplate('research-worker');
+    if (template?.delegation?.restrictedToWorkflow) {
+      // deep-research-lead can delegate
+      expect(() => {
+        registry.canDelegate('deep-research-lead', 'research-worker', 'wrong-workflow');
+      }).toThrow("can only be invoked within");
+    }
+  });
+
+  it('allows delegation when workflow matches', () => {
+    const template = registry.getSpecialistTemplate('research-worker');
+    if (template?.delegation?.restrictedToWorkflow) {
+      const result = registry.canDelegate(
+        'deep-research-lead',
+        'research-worker',
+        template.delegation.restrictedToWorkflow
+      );
+      expect(result).toBe(true);
+    }
+  });
+});
+
+describe('AgentRegistry - getToolAccessForSpecialist', () => {
+  let registry: AgentRegistry;
+
+  beforeAll(() => {
+    registry = getAgentRegistry();
+  });
+
+  it('returns specialist tools plus supervisor exclusions for known type', () => {
+    const access = registry.getToolAccessForSpecialist('researcher');
+    // Should contain the specialist's defined tools
+    expect(access.length).toBeGreaterThan(0);
+    // Should include supervisor-only exclusions (unless explicitly included)
+    expect(access.some(t => t === '!delegate' || t === '!remember')).toBe(true);
+  });
+
+  it('does not exclude tools explicitly included in specialist template', () => {
+    // coding-lead explicitly includes 'delegate'
+    const access = registry.getToolAccessForSpecialist('coding-lead');
+    expect(access).toContain('delegate');
+    // Should not have !delegate since delegate is explicitly in canAccessTools
+    expect(access).not.toContain('!delegate');
+  });
+
+  it('returns wildcard with exclusions for unknown agent type', () => {
+    const access = registry.getToolAccessForSpecialist('unknown-type');
+    expect(access).toContain('*');
+    expect(access).toContain('!delegate');
+    expect(access).toContain('!remember');
+  });
+});
+
+describe('AgentRegistry - Specialist Template Lookups', () => {
+  let registry: AgentRegistry;
+
+  beforeAll(() => {
+    registry = getAgentRegistry();
+  });
+
+  it('getSpecialistTypes returns all known types', () => {
+    const types = registry.getSpecialistTypes();
+    expect(types).toContain('researcher');
+    expect(types).toContain('coder');
+    expect(types).toContain('writer');
+    expect(types.length).toBeGreaterThanOrEqual(10);
+  });
+
+  it('getSpecialistTemplates returns all templates', () => {
+    const templates = registry.getSpecialistTemplates();
+    expect(templates.length).toBe(registry.getSpecialistTypes().length);
+  });
+
+  it('findSpecialistTypeByName finds by identity name', () => {
+    const template = registry.getSpecialistTemplate('researcher');
+    if (template) {
+      const type = registry.findSpecialistTypeByName(template.identity.name);
+      expect(type).toBe('researcher');
+    }
+  });
+
+  it('findSpecialistTypeByName returns undefined for unknown name', () => {
+    const type = registry.findSpecialistTypeByName('Nonexistent Agent Name');
+    expect(type).toBeUndefined();
+  });
+
+  it('canSupervisorInvoke returns true for standard agents', () => {
+    expect(registry.canSupervisorInvoke('researcher')).toBe(true);
+  });
+
+  it('getCommandTriggers returns map of command -> type', () => {
+    const triggers = registry.getCommandTriggers();
+    expect(triggers instanceof Map).toBe(true);
+    // Deep research lead has a command trigger
+    for (const [command, type] of triggers) {
+      expect(typeof command).toBe('string');
+      expect(typeof type).toBe('string');
+    }
+  });
+
+  it('getAutoDelegatableTypes excludes command-only agents', () => {
+    const types = registry.getAutoDelegatableTypes();
+    for (const type of types) {
+      expect(registry.isCommandOnly(type)).toBe(false);
+    }
+  });
+});
+
+describe('AgentRegistry - Communication', () => {
+  let registry: AgentRegistry;
+
+  beforeEach(() => {
+    registry = new AgentRegistry();
+  });
+
+  it('routeCommunication delivers message to target agent', async () => {
+    const agent = createMockAgent('target-1', 'Target');
+    registry.registerAgent(agent);
+
+    const comm = createMockCommunication('task_assignment', 'supervisor', 'target-1', { task: 'do something' });
+
+    await registry.routeCommunication(comm, 'target-1');
+    expect(agent.receiveFromAgent).toHaveBeenCalledWith(comm);
+  });
+
+  it('routeCommunication handles missing target gracefully', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    const comm = createMockCommunication('task_assignment', 'supervisor', 'missing-agent', {});
+
+    await registry.routeCommunication(comm, 'missing-agent');
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Target agent not found: missing-agent')
+    );
+    errorSpy.mockRestore();
+  });
+
+  it('broadcastToAll sends to all agents except excluded', async () => {
+    const a1 = createMockAgent('a-1', 'Agent One');
+    const a2 = createMockAgent('a-2', 'Agent Two');
+    const a3 = createMockAgent('a-3', 'Agent Three');
+    registry.registerAgent(a1);
+    registry.registerAgent(a2);
+    registry.registerAgent(a3);
+
+    const comm = createMockCommunication('status_update', 'a-1', undefined, { status: 'working' });
+
+    await registry.broadcastToAll(comm, 'a-2');
+
+    // a-1 excluded as sender, a-2 excluded explicitly
+    expect(a1.receiveFromAgent).not.toHaveBeenCalled();
+    expect(a2.receiveFromAgent).not.toHaveBeenCalled();
+    expect(a3.receiveFromAgent).toHaveBeenCalled();
+  });
+
+  it('shutdown calls shutdown on all agents and clears registry', async () => {
+    const a1 = createMockAgent('a-1', 'Agent One');
+    const a2 = createMockAgent('a-2', 'Agent Two');
+    registry.registerAgent(a1);
+    registry.registerAgent(a2);
+
+    await registry.shutdown();
+
+    expect(a1.shutdown).toHaveBeenCalled();
+    expect(a2.shutdown).toHaveBeenCalled();
+    expect(registry.getAllAgents()).toHaveLength(0);
   });
 });
