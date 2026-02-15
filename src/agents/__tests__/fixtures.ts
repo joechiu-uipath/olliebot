@@ -5,11 +5,12 @@
  */
 
 import { vi } from 'vitest';
+import type { BaseAgent } from '../types.js';
 
 /**
  * Create a mock agent with required properties.
  */
-export function createMockAgent(id: string, name: string, role: 'supervisor' | 'worker' = 'worker') {
+export function createMockAgent(id: string, name: string, role: 'supervisor' | 'worker' = 'worker'): BaseAgent {
   return {
     identity: {
       id,
@@ -45,10 +46,17 @@ export function createMockAgent(id: string, name: string, role: 'supervisor' | '
       },
       systemPrompt: '',
     },
+    init: vi.fn(),
+    handleMessage: vi.fn(),
+    sendMessage: vi.fn(),
+    sendError: vi.fn(),
     receiveFromAgent: vi.fn(),
+    sendToAgent: vi.fn(),
     shutdown: vi.fn(),
+    getState: vi.fn().mockReturnValue({ status: 'idle', lastActivity: new Date(), context: {} }),
+    updateState: vi.fn(),
     setRegistry: vi.fn(),
-  };
+  } as unknown as BaseAgent;
 }
 
 /**
@@ -67,7 +75,7 @@ export const SAMPLE_SKILL_IDS = [
 export function createMockCommunication(
   type: 'task_assignment' | 'status_update',
   fromAgent: string,
-  toAgent?: string,
+  toAgent: string = '',
   payload: any = {}
 ) {
   return {

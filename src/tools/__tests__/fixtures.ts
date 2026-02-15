@@ -7,7 +7,6 @@
 
 import { vi } from 'vitest';
 import type { NativeTool } from '../native/types.js';
-import type { ToolExecutionContext } from '../types.js';
 
 /**
  * Create a mock NativeTool with sensible defaults.
@@ -126,22 +125,10 @@ export function createDisplayOnlyMockTool(
  */
 export function createMockMcpClient(
   tools: Array<{ name: string; description: string; input_schema: any }> = []
-) {
+): { getToolsForLLM: ReturnType<typeof vi.fn>; invokeTool: ReturnType<typeof vi.fn> } {
   return {
     getToolsForLLM: vi.fn().mockReturnValue(tools),
     invokeTool: vi.fn().mockResolvedValue({ success: true, output: 'mcp result' }),
   };
 }
 
-/**
- * Create a mock tool execution context.
- */
-export function createMockContext(): ToolExecutionContext {
-  return {
-    conversationId: 'test-conv-123',
-    agentId: 'test-agent-1',
-    agentName: 'Test Agent',
-    agentEmoji: '🧪',
-    workingDirectory: '/test/workspace',
-  };
-}

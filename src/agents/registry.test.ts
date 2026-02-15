@@ -214,7 +214,7 @@ describe('AgentRegistry - Agent Management', () => {
     registry.registerAgent(agent);
 
     expect(registry.getAgent('agent-1')).toBe(agent);
-    expect(agent.setRegistry).toHaveBeenCalledWith(registry);
+    expect((agent as any).setRegistry).toHaveBeenCalledWith(registry);
   });
 
   it('retrieves an agent by name (case-insensitive)', () => {

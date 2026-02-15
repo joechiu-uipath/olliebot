@@ -7,7 +7,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { MessageEventService } from './message-event-service.js';
-import type { ToolEvent } from '../tools/types.js';
+import type { ToolEvent, ToolExecutionFinishedEvent } from '../tools/types.js';
 import {
   STANDARD_AGENT_INFO,
   createBaseToolEvent,
@@ -155,7 +155,7 @@ describe('MessageEventService', () => {
 
       const broadcastCall = mockBroadcast.mock.calls[0][0];
       // Media content should be passed as object, not truncated string
-      expect(broadcastCall.result).toEqual(mediaEvent.result);
+      expect(broadcastCall.result).toEqual((mediaEvent as ToolExecutionFinishedEvent).result);
     });
   });
 

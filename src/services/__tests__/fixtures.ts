@@ -4,7 +4,7 @@
  * Common event data patterns to reduce duplication.
  */
 
-import type { ToolEvent } from '../../tools/types.js';
+import type { ToolEvent, ToolExecutionFinishedEvent } from '../../tools/types.js';
 
 /**
  * Standard agent info for testing.
@@ -22,7 +22,7 @@ export const STANDARD_AGENT_INFO = {
 export function createBaseToolEvent(
   overrides?: Partial<ToolEvent>
 ): ToolEvent {
-  return {
+  const base: ToolExecutionFinishedEvent = {
     type: 'tool_execution_finished',
     toolName: 'web_search',
     source: 'native' as const,
@@ -34,8 +34,8 @@ export function createBaseToolEvent(
     durationMs: 2000,
     parameters: { query: 'test query' },
     result: { results: ['result1', 'result2'] },
-    ...overrides,
   };
+  return { ...base, ...overrides } as ToolEvent;
 }
 
 /**
