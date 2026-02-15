@@ -9,6 +9,13 @@
 
 import { describe, it, expect } from 'vitest';
 import { Scorer } from './scorer.js';
+import { 
+  getPrivateMethod, 
+  buildToolCall,
+  PERFECT_SCORE,
+  HALF_SCORE,
+  ZERO_SCORE,
+} from '../test-helpers/index.js';
 import type { EvaluationDefinition } from './types.js';
 
 // Create scorer with a mock LLM service (not used in these tests)
@@ -16,29 +23,12 @@ const mockLLMService = {} as any;
 const scorer = new Scorer(mockLLMService);
 
 // Access private methods for focused unit testing
-function scoreToolSelection(definition: EvaluationDefinition, calls: any[]) {
-  return (scorer as any).scoreToolSelection(definition, calls);
-}
-
-function scoreParameters(actual: Record<string, unknown>, expected: Record<string, any>) {
-  return (scorer as any).scoreParameters(actual, expected);
-}
-
-function matchParameterValue(actual: unknown, expectation: any) {
-  return (scorer as any).matchParameterValue(actual, expectation);
-}
-
-function checkConstraints(constraints: any, response: string) {
-  return (scorer as any).checkConstraints(constraints, response);
-}
-
-function scoreDelegation(expectations: any, decision: any) {
-  return (scorer as any).scoreDelegation(expectations, decision);
-}
-
-function calculateElementScore(elements: any[], results: any[]) {
-  return (scorer as any).calculateElementScore(elements, results);
-}
+const scoreToolSelection = getPrivateMethod(scorer, 'scoreToolSelection');
+const scoreParameters = getPrivateMethod(scorer, 'scoreParameters');
+const matchParameterValue = getPrivateMethod(scorer, 'matchParameterValue');
+const checkConstraints = getPrivateMethod(scorer, 'checkConstraints');
+const scoreDelegation = getPrivateMethod(scorer, 'scoreDelegation');
+const calculateElementScore = getPrivateMethod(scorer, 'calculateElementScore');
 
 describe('Scorer - matchParameterValue', () => {
   it('exact match succeeds', () => {
@@ -78,40 +68,40 @@ describe('Scorer - matchParameterValue', () => {
 });
 
 describe('Scorer - scoreParameters', () => {
-  it('returns 1.0 for empty expectations', () => {
-    expect(scoreParameters({ a: 1 }, {})).toBe(1.0);
+  it('returns perfect score for empty expectations', () => {
+    expect(scoreParameters({ a: 1 }, {})).toBe(PERFECT_SCORE);
   });
 
-  it('returns 1.0 when all parameters match', () => {
+  it('returns perfect score when all parameters match', () => {
     const actual = { query: 'test search', limit: 10 };
     const expected = {
       query: { matchType: 'contains', expected: 'test' },
       limit: { matchType: 'exact', expected: 10 },
     };
-    expect(scoreParameters(actual, expected)).toBe(1.0);
+    expect(scoreParameters(actual, expected)).toBe(PERFECT_SCORE);
   });
 
-  it('returns 0.5 when half parameters match', () => {
+  it('returns half score when half parameters match', () => {
     const actual = { query: 'test', limit: 5 };
     const expected = {
       query: { matchType: 'exact', expected: 'test' },
       limit: { matchType: 'exact', expected: 10 },
     };
-    expect(scoreParameters(actual, expected)).toBe(0.5);
+    expect(scoreParameters(actual, expected)).toBe(HALF_SCORE);
   });
 
-  it('returns 0.0 when parameter is missing', () => {
+  it('returns zero score when parameter is missing', () => {
     const actual = {};
     const expected = { query: { matchType: 'exact', expected: 'test' } };
-    expect(scoreParameters(actual, expected)).toBe(0);
+    expect(scoreParameters(actual, expected)).toBe(ZERO_SCORE);
   });
 });
 
 describe('Scorer - scoreToolSelection', () => {
-  it('returns 1.0 when no tool expectations', () => {
+  it('returns perfect score when no tool expectations', () => {
     const def = { toolExpectations: undefined } as any;
     const { score } = scoreToolSelection(def, []);
-    expect(score).toBe(1.0);
+    expect(score).toBe(PERFECT_SCORE);
   });
 
   it('scores correct tools called', () => {
@@ -126,12 +116,12 @@ describe('Scorer - scoreToolSelection', () => {
     } as any;
 
     const calls = [
-      { toolName: 'web_search', parameters: {}, timestamp: new Date(), order: 0 },
-      { toolName: 'web_scrape', parameters: {}, timestamp: new Date(), order: 1 },
+      buildToolCall({ toolName: 'web_search', order: 0 }),
+      buildToolCall({ toolName: 'web_scrape', order: 1 }),
     ];
 
     const { score, toolCallResults } = scoreToolSelection(def, calls);
-    expect(score).toBeGreaterThan(0.5);
+    expect(score).toBeGreaterThan(HALF_SCORE);
     expect(toolCallResults).toHaveLength(2);
     expect(toolCallResults[0].wasExpected).toBe(true);
     expect(toolCallResults[0].wasForbidden).toBe(false);
@@ -148,13 +138,11 @@ describe('Scorer - scoreToolSelection', () => {
     } as any;
 
     // Only called one of two required tools
-    const calls = [
-      { toolName: 'web_search', parameters: {}, timestamp: new Date(), order: 0 },
-    ];
+    const calls = [buildToolCall({ toolName: 'web_search', order: 0 })];
 
     const { score } = scoreToolSelection(def, calls);
     // Score should be less than if all tools were called
-    expect(score).toBeLessThan(1.0);
+    expect(score).toBeLessThan(PERFECT_SCORE);
   });
 
   it('penalizes forbidden tools', () => {
@@ -165,9 +153,7 @@ describe('Scorer - scoreToolSelection', () => {
       },
     } as any;
 
-    const calls = [
-      { toolName: 'dangerous_tool', parameters: {}, timestamp: new Date(), order: 0 },
-    ];
+    const calls = [buildToolCall({ toolName: 'dangerous_tool', order: 0 })];
 
     const { toolCallResults } = scoreToolSelection(def, calls);
     expect(toolCallResults[0].wasForbidden).toBe(true);

@@ -7,13 +7,21 @@
 
 import { describe, it, expect, beforeEach } from 'vitest';
 import { LogBuffer } from './log-buffer.js';
+import {
+  buildLogEntry,
+  SMALL_TEST_BUFFER_SIZE,
+  MEDIUM_TEST_BUFFER_SIZE,
+  LARGE_TEST_BUFFER_SIZE,
+  LOG_BUFFER_MAX_QUERY_LIMIT,
+  LOG_BUFFER_MIN_QUERY_LIMIT,
+} from '../test-helpers/index.js';
 import type { LogEntry } from './log-buffer.js';
 
 describe('LogBuffer', () => {
   let buffer: LogBuffer;
 
   beforeEach(() => {
-    buffer = new LogBuffer(5); // Small buffer for testing
+    buffer = new LogBuffer(SMALL_TEST_BUFFER_SIZE); // Small buffer for testing
   });
 
   describe('basic operations', () => {
@@ -23,23 +31,12 @@ describe('LogBuffer', () => {
     });
 
     it('pushes external entries and tracks size', () => {
-      buffer.pushExternal({
-        timestamp: '2024-01-01T00:00:00Z',
-        level: 'log',
-        message: 'test message',
-        source: 'server',
-      });
-
+      buffer.pushExternal(buildLogEntry());
       expect(buffer.size()).toBe(1);
     });
 
     it('queries entries', () => {
-      buffer.pushExternal({
-        timestamp: '2024-01-01T00:00:00Z',
-        level: 'log',
-        message: 'hello world',
-        source: 'server',
-      });
+      buffer.pushExternal(buildLogEntry({ message: 'hello world' }));
 
       const results = buffer.query();
       expect(results).toHaveLength(1);
@@ -47,13 +44,7 @@ describe('LogBuffer', () => {
     });
 
     it('clears all entries', () => {
-      buffer.pushExternal({
-        timestamp: '2024-01-01T00:00:00Z',
-        level: 'log',
-        message: 'test',
-        source: 'server',
-      });
-
+      buffer.pushExternal(buildLogEntry());
       buffer.clear();
       expect(buffer.size()).toBe(0);
       expect(buffer.query()).toEqual([]);
@@ -63,19 +54,17 @@ describe('LogBuffer', () => {
   describe('circular buffer behavior', () => {
     it('overwrites oldest entries when full', () => {
       for (let i = 0; i < 7; i++) {
-        buffer.pushExternal({
+        buffer.pushExternal(buildLogEntry({
           timestamp: `2024-01-01T00:00:0${i}Z`,
-          level: 'log',
           message: `msg-${i}`,
-          source: 'server',
-        });
+        }));
       }
 
-      // Buffer size is 5, so only 5 entries should be kept
-      expect(buffer.size()).toBe(5);
+      // Buffer size is SMALL_TEST_BUFFER_SIZE (5), so only 5 entries should be kept
+      expect(buffer.size()).toBe(SMALL_TEST_BUFFER_SIZE);
 
       const results = buffer.query({ limit: 10 });
-      expect(results).toHaveLength(5);
+      expect(results).toHaveLength(SMALL_TEST_BUFFER_SIZE);
       // Oldest entries (0, 1) should be gone, newest (2-6) should remain
       expect(results[0].message).toBe('msg-2');
       expect(results[4].message).toBe('msg-6');
@@ -85,10 +74,10 @@ describe('LogBuffer', () => {
   describe('query filtering', () => {
     beforeEach(() => {
       const entries: LogEntry[] = [
-        { timestamp: '2024-01-01T00:00:01Z', level: 'log', message: 'info message', source: 'server' },
-        { timestamp: '2024-01-01T00:00:02Z', level: 'warn', message: 'warning message', source: 'server' },
-        { timestamp: '2024-01-01T00:00:03Z', level: 'error', message: 'error message', source: 'server' },
-        { timestamp: '2024-01-01T00:00:04Z', level: 'log', message: 'web log entry', source: 'web' },
+        buildLogEntry({ timestamp: '2024-01-01T00:00:01Z', level: 'log', message: 'info message' }),
+        buildLogEntry({ timestamp: '2024-01-01T00:00:02Z', level: 'warn', message: 'warning message' }),
+        buildLogEntry({ timestamp: '2024-01-01T00:00:03Z', level: 'error', message: 'error message' }),
+        buildLogEntry({ timestamp: '2024-01-01T00:00:04Z', level: 'log', message: 'web log entry', source: 'web' }),
       ];
       for (const entry of entries) {
         buffer.pushExternal(entry);
@@ -126,24 +115,19 @@ describe('LogBuffer', () => {
       expect(results[1].message).toBe('web log entry');
     });
 
-    it('enforces maximum query limit of 500', () => {
-      const bigBuffer = new LogBuffer(1000);
+    it('enforces maximum query limit', () => {
+      const bigBuffer = new LogBuffer(LARGE_TEST_BUFFER_SIZE);
       for (let i = 0; i < 600; i++) {
-        bigBuffer.pushExternal({
-          timestamp: new Date().toISOString(),
-          level: 'log',
-          message: `msg-${i}`,
-          source: 'server',
-        });
+        bigBuffer.pushExternal(buildLogEntry({ message: `msg-${i}` }));
       }
 
       const results = bigBuffer.query({ limit: 999 });
-      expect(results.length).toBeLessThanOrEqual(500);
+      expect(results.length).toBeLessThanOrEqual(LOG_BUFFER_MAX_QUERY_LIMIT);
     });
 
-    it('enforces minimum query limit of 1', () => {
+    it('enforces minimum query limit', () => {
       const results = buffer.query({ limit: 0 });
-      expect(results).toHaveLength(1); // Min limit is 1
+      expect(results).toHaveLength(LOG_BUFFER_MIN_QUERY_LIMIT);
     });
 
     it('combines multiple filters', () => {
@@ -155,7 +139,7 @@ describe('LogBuffer', () => {
 
   describe('console interception', () => {
     it('install and uninstall are idempotent', () => {
-      const buf = new LogBuffer(10);
+      const buf = new LogBuffer(MEDIUM_TEST_BUFFER_SIZE);
 
       // Double install should not crash
       buf.install();
@@ -167,7 +151,7 @@ describe('LogBuffer', () => {
     });
 
     it('captures console.log when installed', () => {
-      const buf = new LogBuffer(10);
+      const buf = new LogBuffer(MEDIUM_TEST_BUFFER_SIZE);
       const originalLog = console.log;
 
       buf.install();
@@ -185,7 +169,7 @@ describe('LogBuffer', () => {
     });
 
     it('captures console.warn and console.error', () => {
-      const buf = new LogBuffer(10);
+      const buf = new LogBuffer(MEDIUM_TEST_BUFFER_SIZE);
 
       buf.install();
       console.warn('warning');
@@ -199,7 +183,7 @@ describe('LogBuffer', () => {
     });
 
     it('serializes non-string arguments', () => {
-      const buf = new LogBuffer(10);
+      const buf = new LogBuffer(MEDIUM_TEST_BUFFER_SIZE);
 
       buf.install();
       console.log('prefix', { key: 'value' }, 42);

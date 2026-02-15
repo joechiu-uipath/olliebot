@@ -8,6 +8,21 @@
 
 import { describe, it, expect } from 'vitest';
 import { StatisticsEngine } from './statistics.js';
+import { 
+  buildSingleRunResult,
+  STATISTICAL_SIGNIFICANCE_LEVEL,
+  CONFIDENCE_INTERVAL_PRECISION,
+  DECIMAL_PLACES_TWO,
+  DECIMAL_PLACES_TEN,
+  MIN_SAMPLE_SIZE_FOR_OUTLIERS,
+  SMALL_SAMPLE_SIZE,
+  MEDIUM_SAMPLE_SIZE,
+  PERFECT_SCORE,
+  HALF_SCORE,
+  ZERO_SCORE,
+  DEFAULT_TEST_DURATION_MS,
+  LONG_TEST_DURATION_MS,
+} from '../test-helpers/index.js';
 import type { SingleRunResult } from './types.js';
 
 const engine = new StatisticsEngine();
@@ -77,21 +92,19 @@ describe('StatisticsEngine.summarize', () => {
 });
 
 describe('StatisticsEngine.welchTTest', () => {
+  /**
+   * Helper to create aggregated results from score arrays.
+   * Reduces duplication in statistical comparison tests.
+   */
   function makeAggregated(scores: number[], promptType: 'baseline' | 'alternative') {
     return engine.aggregateResults(
-      scores.map((s, i) => ({
+      scores.map((s, i) => buildSingleRunResult({
         runId: `run-${i}`,
-        timestamp: new Date(),
         promptType,
-        rawResponse: '',
-        toolCalls: [],
         toolSelectionScore: s,
         responseQualityScore: s,
         overallScore: s,
-        elementResults: [],
-        constraintViolations: [],
-        latencyMs: 100,
-      } as SingleRunResult)),
+      })),
       promptType
     );
   }
@@ -104,7 +117,7 @@ describe('StatisticsEngine.welchTTest', () => {
     expect(result).toBeDefined();
     expect(result!.isSignificant).toBe(false);
     expect(result!.recommendation).toBe('inconclusive');
-    expect(result!.pValue).toBe(1.0);
+    expect(result!.pValue).toBe(PERFECT_SCORE);
   });
 
   it('detects significant difference between clearly different groups', () => {
@@ -115,9 +128,9 @@ describe('StatisticsEngine.welchTTest', () => {
     const result = engine.welchTTest(baseline, alt);
     expect(result).toBeDefined();
     expect(result!.isSignificant).toBe(true);
-    expect(result!.pValue).toBeLessThan(0.05);
+    expect(result!.pValue).toBeLessThan(STATISTICAL_SIGNIFICANCE_LEVEL);
     expect(result!.recommendation).toBe('adopt-alternative');
-    expect(result!.overallScoreDifference).toBeGreaterThan(0);
+    expect(result!.overallScoreDifference).toBeGreaterThan(ZERO_SCORE);
   });
 
   it('detects when baseline is better', () => {
@@ -128,7 +141,7 @@ describe('StatisticsEngine.welchTTest', () => {
     expect(result).toBeDefined();
     expect(result!.isSignificant).toBe(true);
     expect(result!.recommendation).toBe('keep-baseline');
-    expect(result!.overallScoreDifference).toBeLessThan(0);
+    expect(result!.overallScoreDifference).toBeLessThan(ZERO_SCORE);
   });
 
   it('returns inconclusive for similar groups', () => {
@@ -197,7 +210,7 @@ describe('StatisticsEngine.detectOutliers', () => {
 
 describe('StatisticsEngine.percentageImprovement', () => {
   it('calculates positive improvement', () => {
-    expect(engine.percentageImprovement(0.5, 0.75)).toBe(50);
+    expect(engine.percentageImprovement(HALF_SCORE, 0.75)).toBe(50);
   });
 
   it('calculates negative improvement (regression)', () => {
@@ -205,8 +218,8 @@ describe('StatisticsEngine.percentageImprovement', () => {
   });
 
   it('handles zero baseline', () => {
-    expect(engine.percentageImprovement(0, 0.5)).toBe(100);
-    expect(engine.percentageImprovement(0, 0)).toBe(0);
+    expect(engine.percentageImprovement(ZERO_SCORE, HALF_SCORE)).toBe(100);
+    expect(engine.percentageImprovement(ZERO_SCORE, ZERO_SCORE)).toBe(0);
   });
 });
 
@@ -221,32 +234,22 @@ describe('StatisticsEngine.formatSummary', () => {
 describe('StatisticsEngine.aggregateResults', () => {
   it('aggregates multiple run results', () => {
     const runs: SingleRunResult[] = [
-      {
+      buildSingleRunResult({
         runId: 'run-1',
-        timestamp: new Date(),
-        promptType: 'baseline',
-        rawResponse: 'response',
-        toolCalls: [],
         toolSelectionScore: 0.8,
         responseQualityScore: 0.9,
         overallScore: 0.85,
-        elementResults: [{ elementId: 'e1', matched: true, confidence: 1.0 }],
-        constraintViolations: [],
-        latencyMs: 100,
-      },
-      {
+        elementResults: [{ elementId: 'e1', matched: true, confidence: PERFECT_SCORE }],
+        latencyMs: DEFAULT_TEST_DURATION_MS,
+      }),
+      buildSingleRunResult({
         runId: 'run-2',
-        timestamp: new Date(),
-        promptType: 'baseline',
-        rawResponse: 'response 2',
-        toolCalls: [],
         toolSelectionScore: 0.7,
         responseQualityScore: 0.8,
         overallScore: 0.75,
-        elementResults: [{ elementId: 'e1', matched: false, confidence: 0.0 }],
-        constraintViolations: [],
-        latencyMs: 150,
-      },
+        elementResults: [{ elementId: 'e1', matched: false, confidence: ZERO_SCORE }],
+        latencyMs: LONG_TEST_DURATION_MS,
+      }),
     ];
 
     const agg = engine.aggregateResults(runs, 'baseline');
@@ -255,7 +258,7 @@ describe('StatisticsEngine.aggregateResults', () => {
     expect(agg.runs).toHaveLength(2);
     expect(agg.overallScore.mean).toBe(0.8);
     expect(agg.toolSelectionScore.mean).toBe(0.75);
-    expect(agg.responseQualityScore.mean).toBeCloseTo(0.85, 10);
-    expect(agg.elementPassRates['e1']).toBe(0.5); // 1 of 2 passed
+    expect(agg.responseQualityScore.mean).toBeCloseTo(0.85, DECIMAL_PLACES_TEN);
+    expect(agg.elementPassRates['e1']).toBe(HALF_SCORE); // 1 of 2 passed
   });
 });

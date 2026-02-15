@@ -7,23 +7,13 @@
 
 import { describe, it, expect } from 'vitest';
 import { formatToolResultBlocks } from './tool-results.js';
+import { buildToolResult } from '../test-helpers/index.js';
 import type { ToolResult } from '../tools/types.js';
-
-/** Build a minimal ToolResult with required timing fields */
-function makeResult(overrides: Partial<ToolResult> & Pick<ToolResult, 'requestId' | 'toolName' | 'success'>): ToolResult {
-  const now = new Date();
-  return {
-    startTime: now,
-    endTime: now,
-    durationMs: 0,
-    ...overrides,
-  };
-}
 
 describe('formatToolResultBlocks', () => {
   it('formats a successful tool result', () => {
     const results: ToolResult[] = [
-      makeResult({
+      buildToolResult({
         requestId: 'req-1',
         toolName: 'web_search',
         success: true,
@@ -44,7 +34,7 @@ describe('formatToolResultBlocks', () => {
 
   it('formats a failed tool result with error message', () => {
     const results: ToolResult[] = [
-      makeResult({
+      buildToolResult({
         requestId: 'req-2',
         toolName: 'bad_tool',
         success: false,
@@ -65,7 +55,7 @@ describe('formatToolResultBlocks', () => {
 
   it('formats a failed tool result with default error message', () => {
     const results: ToolResult[] = [
-      makeResult({
+      buildToolResult({
         requestId: 'req-3',
         toolName: 'broken_tool',
         success: false,
@@ -78,7 +68,7 @@ describe('formatToolResultBlocks', () => {
 
   it('formats display-only results with minimal content', () => {
     const results: ToolResult[] = [
-      makeResult({
+      buildToolResult({
         requestId: 'req-4',
         toolName: 'create_image',
         success: true,
@@ -93,7 +83,7 @@ describe('formatToolResultBlocks', () => {
 
   it('formats display-only results with custom summary', () => {
     const results: ToolResult[] = [
-      makeResult({
+      buildToolResult({
         requestId: 'req-5',
         toolName: 'create_image',
         success: true,
@@ -109,7 +99,7 @@ describe('formatToolResultBlocks', () => {
 
   it('strips binary data from non-display-only results', () => {
     const results: ToolResult[] = [
-      makeResult({
+      buildToolResult({
         requestId: 'req-6',
         toolName: 'screenshot',
         success: true,
@@ -124,7 +114,7 @@ describe('formatToolResultBlocks', () => {
 
   it('handles string output directly', () => {
     const results: ToolResult[] = [
-      makeResult({
+      buildToolResult({
         requestId: 'req-7',
         toolName: 'simple_tool',
         success: true,
@@ -138,9 +128,9 @@ describe('formatToolResultBlocks', () => {
 
   it('handles multiple results', () => {
     const results: ToolResult[] = [
-      makeResult({ requestId: 'req-a', toolName: 'tool_a', success: true, output: 'Result A' }),
-      makeResult({ requestId: 'req-b', toolName: 'tool_b', success: true, output: 'Result B' }),
-      makeResult({ requestId: 'req-c', toolName: 'tool_c', success: false, error: 'Failed' }),
+      buildToolResult({ requestId: 'req-a', toolName: 'tool_a', success: true, output: 'Result A' }),
+      buildToolResult({ requestId: 'req-b', toolName: 'tool_b', success: true, output: 'Result B' }),
+      buildToolResult({ requestId: 'req-c', toolName: 'tool_c', success: false, error: 'Failed' }),
     ];
 
     const blocks = formatToolResultBlocks(results);
