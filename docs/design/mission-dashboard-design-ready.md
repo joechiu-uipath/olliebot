@@ -255,7 +255,7 @@ This separation means:
 | **Backend static serve** | Offline-capable, version-locked, no external dependency | Must bundle ~2MB of library files, manual updates |
 | **Hybrid** | CDN primary with backend fallback | More complex, but most resilient |
 
-**Recommendation: Hybrid with backend primary.** Serve library bundles from `/static/dashboard-libs/` on the Express server. Fall back to CDN URLs if local files are missing. This ensures dashboards work offline (common in enterprise deployments) while CDN provides a safety net.
+**Recommendation: Hybrid with backend primary.** Serve library bundles from `/static/dashboard-libs/` on the Hono server. Fall back to CDN URLs if local files are missing. This ensures dashboards work offline (common in enterprise deployments) while CDN provides a safety net.
 
 ```mermaid
 flowchart LR
@@ -263,7 +263,7 @@ flowchart LR
         Dashboard["Generated Dashboard JS"]
     end
 
-    subgraph backend["Express Backend /static/dashboard-libs/"]
+    subgraph backend["Hono Backend /static/dashboard-libs/"]
         E1["echarts.min.js\n~1.0 MB / ~310 KB gz"]
         M1["marked.umd.js\n~40 KB / ~13 KB gz"]
         T1["tabulator.min.js\n~280 KB / ~99 KB gz"]

@@ -14,7 +14,7 @@
  * GET    /api/dashboards/lineage/:lineageId    All versions of a dashboard
  */
 
-import type { Express, Request, Response } from 'express';
+import { Hono } from 'hono';
 import type { DashboardStore } from './dashboard-store.js';
 import type { SnapshotEngine } from './snapshot-engine.js';
 import type { RenderEngine } from './render-engine.js';
@@ -57,37 +57,30 @@ function toSnapshotSummary(s: DashboardSnapshot) {
 
 const VALID_SNAPSHOT_TYPES: SnapshotType[] = ['mission_report', 'agent_analytics', 'system_health', 'custom'];
 
-export function setupDashboardRoutes(app: Express, config: DashboardRoutesConfig): void {
+export function setupDashboardRoutes(app: Hono, config: DashboardRoutesConfig): void {
   const { dashboardStore, snapshotEngine, renderEngine } = config;
-
-  /** Extract a named route parameter as string (Express types may widen to string[]) */
-  function param(req: Request, name: string): string {
-    const val = req.params[name];
-    return Array.isArray(val) ? val[0] : val;
-  }
 
   // ================================================================
   // Create snapshot — capture metrics and store
   // ================================================================
 
-  app.post('/api/dashboards/snapshots', (req: Request, res: Response) => {
+  app.post('/api/dashboards/snapshots', async (c) => {
     try {
+      const body = await c.req.json();
       const {
         title,
         snapshotType,
         specText,
         conversationId,
         missionId,
-      } = req.body;
+      } = body;
 
       if (!title || !snapshotType) {
-        res.status(400).json({ error: 'title and snapshotType are required' });
-        return;
+        return c.json({ error: 'title and snapshotType are required' }, 400);
       }
 
       if (!VALID_SNAPSHOT_TYPES.includes(snapshotType)) {
-        res.status(400).json({ error: `snapshotType must be one of: ${VALID_SNAPSHOT_TYPES.join(', ')}` });
-        return;
+        return c.json({ error: `snapshotType must be one of: ${VALID_SNAPSHOT_TYPES.join(', ')}` }, 400);
       }
 
       // Capture metrics based on snapshot type
@@ -96,35 +89,32 @@ export function setupDashboardRoutes(app: Express, config: DashboardRoutesConfig
         switch (snapshotType) {
           case 'mission_report':
             if (!conversationId) {
-              res.status(400).json({ error: 'conversationId is required for mission_report snapshots' });
-              return;
+              return c.json({ error: 'conversationId is required for mission_report snapshots' }, 400);
             }
             metricsJson = JSON.stringify(snapshotEngine.captureMissionReport(conversationId));
             break;
           case 'agent_analytics':
           case 'system_health': {
-            const since = req.body.since as string | undefined;
-            const until = req.body.until as string | undefined;
+            const since = body.since as string | undefined;
+            const until = body.until as string | undefined;
             metricsJson = JSON.stringify(snapshotEngine.captureAgentAnalytics(since, until));
             break;
           }
           case 'custom':
-            if (req.body.metricsJson) {
-              metricsJson = typeof req.body.metricsJson === 'string'
-                ? req.body.metricsJson
-                : JSON.stringify(req.body.metricsJson);
+            if (body.metricsJson) {
+              metricsJson = typeof body.metricsJson === 'string'
+                ? body.metricsJson
+                : JSON.stringify(body.metricsJson);
             } else {
-              metricsJson = JSON.stringify(snapshotEngine.captureCustom(title, req.body.customData || {}));
+              metricsJson = JSON.stringify(snapshotEngine.captureCustom(title, body.customData || {}));
             }
             break;
           default:
-            res.status(400).json({ error: `Unsupported snapshot type: ${snapshotType}` });
-            return;
+            return c.json({ error: `Unsupported snapshot type: ${snapshotType}` }, 400);
         }
       } catch (captureError) {
         console.error('[Dashboard API] Failed to capture metrics:', captureError);
-        res.status(500).json({ error: 'Failed to capture metrics' });
-        return;
+        return c.json({ error: 'Failed to capture metrics' }, 500);
       }
 
       const spec = specText || renderEngine.getDefaultSpec(snapshotType);
@@ -139,10 +129,10 @@ export function setupDashboardRoutes(app: Express, config: DashboardRoutesConfig
       });
 
       const snapshot = dashboardStore.getSnapshotById(id);
-      res.status(201).json(snapshot);
+      return c.json(snapshot, 201);
     } catch (error) {
       console.error('[Dashboard API] Failed to create snapshot:', error);
-      res.status(500).json({ error: 'Failed to create snapshot' });
+      return c.json({ error: 'Failed to create snapshot' }, 500);
     }
   });
 
@@ -150,21 +140,21 @@ export function setupDashboardRoutes(app: Express, config: DashboardRoutesConfig
   // List snapshots
   // ================================================================
 
-  app.get('/api/dashboards/snapshots', (req: Request, res: Response) => {
+  app.get('/api/dashboards/snapshots', (c) => {
     try {
       const snapshots = dashboardStore.getSnapshots({
-        limit: parseInt(req.query.limit as string) || DASHBOARD_DEFAULT_QUERY_LIMIT,
-        missionId: req.query.missionId as string | undefined,
-        conversationId: req.query.conversationId as string | undefined,
-        snapshotType: req.query.snapshotType as SnapshotType | undefined,
-        status: req.query.status as 'pending' | 'rendering' | 'rendered' | 'error' | undefined,
-        since: req.query.since as string | undefined,
+        limit: parseInt(c.req.query('limit') || String(DASHBOARD_DEFAULT_QUERY_LIMIT)),
+        missionId: c.req.query('missionId'),
+        conversationId: c.req.query('conversationId'),
+        snapshotType: c.req.query('snapshotType') as SnapshotType | undefined,
+        status: c.req.query('status') as 'pending' | 'rendering' | 'rendered' | 'error' | undefined,
+        since: c.req.query('since'),
       });
 
-      res.json(snapshots.map(toSnapshotSummary));
+      return c.json(snapshots.map(toSnapshotSummary));
     } catch (error) {
       console.error('[Dashboard API] Failed to list snapshots:', error);
-      res.status(500).json({ error: 'Failed to list snapshots' });
+      return c.json({ error: 'Failed to list snapshots' }, 500);
     }
   });
 
@@ -172,19 +162,18 @@ export function setupDashboardRoutes(app: Express, config: DashboardRoutesConfig
   // Get snapshot detail
   // ================================================================
 
-  app.get('/api/dashboards/snapshots/:id', (req: Request, res: Response) => {
+  app.get('/api/dashboards/snapshots/:id', (c) => {
     try {
-      const snapshot = dashboardStore.getSnapshotById(param(req, 'id'));
+      const snapshot = dashboardStore.getSnapshotById(c.req.param('id'));
       if (!snapshot) {
-        res.status(404).json({ error: 'Snapshot not found' });
-        return;
+        return c.json({ error: 'Snapshot not found' }, 404);
       }
 
       // Include metricsJson and renderedHtml in detail view
-      res.json(snapshot);
+      return c.json(snapshot);
     } catch (error) {
       console.error('[Dashboard API] Failed to get snapshot:', error);
-      res.status(500).json({ error: 'Failed to get snapshot' });
+      return c.json({ error: 'Failed to get snapshot' }, 500);
     }
   });
 
@@ -192,23 +181,22 @@ export function setupDashboardRoutes(app: Express, config: DashboardRoutesConfig
   // Trigger rendering
   // ================================================================
 
-  app.post('/api/dashboards/snapshots/:id/render', async (req: Request, res: Response) => {
+  app.post('/api/dashboards/snapshots/:id/render', async (c) => {
     try {
-      const snapshot = dashboardStore.getSnapshotById(param(req, 'id'));
+      const id = c.req.param('id');
+      const snapshot = dashboardStore.getSnapshotById(id);
       if (!snapshot) {
-        res.status(404).json({ error: 'Snapshot not found' });
-        return;
+        return c.json({ error: 'Snapshot not found' }, 404);
       }
 
       if (snapshot.status === 'rendering') {
-        res.status(409).json({ error: 'Snapshot is already being rendered' });
-        return;
+        return c.json({ error: 'Snapshot is already being rendered' }, 409);
       }
 
-      const html = await renderEngine.render(param(req, 'id'));
-      const updated = dashboardStore.getSnapshotById(param(req, 'id'));
+      const html = await renderEngine.render(id);
+      const updated = dashboardStore.getSnapshotById(id);
 
-      res.json({
+      return c.json({
         id: updated?.id,
         status: updated?.status,
         renderedAt: updated?.renderedAt,
@@ -220,7 +208,7 @@ export function setupDashboardRoutes(app: Express, config: DashboardRoutesConfig
       });
     } catch (error) {
       console.error('[Dashboard API] Failed to render snapshot:', error);
-      res.status(500).json({ error: 'Failed to render dashboard' });
+      return c.json({ error: 'Failed to render dashboard' }, 500);
     }
   });
 
@@ -228,24 +216,24 @@ export function setupDashboardRoutes(app: Express, config: DashboardRoutesConfig
   // Re-render with new spec (creates new version)
   // ================================================================
 
-  app.post('/api/dashboards/snapshots/:id/rerender', async (req: Request, res: Response) => {
+  app.post('/api/dashboards/snapshots/:id/rerender', async (c) => {
     try {
-      const { specText } = req.body;
+      const body = await c.req.json();
+      const { specText } = body;
       if (!specText) {
-        res.status(400).json({ error: 'specText is required' });
-        return;
+        return c.json({ error: 'specText is required' }, 400);
       }
 
-      const snapshot = dashboardStore.getSnapshotById(param(req, 'id'));
+      const id = c.req.param('id');
+      const snapshot = dashboardStore.getSnapshotById(id);
       if (!snapshot) {
-        res.status(404).json({ error: 'Snapshot not found' });
-        return;
+        return c.json({ error: 'Snapshot not found' }, 404);
       }
 
-      const result = await renderEngine.rerender(param(req, 'id'), specText);
+      const result = await renderEngine.rerender(id, specText);
       const newSnapshot = dashboardStore.getSnapshotById(result.snapshotId);
 
-      res.status(201).json({
+      return c.json({
         id: newSnapshot?.id,
         version: newSnapshot?.version,
         lineageId: newSnapshot?.lineageId,
@@ -256,10 +244,10 @@ export function setupDashboardRoutes(app: Express, config: DashboardRoutesConfig
         renderTokensIn: newSnapshot?.renderTokensIn,
         renderTokensOut: newSnapshot?.renderTokensOut,
         html: result.html,
-      });
+      }, 201);
     } catch (error) {
       console.error('[Dashboard API] Failed to re-render snapshot:', error);
-      res.status(500).json({ error: 'Failed to re-render dashboard' });
+      return c.json({ error: 'Failed to re-render dashboard' }, 500);
     }
   });
 
@@ -267,24 +255,22 @@ export function setupDashboardRoutes(app: Express, config: DashboardRoutesConfig
   // Get raw HTML for iframe src
   // ================================================================
 
-  app.get('/api/dashboards/snapshots/:id/html', (req: Request, res: Response) => {
+  app.get('/api/dashboards/snapshots/:id/html', (c) => {
     try {
-      const snapshot = dashboardStore.getSnapshotById(param(req, 'id'));
+      const snapshot = dashboardStore.getSnapshotById(c.req.param('id'));
       if (!snapshot) {
-        res.status(404).json({ error: 'Snapshot not found' });
-        return;
+        return c.json({ error: 'Snapshot not found' }, 404);
       }
 
       if (!snapshot.renderedHtml) {
-        res.status(404).json({ error: 'Dashboard has not been rendered yet' });
-        return;
+        return c.json({ error: 'Dashboard has not been rendered yet' }, 404);
       }
 
       const fullHtml = renderEngine.wrapWithLibraries(snapshot.renderedHtml);
-      res.type('html').send(fullHtml);
+      return c.html(fullHtml);
     } catch (error) {
       console.error('[Dashboard API] Failed to serve dashboard HTML:', error);
-      res.status(500).json({ error: 'Failed to serve dashboard HTML' });
+      return c.json({ error: 'Failed to serve dashboard HTML' }, 500);
     }
   });
 
@@ -292,17 +278,16 @@ export function setupDashboardRoutes(app: Express, config: DashboardRoutesConfig
   // Delete snapshot
   // ================================================================
 
-  app.delete('/api/dashboards/snapshots/:id', (req: Request, res: Response) => {
+  app.delete('/api/dashboards/snapshots/:id', (c) => {
     try {
-      const deleted = dashboardStore.deleteSnapshot(param(req, 'id'));
+      const deleted = dashboardStore.deleteSnapshot(c.req.param('id'));
       if (!deleted) {
-        res.status(404).json({ error: 'Snapshot not found' });
-        return;
+        return c.json({ error: 'Snapshot not found' }, 404);
       }
-      res.json({ success: true });
+      return c.json({ success: true });
     } catch (error) {
       console.error('[Dashboard API] Failed to delete snapshot:', error);
-      res.status(500).json({ error: 'Failed to delete snapshot' });
+      return c.json({ error: 'Failed to delete snapshot' }, 500);
     }
   });
 
@@ -310,13 +295,13 @@ export function setupDashboardRoutes(app: Express, config: DashboardRoutesConfig
   // Get all versions in a lineage
   // ================================================================
 
-  app.get('/api/dashboards/lineage/:lineageId', (req: Request, res: Response) => {
+  app.get('/api/dashboards/lineage/:lineageId', (c) => {
     try {
-      const snapshots = dashboardStore.getSnapshotsByLineage(param(req, 'lineageId'));
-      res.json(snapshots.map(toSnapshotSummary));
+      const snapshots = dashboardStore.getSnapshotsByLineage(c.req.param('lineageId'));
+      return c.json(snapshots.map(toSnapshotSummary));
     } catch (error) {
       console.error('[Dashboard API] Failed to get lineage:', error);
-      res.status(500).json({ error: 'Failed to get dashboard lineage' });
+      return c.json({ error: 'Failed to get dashboard lineage' }, 500);
     }
   });
 

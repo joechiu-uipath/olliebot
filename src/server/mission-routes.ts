@@ -4,7 +4,8 @@
  * REST endpoints for the Mission system (Level 4 continuous agent).
  */
 
-import type { Express, Request, Response } from 'express';
+import { Hono } from 'hono';
+import type { Context } from 'hono';
 import { existsSync, readFileSync } from 'fs';
 import type { MissionManager } from '../missions/index.js';
 import { getDashboardStore, RenderEngine } from '../dashboard/index.js';
@@ -15,7 +16,7 @@ export interface MissionRoutesConfig {
   llmService?: LLMService;
 }
 
-export function setupMissionRoutes(app: Express, config: MissionRoutesConfig): void {
+export function setupMissionRoutes(app: Hono, config: MissionRoutesConfig): void {
   const { missionManager, llmService } = config;
 
   // Dashboard store and render engine for database-backed dashboards
@@ -26,40 +27,35 @@ export function setupMissionRoutes(app: Express, config: MissionRoutesConfig): v
   // Helpers — eliminate repeated mission/pillar lookup boilerplate
   // ========================================================================
 
-  type RouteHandler = (req: Request, res: Response) => void;
-
-  /** Extract a named route parameter as string (Express types may widen to string[]) */
-  function param(req: Request, name: string): string {
-    const val = req.params[name];
-    return Array.isArray(val) ? val[0] : val;
-  }
+  type Mission = ReturnType<typeof missionManager.getMissionBySlug>;
+  type Pillar = ReturnType<typeof missionManager.getPillarBySlug>;
 
   /** Wraps a handler that needs a resolved mission */
-  function withMission(handler: (req: Request, res: Response, mission: ReturnType<typeof missionManager.getMissionBySlug> & {}) => void): RouteHandler {
-    return (req, res) => {
+  function withMission(handler: (c: Context, mission: NonNullable<Mission>) => Response | Promise<Response>) {
+    return (c: Context) => {
       try {
-        const mission = missionManager.getMissionBySlug(param(req, 'slug'));
+        const slug = c.req.param('slug');
+        const mission = missionManager.getMissionBySlug(slug);
         if (!mission) {
-          res.status(404).json({ error: 'Mission not found' });
-          return;
+          return c.json({ error: 'Mission not found' }, 404);
         }
-        handler(req, res, mission);
+        return handler(c, mission);
       } catch (error) {
         console.error(`[API] Mission route error:`, error);
-        res.status(500).json({ error: 'Internal server error' });
+        return c.json({ error: 'Internal server error' }, 500);
       }
     };
   }
 
   /** Wraps a handler that needs a resolved mission + pillar */
-  function withPillar(handler: (req: Request, res: Response, mission: any, pillar: any) => void): RouteHandler {
-    return withMission((req, res, mission) => {
-      const pillar = missionManager.getPillarBySlug(mission.id, param(req, 'pillarSlug'));
+  function withPillar(handler: (c: Context, mission: NonNullable<Mission>, pillar: NonNullable<Pillar>) => Response | Promise<Response>) {
+    return withMission((c, mission) => {
+      const pillarSlug = c.req.param('pillarSlug');
+      const pillar = missionManager.getPillarBySlug(mission.id, pillarSlug);
       if (!pillar) {
-        res.status(404).json({ error: 'Pillar not found' });
-        return;
+        return c.json({ error: 'Pillar not found' }, 404);
       }
-      handler(req, res, mission, pillar);
+      return handler(c, mission, pillar);
     });
   }
 
@@ -68,53 +64,54 @@ export function setupMissionRoutes(app: Express, config: MissionRoutesConfig): v
   // ========================================================================
 
   // List all missions (includes pillar count for sidebar display)
-  app.get('/api/missions', (_req: Request, res: Response) => {
+  app.get('/api/missions', (c) => {
     try {
       const missions = missionManager.getMissions();
       const enriched = missions.map(m => ({
         ...m,
         pillarCount: missionManager.getPillarsByMission(m.id).length,
       }));
-      res.json(enriched);
+      return c.json(enriched);
     } catch (error) {
       console.error('[API] Failed to list missions:', error);
-      res.status(500).json({ error: 'Failed to list missions' });
+      return c.json({ error: 'Failed to list missions' }, 500);
     }
   });
 
   // Get mission detail
-  app.get('/api/missions/:slug', withMission((req, res, mission) => {
+  app.get('/api/missions/:slug', withMission((c, mission) => {
     const pillars = missionManager.getPillarsByMission(mission.id);
     const pillarSummaries = pillars.map(p => {
       const summary = missionManager.getPillarSummary(p.id);
       return { ...p, metrics: summary.metrics, todosByStatus: summary.todosByStatus };
     });
 
-    res.json({ ...mission, pillars: pillarSummaries });
+    return c.json({ ...mission, pillars: pillarSummaries });
   }));
 
   // Update mission (whitelisted fields only)
-  app.put('/api/missions/:slug', withMission((req, res, mission) => {
-    const updated = missionManager.updateMission(mission.slug, req.body);
-    res.json(updated);
+  app.put('/api/missions/:slug', withMission(async (c, mission) => {
+    const body = await c.req.json();
+    const updated = missionManager.updateMission(mission.slug, body);
+    return c.json(updated);
   }));
 
   // Pause mission
-  app.post('/api/missions/:slug/pause', withMission((req, res, mission) => {
+  app.post('/api/missions/:slug/pause', withMission((c, mission) => {
     const updated = missionManager.updateMission(mission.slug, { status: 'paused' });
-    res.json(updated);
+    return c.json(updated);
   }));
 
   // Resume mission
-  app.post('/api/missions/:slug/resume', withMission((req, res, mission) => {
+  app.post('/api/missions/:slug/resume', withMission((c, mission) => {
     const updated = missionManager.updateMission(mission.slug, { status: 'active' });
-    res.json(updated);
+    return c.json(updated);
   }));
 
   // Trigger manual cycle
-  app.post('/api/missions/:slug/cycle', withMission((req, res, mission) => {
+  app.post('/api/missions/:slug/cycle', withMission((c, mission) => {
     missionManager.emit('mission:cycle:due', { mission });
-    res.json({ success: true, message: 'Cycle triggered' });
+    return c.json({ success: true, message: 'Cycle triggered' });
   }));
 
   // ========================================================================
@@ -122,45 +119,45 @@ export function setupMissionRoutes(app: Express, config: MissionRoutesConfig): v
   // ========================================================================
 
   // List pillars for a mission
-  app.get('/api/missions/:slug/pillars', withMission((req, res, mission) => {
+  app.get('/api/missions/:slug/pillars', withMission((c, mission) => {
     const pillars = missionManager.getPillarsByMission(mission.id);
-    res.json(pillars);
+    return c.json(pillars);
   }));
 
   // Get pillar detail
-  app.get('/api/missions/:slug/pillars/:pillarSlug', withPillar((req, res, mission, pillar) => {
+  app.get('/api/missions/:slug/pillars/:pillarSlug', withPillar((c, mission, pillar) => {
     const summary = missionManager.getPillarSummary(pillar.id);
-    res.json({ ...pillar, ...summary });
+    return c.json({ ...pillar, ...summary });
   }));
 
   // Get pillar metrics with history
-  app.get('/api/missions/:slug/pillars/:pillarSlug/metrics', withPillar((req, res, mission, pillar) => {
+  app.get('/api/missions/:slug/pillars/:pillarSlug/metrics', withPillar((c, mission, pillar) => {
     const metrics = missionManager.getMetricsByPillar(pillar.id);
     const metricsWithHistory = metrics.map(m => ({
       ...m,
       history: missionManager.getMetricHistory(m.id),
     }));
-    res.json(metricsWithHistory);
+    return c.json(metricsWithHistory);
   }));
 
   // Get pillar strategies
-  app.get('/api/missions/:slug/pillars/:pillarSlug/strategies', withPillar((req, res, mission, pillar) => {
+  app.get('/api/missions/:slug/pillars/:pillarSlug/strategies', withPillar((c, mission, pillar) => {
     const strategies = missionManager.getStrategiesByPillar(pillar.id);
-    res.json(strategies);
+    return c.json(strategies);
   }));
 
   // Get pillar TODOs
-  app.get('/api/missions/:slug/pillars/:pillarSlug/todos', withPillar((req, res, mission, pillar) => {
+  app.get('/api/missions/:slug/pillars/:pillarSlug/todos', withPillar((c, mission, pillar) => {
     const todos = missionManager.getTodosByPillar(pillar.id);
-    res.json(todos);
+    return c.json(todos);
   }));
 
   // Create a TODO (used by Mission Lead agent programmatically)
-  app.post('/api/missions/:slug/pillars/:pillarSlug/todos', withPillar((req, res, mission, pillar) => {
-    const { title, description, priority, justification, completionCriteria } = req.body;
+  app.post('/api/missions/:slug/pillars/:pillarSlug/todos', withPillar(async (c, mission, pillar) => {
+    const body = await c.req.json();
+    const { title, description, priority, justification, completionCriteria } = body;
     if (!title) {
-      res.status(400).json({ error: 'title is required' });
-      return;
+      return c.json({ error: 'title is required' }, 400);
     }
     const todo = missionManager.createTodo({
       pillarId: pillar.id,
@@ -173,21 +170,22 @@ export function setupMissionRoutes(app: Express, config: MissionRoutesConfig): v
       priority: priority || 'medium',
       outcome: null,
     });
-    res.status(201).json(todo);
+    return c.json(todo, 201);
   }));
 
   // Update a TODO (whitelisted fields only)
-  app.put('/api/missions/:slug/pillars/:pillarSlug/todos/:todoId', (_req: Request, res: Response) => {
+  app.put('/api/missions/:slug/pillars/:pillarSlug/todos/:todoId', async (c) => {
     try {
-      const updated = missionManager.updateTodo(param(_req, 'todoId'), _req.body);
+      const todoId = c.req.param('todoId');
+      const body = await c.req.json();
+      const updated = missionManager.updateTodo(todoId, body);
       if (!updated) {
-        res.status(404).json({ error: 'TODO not found' });
-        return;
+        return c.json({ error: 'TODO not found' }, 404);
       }
-      res.json(updated);
+      return c.json(updated);
     } catch (error) {
       console.error('[API] Failed to update todo:', error);
-      res.status(500).json({ error: 'Failed to update todo' });
+      return c.json({ error: 'Failed to update todo' }, 500);
     }
   });
 
@@ -197,14 +195,10 @@ export function setupMissionRoutes(app: Express, config: MissionRoutesConfig): v
 
   /**
    * Helper: Try to serve a dashboard from the database (created by mission_update_dashboard tool).
-   * Returns true if served, false if should fall back to file-based.
+   * Returns the HTML string if found, null if should fall back to file-based.
    */
-  function tryServeDatabaseDashboard(
-    res: Response,
-    missionId: string,
-    conversationId: string
-  ): boolean {
-    if (!renderEngine) return false;
+  function tryGetDatabaseDashboard(missionId: string, conversationId: string): string | null {
+    if (!renderEngine) return null;
 
     // Try to find a rendered snapshot by missionId first, then conversationId
     let snapshots = dashboardStore.getSnapshots({ missionId, limit: 1 });
@@ -215,74 +209,75 @@ export function setupMissionRoutes(app: Express, config: MissionRoutesConfig): v
     if (snapshots.length > 0) {
       const snapshot = snapshots[0];
       if (snapshot.status === 'rendered' && snapshot.renderedHtml) {
-        const fullHtml = renderEngine.wrapWithLibraries(snapshot.renderedHtml);
-        res.type('html').send(fullHtml);
-        return true;
+        return renderEngine.wrapWithLibraries(snapshot.renderedHtml);
       }
     }
 
-    return false;
+    return null;
   }
 
   // Serve mission dashboard HTML
-  app.get('/api/missions/:slug/dashboard', (req: Request, res: Response) => {
+  app.get('/api/missions/:slug/dashboard', (c) => {
     try {
-      const mission = missionManager.getMissionBySlug(param(req, 'slug'));
+      const slug = c.req.param('slug');
+      const mission = missionManager.getMissionBySlug(slug);
       if (!mission) {
-        res.status(404).json({ error: 'Mission not found' });
-        return;
+        return c.json({ error: 'Mission not found' }, 404);
       }
 
       // Try database-backed dashboard first (from mission_update_dashboard tool)
-      if (tryServeDatabaseDashboard(res, mission.id, mission.conversationId)) {
-        return;
+      const dbHtml = tryGetDatabaseDashboard(mission.id, mission.conversationId);
+      if (dbHtml) {
+        return c.html(dbHtml);
       }
 
       // Fall back to file-based dashboard
-      const htmlPath = missionManager.getMissionDashboardPath(param(req, 'slug'));
+      const htmlPath = missionManager.getMissionDashboardPath(slug);
       if (existsSync(htmlPath)) {
         const html = readFileSync(htmlPath, 'utf-8');
-        res.type('html').send(html);
+        return c.html(html);
       } else {
-        res.status(404).json({ error: 'Dashboard not generated yet' });
+        return c.json({ error: 'Dashboard not generated yet' }, 404);
       }
     } catch (error) {
       console.error('[API] Failed to serve mission dashboard:', error);
-      res.status(500).json({ error: 'Failed to serve dashboard' });
+      return c.json({ error: 'Failed to serve dashboard' }, 500);
     }
   });
 
   // Serve pillar dashboard HTML
-  app.get('/api/missions/:slug/pillars/:pillarSlug/dashboard', (req: Request, res: Response) => {
+  app.get('/api/missions/:slug/pillars/:pillarSlug/dashboard', (c) => {
     try {
-      const mission = missionManager.getMissionBySlug(param(req, 'slug'));
+      const slug = c.req.param('slug');
+      const pillarSlug = c.req.param('pillarSlug');
+
+      const mission = missionManager.getMissionBySlug(slug);
       if (!mission) {
-        res.status(404).json({ error: 'Mission not found' });
-        return;
+        return c.json({ error: 'Mission not found' }, 404);
       }
 
-      const pillar = missionManager.getPillarBySlug(mission.id, param(req, 'pillarSlug'));
+      const pillar = missionManager.getPillarBySlug(mission.id, pillarSlug);
       if (!pillar) {
-        res.status(404).json({ error: 'Pillar not found' });
-        return;
+        return c.json({ error: 'Pillar not found' }, 404);
       }
 
       // Try database-backed dashboard first (from mission_update_dashboard tool)
-      if (tryServeDatabaseDashboard(res, mission.id, pillar.conversationId)) {
-        return;
+      const dbHtml = tryGetDatabaseDashboard(mission.id, pillar.conversationId);
+      if (dbHtml) {
+        return c.html(dbHtml);
       }
 
       // Fall back to file-based dashboard
-      const htmlPath = missionManager.getPillarDashboardPath(param(req, 'slug'), param(req, 'pillarSlug'));
+      const htmlPath = missionManager.getPillarDashboardPath(slug, pillarSlug);
       if (existsSync(htmlPath)) {
         const html = readFileSync(htmlPath, 'utf-8');
-        res.type('html').send(html);
+        return c.html(html);
       } else {
-        res.status(404).json({ error: 'Dashboard not generated yet' });
+        return c.json({ error: 'Dashboard not generated yet' }, 404);
       }
     } catch (error) {
       console.error('[API] Failed to serve pillar dashboard:', error);
-      res.status(500).json({ error: 'Failed to serve dashboard' });
+      return c.json({ error: 'Failed to serve dashboard' }, 500);
     }
   });
 

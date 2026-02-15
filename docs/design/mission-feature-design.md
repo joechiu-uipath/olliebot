@@ -840,7 +840,7 @@ Extend the existing WebSocket protocol with mission events:
 | `MissionManager` | `src/missions/manager.ts` | Core mission lifecycle and orchestration |
 | `MissionScheduler` | `src/missions/scheduler.ts` | Cadence cycle scheduling |
 | `MissionOrchestrator` | `src/missions/orchestrator.ts` | Agent dispatch and coordination |
-| `mission-routes` | `src/server/mission-routes.ts` | Express route handlers |
+| `mission-routes` | `src/server/mission-routes.ts` | Hono route handlers |
 | DB repositories | `src/db/index.ts` | New Mission, Pillar, Metric, Todo tables |
 
 ---

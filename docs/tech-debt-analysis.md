@@ -235,7 +235,7 @@ This document catalogs technical debt, improvement opportunities, and architectu
 - **Location**: `src/server/index.ts`
 - **Issue**: No rate limiting on API endpoints
 - **Impact**: User can DOS the application
-- **Recommendation**: Add `express-rate-limit` middleware
+- **Recommendation**: Add Hono rate limiting middleware or custom implementation
 
 ---
 
@@ -333,7 +333,7 @@ This document catalogs technical debt, improvement opportunities, and architectu
 |-----------|--------|--------|-------|
 | Runtime | Node.js + TypeScript | ✅ Good | ES2022 modules, modern |
 | Database | SQLite (better-sqlite3) | ✅ Good | Appropriate for single-user |
-| Web Framework | Express | ⚠️ Aging | Consider Fastify for perf |
+| Web Framework | Hono | ✅ Good | Fast, TypeScript-native |
 | Frontend | React 19 + Vite | ✅ Good | Modern, React Compiler enabled |
 | Testing | Vitest | ✅ Good | Fast, ESM-native |
 | LLM SDK | @anthropic-ai/sdk | ✅ Current | v0.30.0 is recent |
@@ -343,7 +343,7 @@ This document catalogs technical debt, improvement opportunities, and architectu
 
 | Current | Alternative | Benefit | Effort |
 |---------|-------------|---------|--------|
-| Express | Fastify | 2-3x faster, better TypeScript | Medium |
+| ~~Express~~ | ~~Fastify~~ | *(Migrated to Hono Feb 2026)* | Done |
 | console.log | Pino | Structured logging, 5x faster | Medium |
 | Manual DI | tsyringe/InversifyJS | Testability, loose coupling | High |
 | No metrics | Prometheus client | Production observability | Low |

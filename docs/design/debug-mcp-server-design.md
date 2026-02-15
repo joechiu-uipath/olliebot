@@ -73,7 +73,7 @@ This means:
 - **Single security boundary.** Bearer token authentication is applied at `/mcp` in one place. It doesn't inherit REST API middleware or CORS config.
 
 ```
-  Express Server (localhost:3000)
+  Hono Server (localhost:3000)
   │
   ├── /api/*    ← REST API for web frontend (existing, unchanged)
   ├── /ws       ← WebSocket for web frontend (existing, unchanged)
@@ -126,7 +126,7 @@ claude mcp add --transport http olliebot http://localhost:3000/mcp
 - `GET /mcp` — SSE stream for server-to-client notifications (optional, for progress/streaming).
 - `DELETE /mcp` — Session teardown (optional).
 
-This uses the same Express server and port that's already running. No new ports, no new processes. But the `/mcp` route has its own middleware stack — it does not share CORS, auth, or error handling with `/api/*`.
+This uses the same Hono server and port that's already running. No new ports, no new processes. But the `/mcp` route has its own middleware stack — it does not share CORS, auth, or error handling with `/api/*`.
 
 ### Transport: Stdio Shim (Secondary, for compatibility)
 
@@ -170,7 +170,7 @@ src/mcp-server/
 
 ### Integration Point
 
-In `src/server/index.ts` (AssistantServer), the MCP server is mounted during `start()`:
+In `src/server/index.ts` (OllieBotServer), the MCP server is mounted during `start()`:
 
 ```typescript
 import { OllieBotMCPServer } from '../mcp-server/index.js';
@@ -549,7 +549,7 @@ When enabled without a secret (and auth not disabled), all requests return 500 "
 
 2. **Bearer Token Authentication** — All `/mcp` routes require `Authorization: Bearer <token>` header. Token is validated via constant-time comparison to prevent timing attacks.
 
-3. **Localhost-Only Middleware** — Additional check at the Express route level to reject non-localhost requests.
+3. **Localhost-Only Middleware** — Additional check at the Hono route level to reject non-localhost requests.
 
 ### Token Authentication
 

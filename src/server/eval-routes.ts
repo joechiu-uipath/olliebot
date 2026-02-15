@@ -4,7 +4,7 @@
  * REST endpoints for the prompt evaluation system.
  */
 
-import type { Express, Request, Response } from 'express';
+import { Hono } from 'hono';
 import { join } from 'path';
 import type { LLMService } from '../llm/service.js';
 import type { ToolRunner } from '../tools/runner.js';
@@ -25,7 +25,7 @@ const activeJobs = new Map<string, {
   error?: string;
 }>();
 
-export function setupEvalRoutes(app: Express, config: EvalRoutesConfig): EvaluationManager {
+export function setupEvalRoutes(app: Hono, config: EvalRoutesConfig): EvaluationManager {
   const evaluationsDir = join(process.cwd(), 'user', 'evaluations');
   const resultsDir = join(process.cwd(), 'user', 'evaluations', 'results');
 
@@ -56,39 +56,39 @@ export function setupEvalRoutes(app: Express, config: EvalRoutesConfig): Evaluat
   }
 
   // List all evaluations
-  app.get('/api/eval/list', (req: Request, res: Response) => {
+  app.get('/api/eval/list', (c) => {
     try {
-      const target = req.query.target as string | undefined;
-      const tagsStr = req.query.tags as string | undefined;
+      const target = c.req.query('target');
+      const tagsStr = c.req.query('tags');
       const tags = tagsStr ? tagsStr.split(',') : undefined;
 
       const evaluations = manager.listEvaluations({ target, tags });
-      res.json({ evaluations });
+      return c.json({ evaluations });
     } catch (error) {
       console.error('[EvalAPI] Failed to list evaluations:', error);
-      res.status(500).json({ error: 'Failed to list evaluations' });
+      return c.json({ error: 'Failed to list evaluations' }, 500);
     }
   });
 
   // List all suites with their evaluations (tree structure)
-  app.get('/api/eval/suites', (_req: Request, res: Response) => {
+  app.get('/api/eval/suites', (c) => {
     try {
       const suites = manager.listSuitesWithEvaluations();
-      res.json({ suites });
+      return c.json({ suites });
     } catch (error) {
       console.error('[EvalAPI] Failed to list suites:', error);
-      res.status(500).json({ error: 'Failed to list suites' });
+      return c.json({ error: 'Failed to list suites' }, 500);
     }
   });
 
   // Run an evaluation
-  app.post('/api/eval/run', async (req: Request, res: Response) => {
+  app.post('/api/eval/run', async (c) => {
     try {
-      const { evaluationPath, runs, alternativePrompt } = req.body;
+      const body = await c.req.json();
+      const { evaluationPath, runs, alternativePrompt } = body;
 
       if (!evaluationPath) {
-        res.status(400).json({ error: 'evaluationPath is required' });
-        return;
+        return c.json({ error: 'evaluationPath is required' }, 400);
       }
 
       const jobId = `eval-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -100,7 +100,7 @@ export function setupEvalRoutes(app: Express, config: EvalRoutesConfig): Evaluat
       });
 
       // Return immediately with job ID
-      res.json({ jobId, status: 'started' });
+      const response = c.json({ jobId, status: 'started' });
 
       // Run evaluation asynchronously
       manager.runEvaluation(evaluationPath, {
@@ -129,20 +129,22 @@ export function setupEvalRoutes(app: Express, config: EvalRoutesConfig): Evaluat
           });
         }
       });
+
+      return response;
     } catch (error) {
       console.error('[EvalAPI] Failed to start evaluation:', error);
-      res.status(500).json({ error: 'Failed to start evaluation' });
+      return c.json({ error: 'Failed to start evaluation' }, 500);
     }
   });
 
   // Run a suite
-  app.post('/api/eval/suite/run', async (req: Request, res: Response) => {
+  app.post('/api/eval/suite/run', async (c) => {
     try {
-      const { suitePath } = req.body;
+      const body = await c.req.json();
+      const { suitePath } = body;
 
       if (!suitePath) {
-        res.status(400).json({ error: 'suitePath is required' });
-        return;
+        return c.json({ error: 'suitePath is required' }, 400);
       }
 
       const jobId = `suite-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -154,7 +156,7 @@ export function setupEvalRoutes(app: Express, config: EvalRoutesConfig): Evaluat
       });
 
       // Return immediately with job ID
-      res.json({ jobId, status: 'started' });
+      const response = c.json({ jobId, status: 'started' });
 
       // Run suite asynchronously
       manager.runSuite(suitePath, { jobId }).then((results) => {
@@ -179,39 +181,40 @@ export function setupEvalRoutes(app: Express, config: EvalRoutesConfig): Evaluat
           });
         }
       });
+
+      return response;
     } catch (error) {
       console.error('[EvalAPI] Failed to start suite:', error);
-      res.status(500).json({ error: 'Failed to start suite' });
+      return c.json({ error: 'Failed to start suite' }, 500);
     }
   });
 
   // List active jobs (for UI recovery on page load)
-  app.get('/api/eval/jobs', (_req: Request, res: Response) => {
+  app.get('/api/eval/jobs', (c) => {
     try {
       const jobs = Array.from(activeJobs.entries()).map(([jobId, job]) => ({
         jobId,
         status: job.status,
         startedAt: job.startedAt,
       }));
-      res.json({ jobs });
+      return c.json({ jobs });
     } catch (error) {
       console.error('[EvalAPI] Failed to list jobs:', error);
-      res.status(500).json({ error: 'Failed to list jobs' });
+      return c.json({ error: 'Failed to list jobs' }, 500);
     }
   });
 
   // Get job status/results
-  app.get('/api/eval/results/:jobId', (req: Request, res: Response) => {
+  app.get('/api/eval/results/:jobId', (c) => {
     try {
-      const jobId = String(req.params.jobId);
+      const jobId = c.req.param('jobId');
       const job = activeJobs.get(jobId);
 
       if (!job) {
-        res.status(404).json({ error: 'Job not found' });
-        return;
+        return c.json({ error: 'Job not found' }, 404);
       }
 
-      res.json({
+      return c.json({
         jobId,
         status: job.status,
         startedAt: job.startedAt,
@@ -220,141 +223,139 @@ export function setupEvalRoutes(app: Express, config: EvalRoutesConfig): Evaluat
       });
     } catch (error) {
       console.error('[EvalAPI] Failed to get job status:', error);
-      res.status(500).json({ error: 'Failed to get job status' });
+      return c.json({ error: 'Failed to get job status' }, 500);
     }
   });
 
   // List all recent results (for sidebar)
-  app.get('/api/eval/results', (req: Request, res: Response) => {
+  app.get('/api/eval/results', (c) => {
     try {
-      const limit = parseInt(req.query.limit as string) || 10;
+      const limit = parseInt(c.req.query('limit') || '10');
       const results = manager.loadRecentResults(limit);
-      res.json({ results });
+      return c.json({ results });
     } catch (error) {
       console.error('[EvalAPI] Failed to load recent results:', error);
-      res.status(500).json({ error: 'Failed to load recent results' });
+      return c.json({ error: 'Failed to load recent results' }, 500);
     }
   });
 
   // Get historical results for an evaluation
-  app.get('/api/eval/history/:evaluationId', (req: Request, res: Response) => {
+  app.get('/api/eval/history/:evaluationId', (c) => {
     try {
-      const evaluationId = String(req.params.evaluationId);
-      const limit = parseInt(req.query.limit as string) || 10;
+      const evaluationId = c.req.param('evaluationId');
+      const limit = parseInt(c.req.query('limit') || '10');
       const results = manager.loadResults(evaluationId, limit);
-      res.json({ results });
+      return c.json({ results });
     } catch (error) {
       console.error('[EvalAPI] Failed to load history:', error);
-      res.status(500).json({ error: 'Failed to load history' });
+      return c.json({ error: 'Failed to load history' }, 500);
     }
   });
 
   // Load a specific result file by path (e.g., "2026-02-01/researcher-web-search-001-123.json")
-  app.get('/api/eval/result/:path(*)', (req: Request, res: Response) => {
+  app.get('/api/eval/result/:path{.+}', (c) => {
     try {
-      const path = String(req.params.path);
+      const path = c.req.param('path');
       const result = manager.loadResultByPath(path);
-      res.json({ result });
+      return c.json({ result });
     } catch (error) {
       console.error('[EvalAPI] Failed to load result:', error);
-      res.status(404).json({ error: 'Result not found' });
+      return c.json({ error: 'Result not found' }, 404);
     }
   });
 
   // Delete a result file by path
-  app.delete('/api/eval/result/:path(*)', (req: Request, res: Response) => {
+  app.delete('/api/eval/result/:path{.+}', (c) => {
     try {
-      const path = String(req.params.path);
+      const path = c.req.param('path');
       manager.deleteResult(path);
-      res.json({ success: true, deleted: path });
+      return c.json({ success: true, deleted: path });
     } catch (error) {
       console.error('[EvalAPI] Failed to delete result:', error);
-      res.status(404).json({ error: 'Failed to delete result' });
+      return c.json({ error: 'Failed to delete result' }, 404);
     }
   });
 
   // Save evaluation (PUT - must be before GET catch-all)
-  app.put('/api/eval/:path(*)', (req: Request, res: Response) => {
+  app.put('/api/eval/:path{.+}', async (c) => {
     try {
-      const path = String(req.params.path);
-      const content = req.body;
+      const path = c.req.param('path');
+      const content = await c.req.json();
 
       if (!content) {
-        res.status(400).json({ error: 'Request body is required' });
-        return;
+        return c.json({ error: 'Request body is required' }, 400);
       }
 
       // Validate JSON structure before saving
       if (!content.metadata?.id || !content.metadata?.name) {
-        res.status(400).json({ error: 'Invalid evaluation: missing metadata.id or metadata.name' });
-        return;
+        return c.json({ error: 'Invalid evaluation: missing metadata.id or metadata.name' }, 400);
       }
 
       manager.saveEvaluation(path, content);
-      res.json({ success: true, path });
+      return c.json({ success: true, path });
     } catch (error) {
       console.error('[EvalAPI] Failed to save evaluation:', error);
-      res.status(500).json({ error: String(error) });
+      return c.json({ error: String(error) }, 500);
     }
   });
 
   // Get evaluation details (catch-all - must be after all specific /api/eval/* routes)
-  app.get('/api/eval/:path(*)', (req: Request, res: Response) => {
+  app.get('/api/eval/:path{.+}', (c) => {
     try {
-      const path = String(req.params.path);
+      const path = c.req.param('path');
       const evaluation = manager.loadEvaluation(path);
-      res.json({ evaluation });
+      return c.json({ evaluation });
     } catch (error) {
       console.error('[EvalAPI] Failed to load evaluation:', error);
-      res.status(404).json({ error: 'Evaluation not found' });
+      return c.json({ error: 'Evaluation not found' }, 404);
     }
   });
 
   // List available prompts
-  app.get('/api/prompts/list', (_req: Request, res: Response) => {
+  app.get('/api/prompts/list', (c) => {
     try {
       const promptLoader = manager.getRunner().getPromptLoader();
       const prompts = promptLoader.listAvailablePrompts();
-      res.json({ prompts });
+      return c.json({ prompts });
     } catch (error) {
       console.error('[EvalAPI] Failed to list prompts:', error);
-      res.status(500).json({ error: 'Failed to list prompts' });
+      return c.json({ error: 'Failed to list prompts' }, 500);
     }
   });
 
   // Get prompt content
-  app.get('/api/prompts/:path(*)', (req: Request, res: Response) => {
+  app.get('/api/prompts/:path{.+}', (c) => {
     try {
-      const path = String(req.params.path);
+      const path = c.req.param('path');
       const promptLoader = manager.getRunner().getPromptLoader();
       const content = promptLoader.loadFromFile(path);
-      res.json({ path, content });
+      return c.json({ path, content });
     } catch (error) {
       console.error('[EvalAPI] Failed to load prompt:', error);
-      res.status(404).json({ error: 'Prompt not found' });
+      return c.json({ error: 'Prompt not found' }, 404);
     }
   });
 
   // Generate report for a result
-  app.post('/api/eval/report', (req: Request, res: Response) => {
+  app.post('/api/eval/report', async (c) => {
     try {
-      const { results, format } = req.body;
+      const body = await c.req.json();
+      const { results, format } = body;
 
       if (!results) {
-        res.status(400).json({ error: 'results is required' });
-        return;
+        return c.json({ error: 'results is required' }, 400);
       }
 
       const report = manager.generateReport(results);
-      res.json({ report, format: format || 'markdown' });
+      return c.json({ report, format: format || 'markdown' });
     } catch (error) {
       console.error('[EvalAPI] Failed to generate report:', error);
-      res.status(500).json({ error: 'Failed to generate report' });
+      return c.json({ error: 'Failed to generate report' }, 500);
     }
   });
 
   // Clean up old jobs (called periodically or on demand)
-  app.post('/api/eval/cleanup', (_req: Request, res: Response) => {
+  app.post('/api/eval/cleanup', (c) => {
     try {
       const oneHourAgo = Date.now() - 60 * 60 * 1000;
       let cleaned = 0;
@@ -366,10 +367,10 @@ export function setupEvalRoutes(app: Express, config: EvalRoutesConfig): Evaluat
         }
       }
 
-      res.json({ cleaned, remaining: activeJobs.size });
+      return c.json({ cleaned, remaining: activeJobs.size });
     } catch (error) {
       console.error('[EvalAPI] Failed to cleanup jobs:', error);
-      res.status(500).json({ error: 'Failed to cleanup jobs' });
+      return c.json({ error: 'Failed to cleanup jobs' }, 500);
     }
   });
 

@@ -10,7 +10,8 @@
  * from the REST API routes.
  */
 
-import type { Request, Response } from 'express';
+import type { Context } from 'hono';
+import { streamSSE } from 'hono/streaming';
 import {
   MCP_PROTOCOL_VERSION,
   JSON_RPC_ERRORS,
@@ -35,9 +36,9 @@ export class StreamableHTTPHandler {
   /**
    * Handle POST /mcp — JSON-RPC request dispatch.
    */
-  async handlePost(req: Request, res: Response): Promise<void> {
+  async handlePost(c: Context): Promise<Response> {
     try {
-      const body = req.body;
+      const body = await c.req.json();
 
       // Handle batch requests (JSON-RPC allows arrays)
       if (Array.isArray(body)) {
@@ -46,37 +47,34 @@ export class StreamableHTTPHandler {
           const response = await this.dispatch(item);
           if (response) responses.push(response);
         }
-        res.json(responses);
-        return;
+        return c.json(responses);
       }
 
       // Single request
       const request = body as JsonRpcRequest;
 
       if (!request || !request.jsonrpc || request.jsonrpc !== '2.0') {
-        res.status(400).json(this.makeError(
+        return c.json(this.makeError(
           null,
           JSON_RPC_ERRORS.INVALID_REQUEST,
           'Invalid JSON-RPC 2.0 request'
-        ));
-        return;
+        ), 400);
       }
 
       const response = await this.dispatch(request);
 
       // Notifications (no id) don't get a response
       if (!response) {
-        res.status(204).end();
-        return;
+        return c.body(null, 204);
       }
 
-      res.json(response);
+      return c.json(response);
     } catch (err) {
-      res.status(500).json(this.makeError(
+      return c.json(this.makeError(
         null,
         JSON_RPC_ERRORS.INTERNAL_ERROR,
         `Internal error: ${err}`
-      ));
+      ), 500);
     }
   }
 
@@ -84,21 +82,29 @@ export class StreamableHTTPHandler {
    * Handle GET /mcp — SSE stream for server-to-client notifications.
    * Stubbed for Phase 1; will support progress events in Phase 3.
    */
-  async handleGet(_req: Request, res: Response): Promise<void> {
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
+  async handleGet(c: Context): Promise<Response> {
+    return streamSSE(c, async (stream) => {
+      // Send initial comment to establish the connection
+      await stream.writeSSE({ data: 'MCP SSE stream established', event: 'init' });
 
-    // Send initial comment to establish the connection
-    res.write(': MCP SSE stream established\n\n');
+      // Keep alive — client will disconnect when done
+      const keepAlive = setInterval(async () => {
+        try {
+          await stream.writeSSE({ data: '', event: 'keepalive' });
+        } catch {
+          // Stream closed, ignore
+        }
+      }, 30000);
 
-    // Keep alive — client will disconnect when done
-    const keepAlive = setInterval(() => {
-      res.write(': keepalive\n\n');
-    }, 30000);
+      // Wait for abort signal (client disconnect)
+      stream.onAbort(() => {
+        clearInterval(keepAlive);
+      });
 
-    _req.on('close', () => {
-      clearInterval(keepAlive);
+      // Keep stream open until client disconnects
+      await new Promise<void>((resolve) => {
+        stream.onAbort(() => resolve());
+      });
     });
   }
 
@@ -106,8 +112,8 @@ export class StreamableHTTPHandler {
    * Handle DELETE /mcp — Session teardown.
    * No-op for this stateless server.
    */
-  async handleDelete(_req: Request, res: Response): Promise<void> {
-    res.json({ jsonrpc: '2.0', result: {} });
+  async handleDelete(c: Context): Promise<Response> {
+    return c.json({ jsonrpc: '2.0', result: {} });
   }
 
   /**

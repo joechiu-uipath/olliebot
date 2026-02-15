@@ -2,6 +2,8 @@
 
 *Analysis Date: February 2026*
 
+> **⚠️ UPDATE (Feb 15, 2026):** This analysis is now **historical**. OllieBot has migrated from Express to **Hono** as of February 2026. See [`hono-upgrade-plan.md`](./hono-upgrade-plan.md) and [`hono-migration-report.md`](../design/hono-migration-report.md) for migration details. The recommendations below were written before the migration decision and are preserved for reference.
+
 This document analyzes the server framework requirements for OllieBot, evaluates available options, and provides recommendations.
 
 ---

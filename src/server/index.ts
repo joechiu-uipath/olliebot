@@ -1,7 +1,9 @@
-import express, { type Express, type Request, type Response } from 'express';
-import cors from 'cors';
-import { createServer, type Server } from 'http';
-import { WebSocketServer } from 'ws';
+import { Hono } from 'hono';
+import { cors } from 'hono/cors';
+import { serve } from '@hono/node-server';
+import { createNodeWebSocket } from '@hono/node-ws';
+import type { Server } from 'http';
+import { WebSocketServer, WebSocket } from 'ws';
 import { setupVoiceProxy } from './voice-proxy.js';
 import type { SupervisorAgent } from '../agents/types.js';
 import { getAgentRegistry, MissionLeadAgent } from '../agents/index.js';
@@ -67,8 +69,8 @@ export interface ServerConfig {
 }
 
 export class AssistantServer {
-  private app: Express;
-  private server: Server;
+  private app: Hono;
+  private server: Server | null = null;
   private wss: WebSocketServer;
   private supervisor: SupervisorAgent;
   private wsChannel: WebSocketChannel;
@@ -141,62 +143,28 @@ export class AssistantServer {
       'http://127.0.0.1:3000',   // Same-origin (alternate)
     ];
 
-    // Create Express app
-    this.app = express();
+    // Create Hono app
+    this.app = new Hono();
 
     // CORS configuration - restrict to allowed origins only
-    this.app.use(cors({
-      origin: (origin, callback) => {
+    this.app.use('*', cors({
+      origin: (origin) => {
         // Allow requests with no origin (same-origin, curl, etc.)
-        if (!origin) {
-          callback(null, true);
-          return;
-        }
+        if (!origin) return '*';
         if (this.allowedOrigins.includes(origin)) {
-          callback(null, true);
-        } else {
-          console.warn(`[CORS] Blocked request from origin: ${origin}`);
-          callback(new Error('Not allowed by CORS'));
+          return origin;
         }
+        console.warn(`[CORS] Blocked request from origin: ${origin}`);
+        return null;
       },
-      methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-      allowedHeaders: ['Content-Type', 'Authorization'],
+      allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+      allowHeaders: ['Content-Type', 'Authorization'],
       credentials: true,
     }));
-    this.app.use(express.json());
 
-    // Create HTTP server
-    this.server = createServer(this.app);
-
-    // Create WebSocket servers with noServer mode for proper multi-path support
+    // Create WebSocket servers for manual handling (voice and main chat)
     this.wss = new WebSocketServer({ noServer: true });
     this.voiceWss = new WebSocketServer({ noServer: true });
-
-    // Handle HTTP upgrade requests and route to appropriate WebSocket server
-    this.server.on('upgrade', (request, socket, head) => {
-      const origin = request.headers.origin;
-      const pathname = new URL(request.url || '/', `http://${request.headers.host}`).pathname;
-
-      // Verify origin for security
-      if (origin && !this.allowedOrigins.includes(origin)) {
-        console.warn(`[WebSocket] Blocked connection from origin: ${origin} on path: ${pathname}`);
-        socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
-        socket.destroy();
-        return;
-      }
-
-      if (pathname === '/voice') {
-        this.voiceWss.handleUpgrade(request, socket, head, (ws) => {
-          this.voiceWss.emit('connection', ws, request);
-        });
-      } else if (pathname === '/') {
-        this.wss.handleUpgrade(request, socket, head, (ws) => {
-          this.wss.emit('connection', ws, request);
-        });
-      } else {
-        socket.destroy();
-      }
-    });
 
     // Create and configure web channel
     this.wsChannel = new WebSocketChannel('web-main');
@@ -215,14 +183,14 @@ export class AssistantServer {
 
   private setupRoutes(): void {
     // Health check
-    this.app.get('/health', (_req: Request, res: Response) => {
-      res.json({ status: 'ok', timestamp: new Date().toISOString() });
+    this.app.get('/health', (c) => {
+      return c.json({ status: 'ok', timestamp: new Date().toISOString() });
     });
 
     // Get model capabilities (for reasoning mode support)
-    this.app.get('/api/model-capabilities', (_req: Request, res: Response) => {
+    this.app.get('/api/model-capabilities', (c) => {
       const caps = getModelCapabilities(this.mainProvider || '', this.mainModel || '');
-      res.json({
+      return c.json({
         provider: this.mainProvider,
         model: this.mainModel,
         ...caps,
@@ -230,7 +198,7 @@ export class AssistantServer {
     });
 
     // Consolidated startup endpoint - returns all data needed for initial page load
-    this.app.get('/api/startup', async (_req: Request, res: Response) => {
+    this.app.get('/api/startup', async (c) => {
       try {
         const db = getDb();
 
@@ -244,13 +212,13 @@ export class AssistantServer {
 
         // 2. Conversations
         const rawConversations = db.conversations.findAll({ limit: 50 });
-        const conversations = rawConversations.map((c) => {
-          const wellKnownMeta = getWellKnownConversationMeta(c.id);
+        const conversations = rawConversations.map((conv) => {
+          const wellKnownMeta = getWellKnownConversationMeta(conv.id);
           return {
-            ...c,
+            ...conv,
             isWellKnown: !!wellKnownMeta,
             icon: wellKnownMeta?.icon,
-            title: wellKnownMeta?.title ?? c.title,
+            title: wellKnownMeta?.title ?? conv.title,
           };
         });
         conversations.sort((a, b) => {
@@ -429,7 +397,7 @@ export class AssistantServer {
           }
         }
 
-        res.json({
+        return c.json({
           modelCapabilities,
           conversations,
           feedMessages,
@@ -443,35 +411,34 @@ export class AssistantServer {
         });
       } catch (error) {
         console.error('[API] Startup data fetch failed:', error);
-        res.status(500).json({ error: 'Failed to fetch startup data' });
+        return c.json({ error: 'Failed to fetch startup data' }, 500);
       }
     });
 
     // Get agent state
-    this.app.get('/api/state', (_req: Request, res: Response) => {
-      res.json(this.supervisor.getState());
+    this.app.get('/api/state', (c) => {
+      return c.json(this.supervisor.getState());
     });
 
     // Get active agents
-    this.app.get('/api/agents', (_req: Request, res: Response) => {
+    this.app.get('/api/agents', (c) => {
       const agents = [
         this.supervisor.identity,
         ...this.supervisor.getSubAgents().map((id) => ({ id, role: 'worker' })),
       ];
-      res.json(agents);
+      return c.json(agents);
     });
 
     // Get MCP servers
-    this.app.get('/api/mcps', (_req: Request, res: Response) => {
+    this.app.get('/api/mcps', (c) => {
       if (!this.mcpClient) {
-        res.json([]);
-        return;
+        return c.json([]);
       }
 
       const servers = this.mcpClient.getServers();
       const tools = this.mcpClient.getTools();
 
-      res.json(servers.map(server => ({
+      return c.json(servers.map(server => ({
         id: server.id,
         name: server.name,
         enabled: server.enabled,
@@ -481,25 +448,23 @@ export class AssistantServer {
     });
 
     // Toggle MCP server enabled status
-    this.app.patch('/api/mcps/:id', async (req: Request, res: Response) => {
+    this.app.patch('/api/mcps/:id', async (c) => {
       if (!this.mcpClient) {
-        res.status(404).json({ error: 'MCP client not configured' });
-        return;
+        return c.json({ error: 'MCP client not configured' }, 404);
       }
 
-      const serverId = req.params.id as string;
-      const { enabled } = req.body;
+      const serverId = c.req.param('id');
+      const body = await c.req.json();
+      const { enabled } = body;
 
       if (typeof enabled !== 'boolean') {
-        res.status(400).json({ error: 'enabled field must be a boolean' });
-        return;
+        return c.json({ error: 'enabled field must be a boolean' }, 400);
       }
 
       try {
         const success = await this.mcpClient.setServerEnabled(serverId, enabled);
         if (!success) {
-          res.status(404).json({ error: 'Server not found' });
-          return;
+          return c.json({ error: 'Server not found' }, 404);
         }
 
         // Persist the setting to user settings
@@ -511,7 +476,7 @@ export class AssistantServer {
         const server = servers.find(s => s.id === serverId);
         const tools = this.mcpClient.getTools();
 
-        res.json({
+        return c.json({
           id: server?.id,
           name: server?.name,
           enabled: server?.enabled,
@@ -521,37 +486,37 @@ export class AssistantServer {
         });
       } catch (error) {
         console.error('[API] Failed to toggle MCP server:', error);
-        res.status(500).json({ error: 'Failed to toggle MCP server' });
+        return c.json({ error: 'Failed to toggle MCP server' }, 500);
       }
     });
 
     // Get user settings
-    this.app.get('/api/settings', (_req: Request, res: Response) => {
+    this.app.get('/api/settings', (c) => {
       const settingsService = getUserSettingsService();
-      res.json(settingsService.getSettings());
+      return c.json(settingsService.getSettings());
     });
 
     // Update user settings
-    this.app.patch('/api/settings', (req: Request, res: Response) => {
+    this.app.patch('/api/settings', async (c) => {
       try {
+        const body = await c.req.json();
         const settingsService = getUserSettingsService();
-        const updated = settingsService.updateSettings(req.body);
-        res.json(updated);
+        const updated = settingsService.updateSettings(body);
+        return c.json(updated);
       } catch (error) {
         console.error('[API] Failed to update settings:', error);
-        res.status(500).json({ error: 'Failed to update settings' });
+        return c.json({ error: 'Failed to update settings' }, 500);
       }
     });
 
     // Get skills metadata
-    this.app.get('/api/skills', (_req: Request, res: Response) => {
+    this.app.get('/api/skills', (c) => {
       if (!this.skillManager) {
-        res.json([]);
-        return;
+        return c.json([]);
       }
 
       const skills = this.skillManager.getAllMetadata();
-      res.json(skills.map(skill => ({
+      return c.json(skills.map(skill => ({
         id: skill.id,
         name: skill.name,
         description: skill.description,
@@ -560,10 +525,9 @@ export class AssistantServer {
     });
 
     // Get all tools (native + MCP) organized as tree structure
-    this.app.get('/api/tools', (_req: Request, res: Response) => {
+    this.app.get('/api/tools', (c) => {
       if (!this.toolRunner) {
-        res.json({ builtin: [], user: [], mcp: {} });
-        return;
+        return c.json({ builtin: [], user: [], mcp: {} });
       }
 
       // Helper to extract input parameters from JSON schema
@@ -635,24 +599,24 @@ export class AssistantServer {
         }
       }
 
-      res.json({ builtin, user, mcp });
+      return c.json({ builtin, user, mcp });
     });
 
     // Get all conversations
-    this.app.get('/api/conversations', (_req: Request, res: Response) => {
+    this.app.get('/api/conversations', (c) => {
       try {
         const db = getDb();
         const conversations = db.conversations.findAll({ limit: 50 });
 
         // Enhance conversations with well-known metadata and sort
-        const enhanced = conversations.map((c) => {
-          const wellKnownMeta = getWellKnownConversationMeta(c.id);
+        const enhanced = conversations.map((conv) => {
+          const wellKnownMeta = getWellKnownConversationMeta(conv.id);
           return {
-            ...c,
+            ...conv,
             isWellKnown: !!wellKnownMeta,
             icon: wellKnownMeta?.icon,
             // Well-known conversations use their fixed title
-            title: wellKnownMeta?.title ?? c.title,
+            title: wellKnownMeta?.title ?? conv.title,
           };
         });
 
@@ -663,24 +627,24 @@ export class AssistantServer {
           return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
         });
 
-        res.json(enhanced);
+        return c.json(enhanced);
       } catch (error) {
         console.error('[API] Failed to fetch conversations:', error);
-        res.status(500).json({ error: 'Failed to fetch conversations' });
+        return c.json({ error: 'Failed to fetch conversations' }, 500);
       }
     });
 
     // Get messages for a specific conversation (with pagination support)
-    this.app.get('/api/conversations/:id/messages', (req: Request, res: Response) => {
+    this.app.get('/api/conversations/:id/messages', (c) => {
       try {
         const db = getDb();
-        const conversationId = req.params.id as string;
+        const conversationId = c.req.param('id');
 
         // Parse pagination query params
-        const limit = Math.min(Math.max(parseInt(req.query.limit as string) || 20, 1), 100);
-        const before = req.query.before as string | undefined;
-        const after = req.query.after as string | undefined;
-        const includeTotal = req.query.includeTotal === 'true';
+        const limit = Math.min(Math.max(parseInt(c.req.query('limit') || '20'), 1), 100);
+        const before = c.req.query('before');
+        const after = c.req.query('after');
+        const includeTotal = c.req.query('includeTotal') === 'true';
 
         // Helper to transform message for API response
         const transformMessage = (m: ReturnType<typeof db.messages.findById>) => {
@@ -734,45 +698,45 @@ export class AssistantServer {
           includeTotal,
         });
 
-        res.json({
+        return c.json({
           items: result.items.map(transformMessage).filter(Boolean),
           pagination: result.pagination,
         });
       } catch (error) {
         console.error('[API] Failed to fetch messages:', error);
-        res.status(500).json({ error: 'Failed to fetch messages' });
+        return c.json({ error: 'Failed to fetch messages' }, 500);
       }
     });
 
     // Delete all messages in a conversation (hard delete)
-    this.app.delete('/api/conversations/:id/messages', (req: Request, res: Response) => {
+    this.app.delete('/api/conversations/:id/messages', (c) => {
       try {
         const db = getDb();
-        const conversationId = req.params.id as string;
+        const conversationId = c.req.param('id');
 
         // Verify conversation exists
         const conversation = db.conversations.findById(conversationId);
         if (!conversation) {
-          res.status(404).json({ error: 'Conversation not found' });
-          return;
+          return c.json({ error: 'Conversation not found' }, 404);
         }
 
         // Delete all messages in the conversation
         const deletedCount = db.messages.deleteByConversationId(conversationId);
         console.log(`[API] Cleared ${deletedCount} messages from conversation ${conversationId}`);
 
-        res.json({ success: true, deletedCount });
+        return c.json({ success: true, deletedCount });
       } catch (error) {
         console.error('[API] Failed to clear messages:', error);
-        res.status(500).json({ error: 'Failed to clear messages' });
+        return c.json({ error: 'Failed to clear messages' }, 500);
       }
     });
 
     // Create a new conversation
-    this.app.post('/api/conversations', (req: Request, res: Response) => {
+    this.app.post('/api/conversations', async (c) => {
       try {
         const db = getDb();
-        const { title, channel } = req.body;
+        const body = await c.req.json();
+        const { title, channel } = body;
         const id = crypto.randomUUID();
         const now = new Date().toISOString();
 
@@ -786,55 +750,52 @@ export class AssistantServer {
         };
 
         db.conversations.create(conversation);
-        res.json(conversation);
+        return c.json(conversation);
       } catch (error) {
         console.error('[API] Failed to create conversation:', error);
-        res.status(500).json({ error: 'Failed to create conversation' });
+        return c.json({ error: 'Failed to create conversation' }, 500);
       }
     });
 
     // Soft delete a conversation (well-known conversations cannot be deleted)
-    this.app.delete('/api/conversations/:id', (req: Request, res: Response) => {
+    this.app.delete('/api/conversations/:id', (c) => {
       try {
-        const id = req.params.id as string;
+        const id = c.req.param('id');
 
         // Prevent deletion of well-known conversations
         if (isWellKnownConversation(id)) {
-          res.status(403).json({ error: 'Well-known conversations cannot be deleted' });
-          return;
+          return c.json({ error: 'Well-known conversations cannot be deleted' }, 403);
         }
 
         const db = getDb();
         db.conversations.softDelete(id);
-        res.json({ success: true });
+        return c.json({ success: true });
       } catch (error) {
         console.error('[API] Failed to delete conversation:', error);
-        res.status(500).json({ error: 'Failed to delete conversation' });
+        return c.json({ error: 'Failed to delete conversation' }, 500);
       }
     });
 
     // Rename a conversation (well-known conversations cannot be renamed)
-    this.app.patch('/api/conversations/:id', (req: Request, res: Response) => {
+    this.app.patch('/api/conversations/:id', async (c) => {
       try {
-        const id = req.params.id as string;
-        const { title } = req.body;
+        const id = c.req.param('id');
+        const body = await c.req.json();
+        const { title } = body;
 
         if (!title || typeof title !== 'string') {
-          res.status(400).json({ error: 'Title is required' });
-          return;
+          return c.json({ error: 'Title is required' }, 400);
         }
 
         // Prevent renaming of well-known conversations
         if (isWellKnownConversation(id)) {
-          res.status(403).json({ error: 'Well-known conversations cannot be renamed' });
-          return;
+          return c.json({ error: 'Well-known conversations cannot be renamed' }, 403);
         }
 
         const db = getDb();
         const conversation = db.conversations.findById(id);
         if (!conversation) {
-          res.status(404).json({ error: 'Conversation not found' });
-          return;
+          return c.json({ error: 'Conversation not found' }, 404);
         }
 
         const now = new Date().toISOString();
@@ -844,7 +805,7 @@ export class AssistantServer {
           updatedAt: now,
         });
 
-        res.json({
+        return c.json({
           success: true,
           conversation: {
             id,
@@ -855,26 +816,25 @@ export class AssistantServer {
         });
       } catch (error) {
         console.error('[API] Failed to rename conversation:', error);
-        res.status(500).json({ error: 'Failed to rename conversation' });
+        return c.json({ error: 'Failed to rename conversation' }, 500);
       }
     });
 
     // Get chat history (for current/active conversation)
-    this.app.get('/api/messages', (req: Request, res: Response) => {
+    this.app.get('/api/messages', (c) => {
       try {
         const db = getDb();
-        const limit = parseInt(req.query.limit as string) || 50;
+        const limit = parseInt(c.req.query('limit') || '50');
 
         // Get the most recent conversation
         const conversations = db.conversations.findAll({ limit: 1 });
 
         if (conversations.length === 0) {
-          res.json([]);
-          return;
+          return c.json([]);
         }
 
         const messages = db.messages.findByConversationId(conversations[0].id, { limit });
-        res.json(messages.map(m => ({
+        return c.json(messages.map(m => ({
           id: m.id,
           role: m.role,
           content: m.content,
@@ -909,17 +869,17 @@ export class AssistantServer {
         })));
       } catch (error) {
         console.error('[API] Failed to fetch messages:', error);
-        res.json([]);
+        return c.json([]);
       }
     });
 
     // Send a message (REST alternative to WebSocket)
-    this.app.post('/api/messages', async (req: Request, res: Response) => {
+    this.app.post('/api/messages', async (c) => {
       try {
-        const { content } = req.body;
+        const body = await c.req.json();
+        const { content } = body;
         if (!content) {
-          res.status(400).json({ error: 'Content is required' });
-          return;
+          return c.json({ error: 'Content is required' }, 400);
         }
 
         const message = {
@@ -931,59 +891,57 @@ export class AssistantServer {
         };
 
         await this.supervisor.handleMessage(message);
-        res.json({ success: true, messageId: message.id });
+        return c.json({ success: true, messageId: message.id });
       } catch (error) {
-        res.status(500).json({ error: String(error) });
+        return c.json({ error: String(error) }, 500);
       }
     });
 
     // Get connected clients count
-    this.app.get('/api/clients', (_req: Request, res: Response) => {
-      res.json({ count: this.wsChannel.getConnectedClients() });
+    this.app.get('/api/clients', (c) => {
+      return c.json({ count: this.wsChannel.getConnectedClients() });
     });
 
     // Get active tasks
-    this.app.get('/api/tasks', (_req: Request, res: Response) => {
-      res.json(this.taskManager?.getTasksForApi() || []);
+    this.app.get('/api/tasks', (c) => {
+      return c.json(this.taskManager?.getTasksForApi() || []);
     });
 
     // Toggle task enabled/disabled status
-    this.app.patch('/api/tasks/:id', (req: Request, res: Response) => {
-      const taskId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
-      const { enabled } = req.body || {};
+    this.app.patch('/api/tasks/:id', async (c) => {
+      const taskId = c.req.param('id');
+      const body = await c.req.json();
+      const { enabled } = body || {};
 
       if (!this.taskManager) {
-        res.status(500).json({ error: 'Task manager not initialized' });
-        return;
+        return c.json({ error: 'Task manager not initialized' }, 500);
       }
 
       if (typeof enabled !== 'boolean') {
-        res.status(400).json({ error: 'enabled must be a boolean' });
-        return;
+        return c.json({ error: 'enabled must be a boolean' }, 400);
       }
 
       const success = this.taskManager.setTaskEnabled(taskId, enabled);
       if (!success) {
-        res.status(404).json({ error: 'Task not found' });
-        return;
+        return c.json({ error: 'Task not found' }, 404);
       }
 
       // Return updated task info
       const tasks = this.taskManager.getTasksForApi();
       const task = tasks.find(t => t.id === taskId);
-      res.json(task || { id: taskId, enabled });
+      return c.json(task || { id: taskId, enabled });
     });
 
     // Run a task immediately
-    this.app.post('/api/tasks/:id/run', async (req: Request, res: Response) => {
+    this.app.post('/api/tasks/:id/run', async (c) => {
       try {
-        const taskId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+        const taskId = c.req.param('id');
         const task = this.taskManager?.getTaskById(taskId);
-        const { conversationId } = req.body || {};
+        const body = await c.req.json().catch(() => ({}));
+        const { conversationId } = body || {};
 
         if (!task) {
-          res.status(404).json({ error: 'Task not found' });
-          return;
+          return c.json({ error: 'Task not found' }, 404);
         }
 
         // Get description and tools from jsonConfig
@@ -1036,10 +994,10 @@ export class AssistantServer {
           console.error('[API] Task execution error:', error);
         });
 
-        res.json({ success: true, taskId: task.id, message: 'Task started' });
+        return c.json({ success: true, taskId: task.id, message: 'Task started' });
       } catch (error) {
         console.error('[API] Failed to run task:', error);
-        res.status(500).json({ error: 'Failed to run task' });
+        return c.json({ error: 'Failed to run task' }, 500);
       }
     });
 
@@ -1086,34 +1044,32 @@ export class AssistantServer {
     }
 
     // REST endpoints for browser session management
-    this.app.delete('/api/browser/sessions/:id', async (req: Request, res: Response) => {
+    this.app.delete('/api/browser/sessions/:id', async (c) => {
       try {
-        const sessionId = req.params.id as string;
+        const sessionId = c.req.param('id');
         if (!this.browserManager) {
-          res.status(404).json({ error: 'Browser manager not configured' });
-          return;
+          return c.json({ error: 'Browser manager not configured' }, 404);
         }
         await this.browserManager.closeSession(sessionId);
-        res.json({ success: true, sessionId });
+        return c.json({ success: true, sessionId });
       } catch (error) {
         console.error('[API] Failed to close browser session:', error);
-        res.status(500).json({ error: 'Failed to close browser session' });
+        return c.json({ error: 'Failed to close browser session' }, 500);
       }
     });
 
     // REST endpoints for desktop session management
-    this.app.delete('/api/desktop/sessions/:id', async (req: Request, res: Response) => {
+    this.app.delete('/api/desktop/sessions/:id', async (c) => {
       try {
-        const sessionId = req.params.id as string;
+        const sessionId = c.req.param('id');
         if (!this.desktopManager) {
-          res.status(404).json({ error: 'Desktop manager not configured' });
-          return;
+          return c.json({ error: 'Desktop manager not configured' }, 404);
         }
         await this.desktopManager.closeSession(sessionId);
-        res.json({ success: true, sessionId });
+        return c.json({ success: true, sessionId });
       } catch (error) {
         console.error('[API] Failed to close desktop session:', error);
-        res.status(500).json({ error: 'Failed to close desktop session' });
+        return c.json({ error: 'Failed to close desktop session' }, 500);
       }
     });
 
@@ -1124,97 +1080,95 @@ export class AssistantServer {
       const traceStore = this.traceStore;
 
       // Get traces (list)
-      this.app.get('/api/traces/traces', (req: Request, res: Response) => {
+      this.app.get('/api/traces/traces', (c) => {
         try {
-          const limit = parseInt(req.query.limit as string) || 50;
-          const conversationId = req.query.conversationId as string | undefined;
-          const status = req.query.status as string | undefined;
-          const since = req.query.since as string | undefined;
-          res.json(traceStore.getTraces({ limit, conversationId, status, since }));
+          const limit = parseInt(c.req.query('limit') || '50');
+          const conversationId = c.req.query('conversationId');
+          const status = c.req.query('status');
+          const since = c.req.query('since');
+          return c.json(traceStore.getTraces({ limit, conversationId, status, since }));
         } catch (error) {
           console.error('[API] Failed to fetch traces:', error);
-          res.status(500).json({ error: 'Failed to fetch traces' });
+          return c.json({ error: 'Failed to fetch traces' }, 500);
         }
       });
 
       // Get single trace with all children
-      this.app.get('/api/traces/traces/:traceId', (req: Request, res: Response) => {
+      this.app.get('/api/traces/traces/:traceId', (c) => {
         try {
-          const traceId = req.params.traceId as string;
+          const traceId = c.req.param('traceId');
           const result = traceStore.getFullTrace(traceId);
           if (!result) {
-            res.status(404).json({ error: 'Trace not found' });
-            return;
+            return c.json({ error: 'Trace not found' }, 404);
           }
-          res.json(result);
+          return c.json(result);
         } catch (error) {
           console.error('[API] Failed to fetch trace:', error);
-          res.status(500).json({ error: 'Failed to fetch trace' });
+          return c.json({ error: 'Failed to fetch trace' }, 500);
         }
       });
 
       // Get LLM calls (list)
-      this.app.get('/api/traces/llm-calls', (req: Request, res: Response) => {
+      this.app.get('/api/traces/llm-calls', (c) => {
         try {
-          const limit = parseInt(req.query.limit as string) || 50;
-          const traceId = req.query.traceId as string | undefined;
-          const spanId = req.query.spanId as string | undefined;
-          const workload = req.query.workload as string | undefined;
-          const provider = req.query.provider as string | undefined;
-          const since = req.query.since as string | undefined;
-          const conversationId = req.query.conversationId as string | undefined;
-          res.json(traceStore.getLlmCalls({
+          const limit = parseInt(c.req.query('limit') || '50');
+          const traceId = c.req.query('traceId');
+          const spanId = c.req.query('spanId');
+          const workload = c.req.query('workload');
+          const provider = c.req.query('provider');
+          const since = c.req.query('since');
+          const conversationId = c.req.query('conversationId');
+          return c.json(traceStore.getLlmCalls({
             limit, traceId, spanId,
             workload: workload as 'main' | 'fast' | 'embedding' | 'image_gen' | 'browser' | 'voice' | undefined,
             provider, since, conversationId,
           }));
         } catch (error) {
           console.error('[API] Failed to fetch LLM calls:', error);
-          res.status(500).json({ error: 'Failed to fetch LLM calls' });
+          return c.json({ error: 'Failed to fetch LLM calls' }, 500);
         }
       });
 
       // Get single LLM call
-      this.app.get('/api/traces/llm-calls/:callId', (req: Request, res: Response) => {
+      this.app.get('/api/traces/llm-calls/:callId', (c) => {
         try {
-          const callId = req.params.callId as string;
+          const callId = c.req.param('callId');
           const call = traceStore.getLlmCallById(callId);
           if (!call) {
-            res.status(404).json({ error: 'LLM call not found' });
-            return;
+            return c.json({ error: 'LLM call not found' }, 404);
           }
-          res.json(call);
+          return c.json(call);
         } catch (error) {
           console.error('[API] Failed to fetch LLM call:', error);
-          res.status(500).json({ error: 'Failed to fetch LLM call' });
+          return c.json({ error: 'Failed to fetch LLM call' }, 500);
         }
       });
 
       // Get tool calls (list)
-      this.app.get('/api/traces/tool-calls', (req: Request, res: Response) => {
+      this.app.get('/api/traces/tool-calls', (c) => {
         try {
-          const limit = parseInt(req.query.limit as string) || 50;
-          const traceId = req.query.traceId as string | undefined;
-          const spanId = req.query.spanId as string | undefined;
-          const llmCallId = req.query.llmCallId as string | undefined;
-          res.json(traceStore.getToolCalls({ limit, traceId, spanId, llmCallId }));
+          const limit = parseInt(c.req.query('limit') || '50');
+          const traceId = c.req.query('traceId');
+          const spanId = c.req.query('spanId');
+          const llmCallId = c.req.query('llmCallId');
+          return c.json(traceStore.getToolCalls({ limit, traceId, spanId, llmCallId }));
         } catch (error) {
           console.error('[API] Failed to fetch tool calls:', error);
-          res.status(500).json({ error: 'Failed to fetch tool calls' });
+          return c.json({ error: 'Failed to fetch tool calls' }, 500);
         }
       });
 
       // Get stats
-      this.app.get('/api/traces/stats', (req: Request, res: Response) => {
+      this.app.get('/api/traces/stats', (c) => {
         try {
-          const since = req.query.since as string | undefined;
+          const since = c.req.query('since');
           const stats = traceStore.getStats(since);
           // Include whether token reduction is currently enabled
           const tokenReductionEnabled = this.llmService?.isTokenReductionEnabled() ?? false;
-          res.json({ ...stats, tokenReductionEnabled });
+          return c.json({ ...stats, tokenReductionEnabled });
         } catch (error) {
           console.error('[API] Failed to fetch trace stats:', error);
-          res.status(500).json({ error: 'Failed to fetch trace stats' });
+          return c.json({ error: 'Failed to fetch trace stats' }, 500);
         }
       });
 
@@ -1224,7 +1178,7 @@ export class AssistantServer {
     // Setup RAG project routes
     if (this.ragProjectService) {
       const ragRoutes = createRAGProjectRoutes(this.ragProjectService);
-      this.app.use('/api/rag', ragRoutes);
+      this.app.route('/api/rag', ragRoutes);
       console.log('[Server] RAG project routes enabled');
     }
   }
@@ -1398,29 +1352,63 @@ export class AssistantServer {
       console.warn('[MCP Server] Enabled but toolRunner not available — skipping mount');
     }
 
-    // Start listening on configured bind address (default: localhost only)
-    return new Promise((resolve) => {
-      this.server.listen(this.port, this.bindAddress, () => {
-        console.log(`[Server] HTTP server listening on http://${this.bindAddress}:${this.port}`);
-        console.log(`[Server] WebSocket server ready on ws://${this.bindAddress}:${this.port}`);
-        if (this.bindAddress === '127.0.0.1' || this.bindAddress === 'localhost') {
-          console.log('[Server] Security: Accepting connections from localhost only');
-        } else if (this.bindAddress === '0.0.0.0') {
-          console.warn('[Server] Security: Accepting connections from all interfaces - ensure proper authentication is configured');
-        }
-        resolve();
-      });
+    // Start the server with @hono/node-server
+    const nodeServer = serve({
+      fetch: this.app.fetch,
+      port: this.port,
+      hostname: this.bindAddress,
     });
+
+    // Get the underlying HTTP server for WebSocket upgrade handling
+    this.server = nodeServer as unknown as Server;
+
+    // Handle HTTP upgrade requests and route to appropriate WebSocket server
+    this.server.on('upgrade', (request, socket, head) => {
+      const origin = request.headers.origin;
+      const pathname = new URL(request.url || '/', `http://${request.headers.host}`).pathname;
+
+      // Verify origin for security
+      if (origin && !this.allowedOrigins.includes(origin)) {
+        console.warn(`[WebSocket] Blocked connection from origin: ${origin} on path: ${pathname}`);
+        socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
+        socket.destroy();
+        return;
+      }
+
+      if (pathname === '/voice') {
+        this.voiceWss.handleUpgrade(request, socket, head, (ws) => {
+          this.voiceWss.emit('connection', ws, request);
+        });
+      } else if (pathname === '/') {
+        this.wss.handleUpgrade(request, socket, head, (ws) => {
+          this.wss.emit('connection', ws, request);
+        });
+      } else {
+        socket.destroy();
+      }
+    });
+
+    console.log(`[Server] HTTP server listening on http://${this.bindAddress}:${this.port}`);
+    console.log(`[Server] WebSocket server ready on ws://${this.bindAddress}:${this.port}`);
+    if (this.bindAddress === '127.0.0.1' || this.bindAddress === 'localhost') {
+      console.log('[Server] Security: Accepting connections from localhost only');
+    } else if (this.bindAddress === '0.0.0.0') {
+      console.warn('[Server] Security: Accepting connections from all interfaces - ensure proper authentication is configured');
+    }
   }
 
   async stop(): Promise<void> {
     return new Promise((resolve, reject) => {
       this.voiceWss.close(() => {
         this.wss.close(() => {
-          this.server.close((err) => {
-            if (err) reject(err);
-            else resolve();
-          });
+          if (this.server) {
+            this.server.close((err) => {
+              if (err) reject(err);
+              else resolve();
+            });
+          } else {
+            resolve();
+          }
         });
       });
     });

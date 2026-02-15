@@ -1,12 +1,11 @@
 /**
  * RAG Projects API Routes
- * Express routes for RAG project management.
+ * Hono routes for RAG project management with native file upload.
  */
 
-import { Router, type Request, type Response } from 'express';
-import multer from 'multer';
-import { existsSync, mkdirSync, statSync } from 'fs';
-import { copyFile, unlink } from 'fs/promises';
+import { Hono } from 'hono';
+import { existsSync, mkdirSync, statSync, createReadStream } from 'fs';
+import { writeFile, unlink } from 'fs/promises';
 import { join, extname, basename } from 'path';
 import type { RAGProjectService } from './service.js';
 import { MAX_FILE_UPLOAD_SIZE_BYTES, RAG_DEFAULT_TOP_K } from '../constants.js';
@@ -14,33 +13,17 @@ import { MAX_FILE_UPLOAD_SIZE_BYTES, RAG_DEFAULT_TOP_K } from '../constants.js';
 // Supported file extensions for upload
 const SUPPORTED_UPLOAD_EXTENSIONS = new Set(['.pdf', '.txt', '.md', '.json', '.csv', '.html']);
 
-// Configure multer for file upload (temp storage)
-const upload = multer({
-  dest: 'uploads/',
-  limits: {
-    fileSize: MAX_FILE_UPLOAD_SIZE_BYTES,
-  },
-  fileFilter: (_req, file, cb) => {
-    const ext = extname(file.originalname).toLowerCase();
-    if (SUPPORTED_UPLOAD_EXTENSIONS.has(ext)) {
-      cb(null, true);
-    } else {
-      cb(new Error(`Unsupported file type: ${ext}. Supported: ${[...SUPPORTED_UPLOAD_EXTENSIONS].join(', ')}`));
-    }
-  },
-});
-
 /**
- * Create Express router for RAG project endpoints.
+ * Create Hono router for RAG project endpoints.
  */
-export function createRAGProjectRoutes(ragService: RAGProjectService): Router {
-  const router = Router();
+export function createRAGProjectRoutes(ragService: RAGProjectService): Hono {
+  const router = new Hono();
 
   /**
-   * GET /api/rag/projects
+   * GET /projects
    * List all RAG projects.
    */
-  router.get('/projects', async (_req: Request, res: Response) => {
+  router.get('/projects', async (c) => {
     try {
       const projects = await ragService.listProjects();
 
@@ -50,52 +33,59 @@ export function createRAGProjectRoutes(ragService: RAGProjectService): Router {
         isIndexing: ragService.isIndexing(project.id),
       }));
 
-      res.json(projectsWithStatus);
+      return c.json(projectsWithStatus);
     } catch (error) {
       console.error('[RAGProjects] Failed to list projects:', error);
-      res.status(500).json({ error: 'Failed to list projects' });
+      return c.json({ error: 'Failed to list projects' }, 500);
     }
   });
 
   /**
-   * GET /api/rag/projects/:id
+   * GET /projects/:id
    * Get detailed project info including document list.
    */
-  router.get('/projects/:id', async (req: Request, res: Response) => {
+  router.get('/projects/:id', async (c) => {
     try {
-      const projectId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+      const projectId = c.req.param('id');
       const project = await ragService.getProjectDetails(projectId);
 
       if (!project) {
-        res.status(404).json({ error: 'Project not found' });
-        return;
+        return c.json({ error: 'Project not found' }, 404);
       }
 
-      res.json({
+      return c.json({
         ...project,
         isIndexing: ragService.isIndexing(projectId),
       });
     } catch (error) {
       console.error(`[RAGProjects] Failed to get project:`, error);
-      res.status(500).json({ error: 'Failed to get project details' });
+      return c.json({ error: 'Failed to get project details' }, 500);
     }
   });
 
   /**
-   * POST /api/rag/projects/:id/index
+   * POST /projects/:id/index
    * Trigger indexing for a project.
    * Returns immediately; progress is sent via WebSocket.
    * Query param: ?force=true to force full re-index
    */
-  router.post('/projects/:id/index', async (req: Request, res: Response) => {
+  router.post('/projects/:id/index', async (c) => {
     try {
-      const projectId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
-      const force = req.query.force === 'true' || req.body.force === true;
+      const projectId = c.req.param('id');
+      const forceQuery = c.req.query('force');
+      let force = forceQuery === 'true';
+
+      // Also check body for force param
+      try {
+        const body = await c.req.json();
+        if (body.force === true) force = true;
+      } catch {
+        // No body or invalid JSON - ignore
+      }
 
       // Check if already indexing
       if (ragService.isIndexing(projectId)) {
-        res.status(409).json({ error: 'Indexing already in progress' });
-        return;
+        return c.json({ error: 'Indexing already in progress' }, 409);
       }
 
       // Start indexing (async - don't wait for completion)
@@ -103,7 +93,7 @@ export function createRAGProjectRoutes(ragService: RAGProjectService): Router {
         console.error(`[RAGProjects] Indexing error for ${projectId}:`, error);
       });
 
-      res.json({
+      return c.json({
         success: true,
         message: force ? 'Force re-indexing started' : 'Indexing started',
         projectId,
@@ -111,22 +101,22 @@ export function createRAGProjectRoutes(ragService: RAGProjectService): Router {
       });
     } catch (error) {
       console.error(`[RAGProjects] Failed to start indexing:`, error);
-      res.status(500).json({ error: 'Failed to start indexing' });
+      return c.json({ error: 'Failed to start indexing' }, 500);
     }
   });
 
   /**
-   * POST /api/rag/projects/:id/query
+   * POST /projects/:id/query
    * Query a project's vectors.
    */
-  router.post('/projects/:id/query', async (req: Request, res: Response) => {
+  router.post('/projects/:id/query', async (c) => {
     try {
-      const projectId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
-      const { query, topK, minScore, contentType } = req.body;
+      const projectId = c.req.param('id');
+      const body = await c.req.json();
+      const { query, topK, minScore, contentType } = body;
 
       if (!query || typeof query !== 'string') {
-        res.status(400).json({ error: 'Query is required' });
-        return;
+        return c.json({ error: 'Query is required' }, 400);
       }
 
       const response = await ragService.queryProject(projectId, {
@@ -136,47 +126,49 @@ export function createRAGProjectRoutes(ragService: RAGProjectService): Router {
         contentType: contentType || 'all',
       });
 
-      res.json(response);
+      return c.json(response);
     } catch (error) {
       console.error(`[RAGProjects] Query error:`, error);
-      res.status(500).json({ error: 'Query failed' });
+      return c.json({ error: 'Query failed' }, 500);
     }
   });
 
   /**
-   * GET /api/rag/supported-extensions
+   * GET /supported-extensions
    * Get list of supported file extensions.
    */
-  router.get('/supported-extensions', (_req: Request, res: Response) => {
-    res.json({
+  router.get('/supported-extensions', (c) => {
+    return c.json({
       extensions: ragService.getSupportedExtensions(),
     });
   });
 
   /**
-   * POST /api/rag/projects/:id/upload
+   * POST /projects/:id/upload
    * Upload files to a project's documents folder.
+   * Uses native Hono formData() parsing (no multer).
    * Query param: ?index=true to trigger indexing after upload
    */
-  router.post('/projects/:id/upload', upload.array('files', 20), async (req: Request, res: Response) => {
+  router.post('/projects/:id/upload', async (c) => {
     const uploadedFiles: string[] = [];
     const tempFiles: string[] = [];
 
     try {
-      const projectId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
-      const triggerIndex = req.query.index === 'true';
+      const projectId = c.req.param('id');
+      const triggerIndex = c.req.query('index') === 'true';
 
       // Check if project exists
       const project = await ragService.getProjectDetails(projectId);
       if (!project) {
-        res.status(404).json({ error: 'Project not found' });
-        return;
+        return c.json({ error: 'Project not found' }, 404);
       }
 
-      const files = req.files as Express.Multer.File[];
+      // Parse multipart form data using native Hono
+      const formData = await c.req.formData();
+      const files = formData.getAll('files') as File[];
+
       if (!files || files.length === 0) {
-        res.status(400).json({ error: 'No files provided' });
-        return;
+        return c.json({ error: 'No files provided' }, 400);
       }
 
       // Get project documents path
@@ -185,22 +177,31 @@ export function createRAGProjectRoutes(ragService: RAGProjectService): Router {
         mkdirSync(docsPath, { recursive: true });
       }
 
-      // Copy each file to documents folder
+      // Process each file
       for (const file of files) {
-        tempFiles.push(file.path);
-        const destPath = join(docsPath, file.originalname);
-        await copyFile(file.path, destPath);
-        uploadedFiles.push(file.originalname);
-        console.log(`[RAGProjects] Uploaded file: ${file.originalname} to ${projectId}`);
-      }
-
-      // Clean up temp files
-      for (const tempPath of tempFiles) {
-        try {
-          await unlink(tempPath);
-        } catch {
-          // Ignore cleanup errors
+        // Validate file extension
+        const ext = extname(file.name).toLowerCase();
+        if (!SUPPORTED_UPLOAD_EXTENSIONS.has(ext)) {
+          return c.json({
+            error: `Unsupported file type: ${ext}. Supported: ${[...SUPPORTED_UPLOAD_EXTENSIONS].join(', ')}`,
+            uploadedFiles,
+          }, 400);
         }
+
+        // Check file size
+        if (file.size > MAX_FILE_UPLOAD_SIZE_BYTES) {
+          return c.json({
+            error: `File ${file.name} exceeds maximum size of ${MAX_FILE_UPLOAD_SIZE_BYTES / 1024 / 1024}MB`,
+            uploadedFiles,
+          }, 400);
+        }
+
+        // Write file to documents folder
+        const destPath = join(docsPath, file.name);
+        const arrayBuffer = await file.arrayBuffer();
+        await writeFile(destPath, Buffer.from(arrayBuffer));
+        uploadedFiles.push(file.name);
+        console.log(`[RAGProjects] Uploaded file: ${file.name} to ${projectId}`);
       }
 
       // Trigger indexing if requested (async - don't wait)
@@ -210,7 +211,7 @@ export function createRAGProjectRoutes(ragService: RAGProjectService): Router {
         });
       }
 
-      res.json({
+      return c.json({
         success: true,
         projectId,
         uploadedFiles,
@@ -227,35 +228,33 @@ export function createRAGProjectRoutes(ragService: RAGProjectService): Router {
       }
 
       console.error(`[RAGProjects] Upload error:`, error);
-      res.status(500).json({
+      return c.json({
         error: error instanceof Error ? error.message : 'Upload failed',
         uploadedFiles,
-      });
+      }, 500);
     }
   });
 
   /**
-   * GET /api/rag/projects/:id/documents/:filename
+   * GET /projects/:id/documents/:filename
    * Serve a document file from a project's documents folder.
    * Primarily used for PDF viewing in the frontend.
    */
-  router.get('/projects/:id/documents/:filename', async (req: Request, res: Response) => {
+  router.get('/projects/:id/documents/:filename', async (c) => {
     try {
-      const projectId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
-      const filename = Array.isArray(req.params.filename) ? req.params.filename[0] : req.params.filename;
+      const projectId = c.req.param('id');
+      const filename = c.req.param('filename');
 
       // Validate filename to prevent path traversal
       const sanitizedFilename = basename(filename);
       if (sanitizedFilename !== filename || filename.includes('..')) {
-        res.status(400).json({ error: 'Invalid filename' });
-        return;
+        return c.json({ error: 'Invalid filename' }, 400);
       }
 
       // Get project details
       const project = await ragService.getProjectDetails(projectId);
       if (!project) {
-        res.status(404).json({ error: 'Project not found' });
-        return;
+        return c.json({ error: 'Project not found' }, 404);
       }
 
       // Build full path to document
@@ -263,8 +262,7 @@ export function createRAGProjectRoutes(ragService: RAGProjectService): Router {
 
       // Check file exists
       if (!existsSync(docPath)) {
-        res.status(404).json({ error: 'Document not found' });
-        return;
+        return c.json({ error: 'Document not found' }, 404);
       }
 
       // Get file stats for content-length
@@ -283,19 +281,21 @@ export function createRAGProjectRoutes(ragService: RAGProjectService): Router {
 
       const contentType = contentTypes[ext] || 'application/octet-stream';
 
-      // Set headers for inline viewing (especially for PDFs)
-      res.setHeader('Content-Type', contentType);
-      res.setHeader('Content-Length', stats.size);
-      res.setHeader('Content-Disposition', `inline; filename="${sanitizedFilename}"`);
+      // Read the file and return as response
+      const { readFileSync } = await import('fs');
+      const content = readFileSync(docPath);
 
-      // Allow CORS for PDF viewer
-      res.setHeader('Access-Control-Allow-Origin', '*');
-
-      // Send file
-      res.sendFile(docPath);
+      return new Response(content, {
+        headers: {
+          'Content-Type': contentType,
+          'Content-Length': String(stats.size),
+          'Content-Disposition': `inline; filename="${sanitizedFilename}"`,
+          'Access-Control-Allow-Origin': '*',
+        },
+      });
     } catch (error) {
       console.error(`[RAGProjects] Error serving document:`, error);
-      res.status(500).json({ error: 'Failed to serve document' });
+      return c.json({ error: 'Failed to serve document' }, 500);
     }
   });
 

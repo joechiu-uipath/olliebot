@@ -6,7 +6,7 @@ A multi-channel AI assistant with continuous monitoring, agentic task execution,
 
 - **Runtime**: Node.js with TypeScript (ES2022, ESM modules)
 - **Package Manager**: pnpm with workspaces
-- **Backend**: Express + WebSocket server
+- **Backend**: Hono + WebSocket server
 - **Frontend**: React (JSX, Vite) in `web/` workspace
 - **TUI**: React Ink in `tui/` workspace
 - **Database**: SQLite via better-sqlite3
@@ -32,7 +32,7 @@ src/
 ├── missions/         # Long-running mission management
 ├── rag-projects/     # Vector embeddings + retrieval
 ├── self-coding/      # Frontend code modification tools
-├── server/           # Express + WebSocket server
+├── server/           # Hono HTTP + WebSocket server
 ├── services/         # Shared services
 ├── settings/         # User settings management
 ├── skills/           # User-defined skills (markdown-based)
