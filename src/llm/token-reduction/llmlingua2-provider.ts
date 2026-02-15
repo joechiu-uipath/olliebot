@@ -77,7 +77,7 @@ export class LLMLingua2Provider implements TokenReductionProvider {
           dtype: 'fp32' as const,
         },
         oaiTokenizer,
-        logger: (msg: unknown) => console.log(`[TokenReduction:LLMLingua2] ${msg}`),
+        logger: () => {},
       };
 
       const result = await LLMLingua2.WithBERTMultilingual(MODEL_NAME, {
