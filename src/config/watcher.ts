@@ -56,26 +56,19 @@ export class ConfigWatcher extends EventEmitter {
   }
 
   private async loadExistingConfigs(): Promise<void> {
-    console.log(`[ConfigWatcher] Loading existing configs from: ${this.configDir}`);
     try {
       const files = await readdir(this.configDir);
-      console.log(`[ConfigWatcher] Found files in directory:`, files);
       const mdFiles = files.filter((f) => extname(f) === '.md');
-      console.log(`[ConfigWatcher] Filtered .md files:`, mdFiles);
 
       for (const file of mdFiles) {
         const mdPath = join(this.configDir, file);
-        console.log(`[ConfigWatcher] Loading config file: ${mdPath}`);
         const config = await this.loadConfigFile(mdPath);
         if (config) {
-          console.log(`[ConfigWatcher]   Loaded: ${config.name}, hasJson: ${!!config.jsonContent}`);
           this.configs.set(config.name, config);
-        } else {
-          console.log(`[ConfigWatcher]   Failed to load: ${file}`);
         }
       }
 
-      console.log(`[ConfigWatcher] Loaded ${this.configs.size} config files`);
+      console.log(`[ConfigWatcher] Loaded ${this.configs.size} configs from ${this.configDir}`);
     } catch (error) {
       console.error('[ConfigWatcher] Error loading configs:', error);
     }
@@ -112,7 +105,6 @@ export class ConfigWatcher extends EventEmitter {
   private startWatching(): void {
     // Use forward slashes for glob pattern (chokidar requirement)
     const watchPattern = this.configDir.replace(/\\/g, '/') + '/*.md';
-    console.log(`[ConfigWatcher] Setting up watcher with pattern: ${watchPattern}`);
 
     this.watcher = watch(watchPattern, {
       persistent: true,
@@ -126,45 +118,31 @@ export class ConfigWatcher extends EventEmitter {
       interval: 1000,
     });
 
-    this.watcher.on('ready', () => {
-      console.log(`[ConfigWatcher] Watcher is ready. watchPattern: ${watchPattern}`);
-    });
-
     this.watcher.on('add', async (filePath) => {
-      console.log(`[ConfigWatcher] File added detected: ${filePath}`);
       const config = await this.loadConfigFile(filePath);
       if (config) {
         this.configs.set(config.name, config);
-        console.log(`[ConfigWatcher] Emitting config:added for ${config.name}`);
         this.emit('config:added', config);
       }
     });
 
     this.watcher.on('change', async (filePath) => {
-      console.log(`[ConfigWatcher] File change detected: ${filePath}`);
       const config = await this.loadConfigFile(filePath);
       if (config) {
         this.configs.set(config.name, config);
-        console.log(`[ConfigWatcher] Emitting config:changed for ${config.name}`);
         this.emit('config:changed', config);
       }
     });
 
     this.watcher.on('unlink', (filePath) => {
-      console.log(`[ConfigWatcher] File unlink detected: ${filePath}`);
       const name = basename(filePath, '.md');
       this.configs.delete(name);
-      console.log(`[ConfigWatcher] Emitting config:removed for ${name}`);
       this.emit('config:removed', filePath);
     });
 
     this.watcher.on('error', (error) => {
       console.error(`[ConfigWatcher] Watcher error:`, error);
       this.emit('config:error', error);
-    });
-
-    this.watcher.on('raw', (event, path, details) => {
-      console.log(`[ConfigWatcher] Raw event: ${event} on ${path}`, details);
     });
 
     console.log(`[ConfigWatcher] Watching ${this.configDir} for changes`);
@@ -174,19 +152,13 @@ export class ConfigWatcher extends EventEmitter {
    * Update the JSON config for a given task
    */
   async updateJsonConfig(name: string, jsonContent: string): Promise<void> {
-    console.log(`[ConfigWatcher] updateJsonConfig called for: ${name}`);
-    console.log(`[ConfigWatcher]   Available configs:`, Array.from(this.configs.keys()));
-
     const config = this.configs.get(name);
     if (!config) {
-      console.error(`[ConfigWatcher]   Config not found in map: ${name}`);
       throw new Error(`Config not found: ${name}`);
     }
 
-    console.log(`[ConfigWatcher]   Writing JSON to: ${config.jsonPath}`);
     const { writeFile } = await import('fs/promises');
     await writeFile(config.jsonPath, jsonContent, 'utf-8');
-    console.log(`[ConfigWatcher]   JSON file written successfully`);
 
     config.jsonContent = jsonContent;
     this.configs.set(name, config);
