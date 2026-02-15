@@ -9,15 +9,26 @@ import { describe, it, expect } from 'vitest';
 import { formatToolResultBlocks } from './tool-results.js';
 import type { ToolResult } from '../tools/types.js';
 
+/** Build a minimal ToolResult with required timing fields */
+function makeResult(overrides: Partial<ToolResult> & Pick<ToolResult, 'requestId' | 'toolName' | 'success'>): ToolResult {
+  const now = new Date();
+  return {
+    startTime: now,
+    endTime: now,
+    durationMs: 0,
+    ...overrides,
+  };
+}
+
 describe('formatToolResultBlocks', () => {
   it('formats a successful tool result', () => {
     const results: ToolResult[] = [
-      {
+      makeResult({
         requestId: 'req-1',
         toolName: 'web_search',
         success: true,
         output: { query: 'test', results: [] },
-      },
+      }),
     ];
 
     const blocks = formatToolResultBlocks(results);
@@ -33,12 +44,12 @@ describe('formatToolResultBlocks', () => {
 
   it('formats a failed tool result with error message', () => {
     const results: ToolResult[] = [
-      {
+      makeResult({
         requestId: 'req-2',
         toolName: 'bad_tool',
         success: false,
         error: 'Tool not found',
-      },
+      }),
     ];
 
     const blocks = formatToolResultBlocks(results);
@@ -54,11 +65,11 @@ describe('formatToolResultBlocks', () => {
 
   it('formats a failed tool result with default error message', () => {
     const results: ToolResult[] = [
-      {
+      makeResult({
         requestId: 'req-3',
         toolName: 'broken_tool',
         success: false,
-      },
+      }),
     ];
 
     const blocks = formatToolResultBlocks(results);
@@ -67,13 +78,13 @@ describe('formatToolResultBlocks', () => {
 
   it('formats display-only results with minimal content', () => {
     const results: ToolResult[] = [
-      {
+      makeResult({
         requestId: 'req-4',
         toolName: 'create_image',
         success: true,
         output: { dataUrl: 'data:image/png;base64,...huge...' },
         displayOnly: true,
-      },
+      }),
     ];
 
     const blocks = formatToolResultBlocks(results);
@@ -82,14 +93,14 @@ describe('formatToolResultBlocks', () => {
 
   it('formats display-only results with custom summary', () => {
     const results: ToolResult[] = [
-      {
+      makeResult({
         requestId: 'req-5',
         toolName: 'create_image',
         success: true,
         output: { dataUrl: 'data:image/png;base64,...' },
         displayOnly: true,
         displayOnlySummary: 'Generated a 512x512 image of a cat',
-      },
+      }),
     ];
 
     const blocks = formatToolResultBlocks(results);
@@ -98,12 +109,12 @@ describe('formatToolResultBlocks', () => {
 
   it('strips binary data from non-display-only results', () => {
     const results: ToolResult[] = [
-      {
+      makeResult({
         requestId: 'req-6',
         toolName: 'screenshot',
         success: true,
         output: { screenshot: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUg...' },
-      },
+      }),
     ];
 
     const blocks = formatToolResultBlocks(results);
@@ -113,12 +124,12 @@ describe('formatToolResultBlocks', () => {
 
   it('handles string output directly', () => {
     const results: ToolResult[] = [
-      {
+      makeResult({
         requestId: 'req-7',
         toolName: 'simple_tool',
         success: true,
         output: 'Simple string result',
-      },
+      }),
     ];
 
     const blocks = formatToolResultBlocks(results);
@@ -127,9 +138,9 @@ describe('formatToolResultBlocks', () => {
 
   it('handles multiple results', () => {
     const results: ToolResult[] = [
-      { requestId: 'req-a', toolName: 'tool_a', success: true, output: 'Result A' },
-      { requestId: 'req-b', toolName: 'tool_b', success: true, output: 'Result B' },
-      { requestId: 'req-c', toolName: 'tool_c', success: false, error: 'Failed' },
+      makeResult({ requestId: 'req-a', toolName: 'tool_a', success: true, output: 'Result A' }),
+      makeResult({ requestId: 'req-b', toolName: 'tool_b', success: true, output: 'Result B' }),
+      makeResult({ requestId: 'req-c', toolName: 'tool_c', success: false, error: 'Failed' }),
     ];
 
     const blocks = formatToolResultBlocks(results);

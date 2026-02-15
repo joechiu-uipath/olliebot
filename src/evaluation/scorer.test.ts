@@ -9,7 +9,6 @@
 
 import { describe, it, expect } from 'vitest';
 import { Scorer } from './scorer.js';
-import type { RecordedToolCall } from './mocked-tool-runner.js';
 import type { EvaluationDefinition } from './types.js';
 
 // Create scorer with a mock LLM service (not used in these tests)
@@ -17,7 +16,7 @@ const mockLLMService = {} as any;
 const scorer = new Scorer(mockLLMService);
 
 // Access private methods for focused unit testing
-function scoreToolSelection(definition: EvaluationDefinition, calls: RecordedToolCall[]) {
+function scoreToolSelection(definition: EvaluationDefinition, calls: any[]) {
   return (scorer as any).scoreToolSelection(definition, calls);
 }
 
@@ -126,9 +125,9 @@ describe('Scorer - scoreToolSelection', () => {
       },
     } as any;
 
-    const calls: RecordedToolCall[] = [
-      { toolName: 'web_search', parameters: {}, output: {} },
-      { toolName: 'web_scrape', parameters: {}, output: {} },
+    const calls = [
+      { toolName: 'web_search', parameters: {}, timestamp: new Date(), order: 0 },
+      { toolName: 'web_scrape', parameters: {}, timestamp: new Date(), order: 1 },
     ];
 
     const { score, toolCallResults } = scoreToolSelection(def, calls);
@@ -149,8 +148,8 @@ describe('Scorer - scoreToolSelection', () => {
     } as any;
 
     // Only called one of two required tools
-    const calls: RecordedToolCall[] = [
-      { toolName: 'web_search', parameters: {}, output: {} },
+    const calls = [
+      { toolName: 'web_search', parameters: {}, timestamp: new Date(), order: 0 },
     ];
 
     const { score } = scoreToolSelection(def, calls);
@@ -166,8 +165,8 @@ describe('Scorer - scoreToolSelection', () => {
       },
     } as any;
 
-    const calls: RecordedToolCall[] = [
-      { toolName: 'dangerous_tool', parameters: {}, output: {} },
+    const calls = [
+      { toolName: 'dangerous_tool', parameters: {}, timestamp: new Date(), order: 0 },
     ];
 
     const { toolCallResults } = scoreToolSelection(def, calls);

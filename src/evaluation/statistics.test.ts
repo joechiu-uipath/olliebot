@@ -101,9 +101,10 @@ describe('StatisticsEngine.welchTTest', () => {
     const alt = makeAggregated([0.9], 'alternative');
 
     const result = engine.welchTTest(baseline, alt);
-    expect(result.isSignificant).toBe(false);
-    expect(result.recommendation).toBe('inconclusive');
-    expect(result.pValue).toBe(1.0);
+    expect(result).toBeDefined();
+    expect(result!.isSignificant).toBe(false);
+    expect(result!.recommendation).toBe('inconclusive');
+    expect(result!.pValue).toBe(1.0);
   });
 
   it('detects significant difference between clearly different groups', () => {
@@ -112,10 +113,11 @@ describe('StatisticsEngine.welchTTest', () => {
     const alt = makeAggregated([0.9, 0.91, 0.89, 0.92, 0.88], 'alternative');
 
     const result = engine.welchTTest(baseline, alt);
-    expect(result.isSignificant).toBe(true);
-    expect(result.pValue).toBeLessThan(0.05);
-    expect(result.recommendation).toBe('adopt-alternative');
-    expect(result.overallScoreDifference).toBeGreaterThan(0);
+    expect(result).toBeDefined();
+    expect(result!.isSignificant).toBe(true);
+    expect(result!.pValue).toBeLessThan(0.05);
+    expect(result!.recommendation).toBe('adopt-alternative');
+    expect(result!.overallScoreDifference).toBeGreaterThan(0);
   });
 
   it('detects when baseline is better', () => {
@@ -123,9 +125,10 @@ describe('StatisticsEngine.welchTTest', () => {
     const alt = makeAggregated([0.3, 0.31, 0.29, 0.32, 0.28], 'alternative');
 
     const result = engine.welchTTest(baseline, alt);
-    expect(result.isSignificant).toBe(true);
-    expect(result.recommendation).toBe('keep-baseline');
-    expect(result.overallScoreDifference).toBeLessThan(0);
+    expect(result).toBeDefined();
+    expect(result!.isSignificant).toBe(true);
+    expect(result!.recommendation).toBe('keep-baseline');
+    expect(result!.overallScoreDifference).toBeLessThan(0);
   });
 
   it('returns inconclusive for similar groups', () => {
@@ -133,7 +136,8 @@ describe('StatisticsEngine.welchTTest', () => {
     const alt = makeAggregated([0.51, 0.49, 0.50, 0.52, 0.48], 'alternative');
 
     const result = engine.welchTTest(baseline, alt);
-    expect(result.recommendation).toBe('inconclusive');
+    expect(result).toBeDefined();
+    expect(result!.recommendation).toBe('inconclusive');
   });
 
   it('handles zero-variance groups', () => {
@@ -141,10 +145,11 @@ describe('StatisticsEngine.welchTTest', () => {
     const alt = makeAggregated([0.8, 0.8, 0.8], 'alternative');
 
     const result = engine.welchTTest(baseline, alt);
-    expect(result.overallScoreDifference).toBeCloseTo(0.3, 1);
+    expect(result).toBeDefined();
+    expect(result!.overallScoreDifference).toBeCloseTo(0.3, 1);
     // With zero/near-zero variance, the t-test may produce extreme or
     // degenerate values depending on floating-point precision
-    expect(result.recommendation).not.toBe('keep-baseline');
+    expect(result!.recommendation).not.toBe('keep-baseline');
   });
 });
 

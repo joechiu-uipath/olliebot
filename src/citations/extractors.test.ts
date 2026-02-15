@@ -16,11 +16,16 @@ import {
   getDefaultExtractors,
 } from './extractors.js';
 
+/** Helper: test a CitationExtractor.pattern (may be string or RegExp) against a value */
+function testPattern(pattern: string | RegExp, value: string): boolean {
+  return pattern instanceof RegExp ? pattern.test(value) : pattern === value;
+}
+
 describe('webSearchExtractor', () => {
   it('matches only web_search tool name', () => {
-    expect(webSearchExtractor.pattern.test('web_search')).toBe(true);
-    expect(webSearchExtractor.pattern.test('web_scrape')).toBe(false);
-    expect(webSearchExtractor.pattern.test('search')).toBe(false);
+    expect(testPattern(webSearchExtractor.pattern, 'web_search')).toBe(true);
+    expect(testPattern(webSearchExtractor.pattern, 'web_scrape')).toBe(false);
+    expect(testPattern(webSearchExtractor.pattern, 'search')).toBe(false);
   });
 
   it('extracts citations from search results', () => {
@@ -75,8 +80,8 @@ describe('webSearchExtractor', () => {
 
 describe('webScrapeExtractor', () => {
   it('matches only web_scrape tool name', () => {
-    expect(webScrapeExtractor.pattern.test('web_scrape')).toBe(true);
-    expect(webScrapeExtractor.pattern.test('web_search')).toBe(false);
+    expect(testPattern(webScrapeExtractor.pattern, 'web_scrape')).toBe(true);
+    expect(testPattern(webScrapeExtractor.pattern, 'web_search')).toBe(false);
   });
 
   it('extracts citation from scrape output', () => {
@@ -140,8 +145,8 @@ describe('webScrapeExtractor', () => {
 
 describe('ragQueryExtractor', () => {
   it('matches only query_rag_project tool name', () => {
-    expect(ragQueryExtractor.pattern.test('query_rag_project')).toBe(true);
-    expect(ragQueryExtractor.pattern.test('rag_query')).toBe(false);
+    expect(testPattern(ragQueryExtractor.pattern, 'query_rag_project')).toBe(true);
+    expect(testPattern(ragQueryExtractor.pattern, 'rag_query')).toBe(false);
   });
 
   it('extracts citations from RAG results', () => {
@@ -210,8 +215,8 @@ describe('ragQueryExtractor', () => {
 
 describe('wikipediaSearchExtractor', () => {
   it('matches only wikipedia_search tool name', () => {
-    expect(wikipediaSearchExtractor.pattern.test('wikipedia_search')).toBe(true);
-    expect(wikipediaSearchExtractor.pattern.test('web_search')).toBe(false);
+    expect(testPattern(wikipediaSearchExtractor.pattern, 'wikipedia_search')).toBe(true);
+    expect(testPattern(wikipediaSearchExtractor.pattern, 'web_search')).toBe(false);
   });
 
   it('extracts citations with correct Wikipedia URLs', () => {
@@ -240,8 +245,8 @@ describe('wikipediaSearchExtractor', () => {
 
 describe('httpClientExtractor', () => {
   it('matches only http_client tool name', () => {
-    expect(httpClientExtractor.pattern.test('http_client')).toBe(true);
-    expect(httpClientExtractor.pattern.test('web_search')).toBe(false);
+    expect(testPattern(httpClientExtractor.pattern, 'http_client')).toBe(true);
+    expect(testPattern(httpClientExtractor.pattern, 'web_search')).toBe(false);
   });
 
   it('extracts citation from HTTP response', () => {
@@ -286,10 +291,10 @@ describe('httpClientExtractor', () => {
 
 describe('mcpToolExtractor', () => {
   it('matches MCP tool name pattern', () => {
-    expect(mcpToolExtractor.pattern.test('mcp.server1__tool_name')).toBe(true);
-    expect(mcpToolExtractor.pattern.test('mcp.my-server__search')).toBe(true);
-    expect(mcpToolExtractor.pattern.test('web_search')).toBe(false);
-    expect(mcpToolExtractor.pattern.test('mcp.')).toBe(false);
+    expect(testPattern(mcpToolExtractor.pattern, 'mcp.server1__tool_name')).toBe(true);
+    expect(testPattern(mcpToolExtractor.pattern, 'mcp.my-server__search')).toBe(true);
+    expect(testPattern(mcpToolExtractor.pattern, 'web_search')).toBe(false);
+    expect(testPattern(mcpToolExtractor.pattern, 'mcp.')).toBe(false);
   });
 
   it('extracts source from output with URL field', () => {
