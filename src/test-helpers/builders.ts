@@ -31,7 +31,7 @@ export function buildToolResult(
   return {
     startTime: now,
     endTime: now,
-    durationMs: DEFAULT_TEST_DURATION_MS,
+    durationMs: 0, // Default to 0 for same-time start/end
     ...overrides,
   };
 }
