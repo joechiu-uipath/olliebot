@@ -51,9 +51,23 @@ export class LLMService {
   ): TokenReductionConfig | undefined {
     if (env.TOKEN_REDUCTION_ENABLED !== 'true') return undefined;
 
+    const providerEnv = env.TOKEN_REDUCTION_PROVIDER;
+    const defaultProvider: TokenReductionProviderType = 'llmlingua2';
+    const supportedProviders: TokenReductionProviderType[] = [defaultProvider];
+    const provider = (providerEnv || defaultProvider) as TokenReductionProviderType;
+
+    if (!supportedProviders.includes(provider)) {
+      console.warn(
+        `[LLMService] Invalid TOKEN_REDUCTION_PROVIDER "${providerEnv}". ` +
+        `Supported providers are: ${supportedProviders.join(', ')}. ` +
+        'Token reduction will be disabled.'
+      );
+      return undefined;
+    }
+
     return {
       enabled: true,
-      provider: (env.TOKEN_REDUCTION_PROVIDER || 'llmlingua2') as TokenReductionProviderType,
+      provider,
       compressionLevel: 'default',
     };
   }
