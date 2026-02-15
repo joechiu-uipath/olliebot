@@ -9,22 +9,14 @@
 
 import { describe, it, expect } from 'vitest';
 import { SkillParser } from './parser.js';
+import { getPrivateMethod } from '../test-helpers/index.js';
 
-// Access private methods via prototype for testing pure parsing logic
 const parser = new SkillParser();
 
-// Helper to access private methods for unit testing
-function extractFrontmatter(content: string): Record<string, unknown> {
-  return (parser as any).extractFrontmatter(content);
-}
-
-function extractBody(content: string): string {
-  return (parser as any).extractBody(content);
-}
-
-function idToDisplayName(id: string): string {
-  return (parser as any).idToDisplayName(id);
-}
+// Access private methods for focused unit testing
+const extractFrontmatter = getPrivateMethod(parser, 'extractFrontmatter');
+const extractBody = getPrivateMethod(parser, 'extractBody');
+const idToDisplayName = getPrivateMethod(parser, 'idToDisplayName');
 
 describe('SkillParser - extractFrontmatter', () => {
   it('parses basic YAML frontmatter', () => {

@@ -5,8 +5,13 @@
  * Maps to e2e test plan: CONFIG-001 (env validation)
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { validateEnv, buildConfig } from './env.js';
+import { 
+  DEFAULT_TEST_PORT, 
+  ALTERNATIVE_TEST_PORT, 
+  DEFAULT_BIND_ADDRESS 
+} from '../test-helpers/index.js';
 
 describe('validateEnv', () => {
   const originalEnv = process.env;
@@ -27,16 +32,16 @@ describe('validateEnv', () => {
     delete process.env.MAIN_MODEL;
 
     const env = validateEnv();
-    expect(env.PORT).toBe(3000);
+    expect(env.PORT).toBe(DEFAULT_TEST_PORT);
     expect(env.MAIN_PROVIDER).toBe('openai');
     expect(env.MAIN_MODEL).toBe('gpt-5.2');
-    expect(env.BIND_ADDRESS).toBe('127.0.0.1');
+    expect(env.BIND_ADDRESS).toBe(DEFAULT_BIND_ADDRESS);
   });
 
   it('parses PORT as number', () => {
-    process.env.PORT = '8080';
+    process.env.PORT = String(ALTERNATIVE_TEST_PORT);
     const env = validateEnv();
-    expect(env.PORT).toBe(8080);
+    expect(env.PORT).toBe(ALTERNATIVE_TEST_PORT);
     expect(typeof env.PORT).toBe('number');
   });
 
