@@ -26,6 +26,7 @@ export class TokenReductionService {
   private provider: TokenReductionProvider | null = null;
   private config: TokenReductionConfig;
   private initialized = false;
+  private initializing = false;
   private cache: CompressionCache;
   private cacheHits = 0;
   private cacheMisses = 0;
@@ -45,13 +46,27 @@ export class TokenReductionService {
       return;
     }
 
-    this.provider = this.createProvider(this.config.provider);
-    await this.provider.init();
-    this.initialized = true;
-    console.log(`[TokenReduction] Service initialized (provider: ${this.config.provider}, level: ${this.config.compressionLevel})`);
+    // Prevent multiple simultaneous init calls
+    if (this.initialized) {
+      return;
+    }
+    if (this.initializing) {
+      console.warn('[TokenReduction] Init already in progress, skipping duplicate call');
+      return;
+    }
 
-    // Set up cache persistence
-    this.initCachePersistence();
+    this.initializing = true;
+    try {
+      this.provider = this.createProvider(this.config.provider);
+      await this.provider.init();
+      this.initialized = true;
+      console.log(`[TokenReduction] Service initialized (provider: ${this.config.provider}, level: ${this.config.compressionLevel})`);
+
+      // Set up cache persistence
+      this.initCachePersistence();
+    } finally {
+      this.initializing = false;
+    }
   }
 
   /**

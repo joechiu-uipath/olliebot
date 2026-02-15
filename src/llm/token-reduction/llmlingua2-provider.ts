@@ -33,6 +33,9 @@ import { calculateSavingsPercent, estimateTokenCount } from './utils.js';
 /** HuggingFace ONNX model used by this provider (bert-multilingual, 710 MB). */
 const MODEL_NAME = 'Arcoldd/llmlingua4j-bert-base-onnx';
 
+/** Maximum input text size in characters (to prevent memory issues) */
+const MAX_INPUT_SIZE = 100_000;
+
 /** Per-level presets.  All tuning lives here. */
 interface LevelPreset {
   /** Minimum estimated token count to activate compression */
@@ -98,6 +101,36 @@ export class LLMLingua2Provider implements TokenReductionProvider {
   async compress(text: string, level: CompressionLevel): Promise<CompressionResult> {
     if (!this.initialized || !this.promptCompressor) {
       throw new Error('LLMLingua2 provider not initialized. Call init() first.');
+    }
+
+    // Validate input
+    if (!text || text.length === 0) {
+      return {
+        compressedText: text,
+        originalLength: 0,
+        compressedLength: 0,
+        originalTokenCount: 0,
+        compressedTokenCount: 0,
+        tokenSavingsPercent: 0,
+        compressionTimeMs: 0,
+        provider: 'llmlingua2',
+      };
+    }
+
+    // Enforce maximum input size to prevent memory issues
+    if (text.length > MAX_INPUT_SIZE) {
+      console.warn(`[TokenReduction:LLMLingua2] Input exceeds max size (${text.length} > ${MAX_INPUT_SIZE}), skipping compression`);
+      const estimatedTokens = estimateTokenCount(text);
+      return {
+        compressedText: text,
+        originalLength: text.length,
+        compressedLength: text.length,
+        originalTokenCount: estimatedTokens,
+        compressedTokenCount: estimatedTokens,
+        tokenSavingsPercent: 0,
+        compressionTimeMs: 0,
+        provider: 'llmlingua2',
+      };
     }
 
     const preset = LEVEL_PRESETS[level];
