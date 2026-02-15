@@ -1937,16 +1937,10 @@ function App() {
 
   return (
     <div className="app-layout" style={{ width: appWidth }}>
-      {/* Left resize handle */}
+      {/* Left resize handle (right handle removed to avoid scrollbar conflict) */}
       <div
         className="app-resize-handle app-resize-handle-left"
         onMouseDown={(e) => handleAppResizeStart(e, 'left')}
-        title="Drag to resize"
-      />
-      {/* Right resize handle */}
-      <div
-        className="app-resize-handle app-resize-handle-right"
-        onMouseDown={(e) => handleAppResizeStart(e, 'right')}
         title="Drag to resize"
       />
       {/* Collapsible Sidebar */}

@@ -338,12 +338,10 @@ export const LogsSidebarContent = memo(function LogsSidebarContent({ logsMode })
         </div>
       )}
 
-      {/* Token Reduction Settings & Stats */}
-      <div className="logs-token-reduction-stats">
-        <h4 className="logs-token-reduction-title">Token Reduction</h4>
-
-        {/* Aggregate stats */}
-        {stats?.tokenReduction && (
+      {/* Token Reduction Settings & Stats (only show when token reduction is currently enabled) */}
+      {stats?.tokenReductionEnabled && stats?.tokenReduction && (
+        <div className="logs-token-reduction-stats">
+          <h4 className="logs-token-reduction-title">Token Reduction</h4>
           <div className="logs-stats-grid">
             <div className="logs-stat">
               <div className="logs-stat-value logs-stat-savings">{stats.tokenReduction.overallSavingsPercent}%</div>
@@ -362,8 +360,8 @@ export const LogsSidebarContent = memo(function LogsSidebarContent({ logsMode })
               <div className="logs-stat-label">Avg Time</div>
             </div>
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
       {/* View switcher */}
       <div className="logs-view-switcher">
@@ -591,7 +589,7 @@ const TraceDetailView = memo(function TraceDetailView({ trace, onBack, onSelectL
                 </div>
                 <div className="logs-llm-stats">
                   {formatTokens(c.inputTokens)} in / {formatTokens(c.outputTokens)} out
-                  {c.tokenReductionEnabled === 1 && (
+                  {c.tokenReductionEnabled === 1 && c.tokenReductionOriginalTokens > c.tokenReductionCompressedTokens && (
                     <span className="logs-token-reduction-inline"> | compressed: {savingsPercent(c.tokenReductionOriginalTokens, c.tokenReductionCompressedTokens)}% saved</span>
                   )}
                   {c.callerPurpose && <span> | {c.callerPurpose}</span>}
@@ -680,28 +678,17 @@ const LlmCallDetailView = memo(function LlmCallDetailView({ call, onBack }) {
         </div>
       )}
 
-      {/* Token Reduction (Prompt Compression) */}
-      {call.tokenReductionEnabled === 1 && (
+      {/* Token Reduction (Prompt Compression) - only show when actual compression happened */}
+      {call.tokenReductionEnabled === 1 && call.tokenReductionOriginalTokens > call.tokenReductionCompressedTokens && (
         <div className="logs-detail-section logs-token-reduction-section">
-          <h4>
-            <button
-              type="button"
-              className="logs-collapsible"
-              onClick={() => setShowTokenReduction(!showTokenReduction)}
-              aria-expanded={showTokenReduction}
-              aria-controls="logs-token-reduction-panel"
-            >
-              {showTokenReduction ? '▾' : '▸'} Token Reduction
-              <span className="logs-token-reduction-badge">
-                {savingsPercent(call.tokenReductionOriginalTokens, call.tokenReductionCompressedTokens)}% saved
-              </span>
-            </button>
+          <h4 className="logs-collapsible" onClick={() => setShowTokenReduction(!showTokenReduction)}>
+            {showTokenReduction ? '▾' : '▸'} Token Reduction
+            <span className="logs-token-reduction-badge">
+              {savingsPercent(call.tokenReductionOriginalTokens, call.tokenReductionCompressedTokens)}% saved
+            </span>
           </h4>
           {showTokenReduction && (
-            <div
-              id="logs-token-reduction-panel"
-              className="logs-token-reduction-detail"
-            >
+            <div className="logs-token-reduction-detail">
               <div className="logs-token-reduction-meta">
                 <span>Provider: <strong>{call.tokenReductionProvider}</strong></span>
                 <span>Original: <strong>{formatTokens(call.tokenReductionOriginalTokens)} tokens</strong></span>

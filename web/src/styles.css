@@ -84,10 +84,6 @@
   left: 0;
 }
 
-.app-resize-handle-right {
-  right: 0;
-}
-
 /* Background for ultra-wide monitors */
 html, body {
   background: var(--bg-secondary);

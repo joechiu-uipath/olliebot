@@ -1208,7 +1208,10 @@ export class AssistantServer {
       this.app.get('/api/traces/stats', (req: Request, res: Response) => {
         try {
           const since = req.query.since as string | undefined;
-          res.json(traceStore.getStats(since));
+          const stats = traceStore.getStats(since);
+          // Include whether token reduction is currently enabled
+          const tokenReductionEnabled = this.llmService?.isTokenReductionEnabled() ?? false;
+          res.json({ ...stats, tokenReductionEnabled });
         } catch (error) {
           console.error('[API] Failed to fetch trace stats:', error);
           res.status(500).json({ error: 'Failed to fetch trace stats' });

@@ -99,6 +99,13 @@ export class LLMService {
     });
   }
 
+  /**
+   * Check if token reduction is currently enabled and ready.
+   */
+  isTokenReductionEnabled(): boolean {
+    return this.tokenReduction?.isEnabled() ?? false;
+  }
+
   // ============================================================
   // Trace context management
   // ============================================================
