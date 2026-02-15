@@ -121,6 +121,22 @@ export interface LlmCallRecord {
 }
 
 // ============================================================
+// TokenReductionRecord: Prompt compression applied to an LLM call
+// ============================================================
+
+export interface TokenReductionRecord {
+  id: string;
+  llmCallId: string;
+  provider: string;
+  originalTokens: number;
+  compressedTokens: number;
+  compressionTimeMs: number;
+  originalText: string | null;
+  compressedText: string | null;
+  createdAt: string;
+}
+
+// ============================================================
 // ToolCallRecord: A single tool invocation
 // ============================================================
 
