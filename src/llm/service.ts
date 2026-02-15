@@ -169,10 +169,6 @@ export class LLMService {
   /**
    * Apply token reduction to messages and options before an LLM call.
    * Records compression stats to the trace if a callId is provided.
-   * Activation is threshold-based per workload (total input characters):
-   *   main  > 1000
-   *   fast  > 2000
-   * Returns the (possibly compressed) messages and options.
    */
   private async applyTokenReduction(
     callId: string | null,
@@ -184,15 +180,8 @@ export class LLMService {
       return { messages, options };
     }
 
-    // Skip if total input characters are below the workload activation threshold
-    const threshold = workload === 'main' ? 1000 : 2000;
-    const totalChars = this.estimateTotalInputChars(messages, options?.systemPrompt);
-    if (totalChars <= threshold) {
-      return { messages, options };
-    }
-
     try {
-      const result = await this.tokenReduction.compressMessages(messages, options?.systemPrompt);
+      const result = await this.tokenReduction.compressMessages(messages, options?.systemPrompt, workload);
 
       // Record token reduction in trace
       if (callId && this.traceStore && result.results.length > 0) {
@@ -247,25 +236,6 @@ export class LLMService {
       }
     }
     return undefined;
-  }
-
-  /**
-   * Sum up total character count across all messages and the system prompt.
-   */
-  private estimateTotalInputChars(messages: LLMMessage[], systemPrompt?: string): number {
-    let chars = systemPrompt?.length || 0;
-    for (const msg of messages) {
-      if (typeof msg.content === 'string') {
-        chars += msg.content.length;
-      } else if (Array.isArray(msg.content)) {
-        for (const block of msg.content) {
-          if (block.type === 'text' && block.text) {
-            chars += block.text.length;
-          }
-        }
-      }
-    }
-    return chars;
   }
 
   // ============================================================

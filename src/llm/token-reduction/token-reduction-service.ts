@@ -76,7 +76,8 @@ export class TokenReductionService {
    */
   async compressMessages(
     messages: LLMMessage[],
-    systemPrompt?: string
+    systemPrompt?: string,
+    workload: 'main' | 'fast' = 'main'
   ): Promise<{
     messages: LLMMessage[];
     systemPrompt?: string;
@@ -92,7 +93,7 @@ export class TokenReductionService {
     // Compress system prompt if present
     let compressedSystemPrompt = systemPrompt;
     if (systemPrompt && systemPrompt.length >= 100) {
-      const result = await this.compressText(systemPrompt);
+      const result = await this.compressText(systemPrompt, workload);
       results.push(result);
       compressedSystemPrompt = result.compressedText;
     }
@@ -101,7 +102,7 @@ export class TokenReductionService {
       if (msg.role === 'user') {
         // Compress user messages
         if (typeof msg.content === 'string') {
-          const result = await this.compressText(msg.content);
+          const result = await this.compressText(msg.content, workload);
           results.push(result);
           compressedMessages.push({
             ...msg,
@@ -112,7 +113,7 @@ export class TokenReductionService {
           const compressedBlocks: LLMContentBlock[] = [];
           for (const block of msg.content) {
             if (block.type === 'text' && block.text && block.text.length >= 100) {
-              const result = await this.compressText(block.text);
+              const result = await this.compressText(block.text, workload);
               results.push(result);
               compressedBlocks.push({ ...block, text: result.compressedText });
             } else {
@@ -146,11 +147,29 @@ export class TokenReductionService {
 
   /**
    * Compress a single text string.
+   * Skips compression when text length is below the workload activation
+   * threshold (main > 1000 chars, fast > 2000 chars).
    * Checks the LRU cache first; on miss, compresses and caches the result.
    */
-  async compressText(text: string): Promise<CompressionResult> {
+  async compressText(text: string, workload: 'main' | 'fast' = 'main'): Promise<CompressionResult> {
     if (!this.provider) {
       throw new Error('Token reduction provider not initialized');
+    }
+
+    // Skip compression for short texts based on workload threshold
+    const threshold = workload === 'main' ? 1000 : 2000;
+    if (text.length <= threshold) {
+      const estimatedTokens = Math.ceil(text.length / 4);
+      return {
+        compressedText: text,
+        originalLength: text.length,
+        compressedLength: text.length,
+        originalTokenCount: estimatedTokens,
+        compressedTokenCount: estimatedTokens,
+        tokenSavingsPercent: 0,
+        compressionTimeMs: 0,
+        provider: this.config.provider,
+      };
     }
 
     const level = this.config.compressionLevel;
