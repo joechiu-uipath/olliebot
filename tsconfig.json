@@ -1,20 +1,114 @@
 {
   "compilerOptions": {
+    // === Language & Output ===
+
+    // target: JavaScript version for emitted code.
+    // ES2022 includes: top-level await, Array.at(), Object.hasOwn(), class static blocks,
+    // error cause, private fields (#field). Node.js 18+ has full ES2022 support.
+    // Chosen over ES2023+ because ES2022 covers all features this project needs.
     "target": "ES2022",
+
+    // module: Module system for emitted JavaScript.
+    // ESNext emits native ES modules (import/export) matching package.json "type": "module".
+    // Required for ESM-only packages and top-level await support.
     "module": "ESNext",
+
+    // moduleResolution: How TypeScript resolves import specifiers.
+    // "bundler" (TS 5.0+) is designed for modern bundlers (Vite, esbuild, tsx).
+    // Allows: imports without extensions, package.json "exports" field support,
+    // and doesn't enforce strict ESM resolution rules that would conflict with tsx.
+    // Alternative "node16"/"nodenext" would require .js extensions everywhere.
     "moduleResolution": "bundler",
+
+    // lib: Type definitions for built-in JavaScript APIs.
+    // Matches target version. Provides types for ES2022 features like Array.at().
+    // Excludes DOM types since this is a Node.js backend (DOM would add noise to autocomplete).
     "lib": ["ES2022"],
+
+    // === Output Paths ===
+
+    // outDir: Directory for compiled JavaScript output.
+    // Standard convention - keeps compiled code separate from source.
     "outDir": "./dist",
+
+    // rootDir: Root directory of source files.
+    // Ensures dist/ mirrors src/ structure (e.g., src/tools/foo.ts → dist/tools/foo.js).
+    // Without this, TS might flatten the output structure unexpectedly.
     "rootDir": "./src",
+
+    // === Type Checking ===
+
+    // strict: Master switch enabling all strict type-checking options:
+    // - strictNullChecks: null/undefined are distinct types (catches null reference errors)
+    // - strictFunctionTypes: stricter function parameter checking
+    // - strictBindCallApply: check bind/call/apply argument types
+    // - strictPropertyInitialization: class properties must be initialized
+    // - noImplicitAny: error on expressions with implied 'any' type
+    // - noImplicitThis: error on 'this' with implied 'any' type
+    // - alwaysStrict: emit "use strict" in output
+    // - useUnknownInCatchVariables: catch variables are 'unknown' not 'any'
+    // Essential for catching bugs at compile time rather than runtime.
     "strict": true,
+
+    // === Module Interop ===
+
+    // esModuleInterop: Enables synthetic default imports from CommonJS modules.
+    // Without this: import * as express from 'express' (awkward)
+    // With this:    import express from 'express' (natural)
+    // Required because many dependencies are CommonJS (express, better-sqlite3, ws, etc.).
     "esModuleInterop": true,
-    "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true,
+
+    // isolatedModules: Ensures each file can be transpiled independently.
+    // Required for compatibility with esbuild/swc transpilers (used by tsx and Vite).
+    // Catches patterns that need full program knowledge: const enums across files,
+    // namespace merging, export = syntax. Prevents subtle runtime errors.
+    "isolatedModules": true,
+
+    // resolveJsonModule: Allows importing .json files with type inference.
+    // Usage: import pkg from './package.json' with { type: 'json' }
+    // Types are inferred from JSON structure, enabling autocomplete and type checking.
     "resolveJsonModule": true,
+
+    // === Build Performance ===
+
+    // skipLibCheck: Skip type checking of all .d.ts declaration files.
+    // Dramatically speeds up compilation by not re-checking node_modules types.
+    // Safe because: (1) published types are already checked by package authors,
+    // (2) avoids errors from conflicting type versions in node_modules.
+    "skipLibCheck": true,
+
+    // === Code Quality ===
+
+    // forceConsistentCasingInFileNames: Errors if import casing doesn't match file casing.
+    // Critical for cross-platform compatibility: Windows is case-insensitive, Linux is not.
+    // Prevents: import './Utils' working on Windows but failing on Linux CI.
+    "forceConsistentCasingInFileNames": true,
+
+    // === Source Maps & Declarations ===
+
+    // declaration: Generate .d.ts type declaration files alongside .js output.
+    // Provides type information for IDE features even after compilation.
+    // Useful for: debugging compiled code, potential future library extraction.
     "declaration": true,
+
+    // declarationMap: Generate source maps for .d.ts files.
+    // Enables "Go to Definition" to jump to original .ts source instead of .d.ts.
+    // Significantly improves developer experience when navigating code.
     "declarationMap": true,
+
+    // sourceMap: Generate .js.map files mapping compiled JS back to TypeScript source.
+    // Essential for debugging: stack traces show original .ts line numbers,
+    // debuggers can step through TypeScript code directly.
     "sourceMap": true
   },
+
+  // include: Glob patterns for files to compile.
+  // Only src/ directory - web/ and tui/ workspaces use their own Vite/TS handling.
   "include": ["src/**/*"],
+
+  // exclude: Directories to ignore even if matched by include.
+  // node_modules: dependencies (handled by skipLibCheck for types)
+  // dist: compiled output (prevent recompiling output)
+  // web: separate workspace with Vite's TypeScript handling
   "exclude": ["node_modules", "dist", "web"]
 }
