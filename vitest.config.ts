@@ -23,6 +23,7 @@ export default defineConfig({
       // Alternative fix: Add "exclude": ["**/*.test.ts"] to tsconfig.json to prevent
       // test files from being compiled. However, this breaks IDE features for test files.
       '**/dist/**',
+      '**/e2e/**',
     ],
   },
 });
