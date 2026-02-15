@@ -43,7 +43,7 @@ export default defineConfig({
       timeout: 30_000,
     },
     {
-      command: 'E2E_SIMULATOR_URL=http://localhost:4100 pnpm dev:server',
+      command: 'pnpm dev:server',
       port: 3000,
       reuseExistingServer: !process.env.CI,
       timeout: 30_000,

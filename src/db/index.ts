@@ -164,13 +164,20 @@ class Database {
   embeddings: EmbeddingRepository;
 
   constructor(dbPath: string) {
-    // Normalize path to .db extension
-    this.dbPath = dbPath.replace(/\.[^.]+$/, '') + '.db';
+    // Handle special SQLite paths (in-memory, temp)
+    const isSpecialPath = dbPath === ':memory:' || dbPath === '';
 
-    // Ensure directory exists
-    const dir = dirname(this.dbPath);
-    if (!existsSync(dir)) {
-      mkdirSync(dir, { recursive: true });
+    if (isSpecialPath) {
+      this.dbPath = dbPath;
+    } else {
+      // Normalize path to .db extension
+      this.dbPath = dbPath.replace(/\.[^.]+$/, '') + '.db';
+
+      // Ensure directory exists
+      const dir = dirname(this.dbPath);
+      if (!existsSync(dir)) {
+        mkdirSync(dir, { recursive: true });
+      }
     }
 
     // Open SQLite database
