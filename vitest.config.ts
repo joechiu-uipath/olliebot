@@ -24,5 +24,23 @@ export default defineConfig({
       // test files from being compiled. However, this breaks IDE features for test files.
       '**/dist/**',
     ],
+    coverage: {
+      // Exclude non-production code from coverage reporting.
+      // Without an explicit `include`, vitest reports coverage only for files
+      // actually imported during the test run — this is intentional so the
+      // percentage reflects "how well-tested is the code we DO exercise" rather
+      // than being diluted by modules with no tests yet.
+      exclude: [
+        // Test files themselves
+        '**/*.test.ts',
+
+        // Test infrastructure — utilities, builders, and helpers used only by tests
+        'src/test-helpers/**',
+
+        // MCP debug server — internal dev/debug tool that exposes OllieBot internals
+        // over MCP protocol for inspection; not user-facing production code
+        'src/mcp-server/**',
+      ],
+    },
   },
 });
