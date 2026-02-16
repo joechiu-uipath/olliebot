@@ -67,7 +67,7 @@ export class WebSocketMock {
    * Call before navigating to the page.
    */
   async install(page: Page): Promise<void> {
-    await page.routeWebSocket(/\/ws$/, (ws) => {
+    await page.routeWebSocket(/localhost:3000\/?$/, (ws) => {
       this.serverSend = (data: string) => ws.send(data);
 
       ws.onMessage((rawMsg) => {
@@ -100,20 +100,17 @@ export class WebSocketMock {
   simulateResponse(opts: {
     conversationId: string;
     content: string;
-    turnId?: string;
-    messageId?: string;
+    streamId?: string;
     agentName?: string;
     agentEmoji?: string;
     usage?: { inputTokens: number; outputTokens: number };
   }): void {
-    const turnId = opts.turnId || `turn-${Date.now()}`;
-    const messageId = opts.messageId || `msg-${Date.now()}`;
+    const streamId = opts.streamId || `stream-${Date.now()}`;
 
     this.send({
       type: 'stream_start',
       conversationId: opts.conversationId,
-      turnId,
-      messageId,
+      id: streamId, // Frontend uses 'id' to create message
       agentName: opts.agentName,
       agentEmoji: opts.agentEmoji,
     });
@@ -124,16 +121,15 @@ export class WebSocketMock {
       this.send({
         type: 'stream_chunk',
         conversationId: opts.conversationId,
-        turnId,
-        content: word + ' ',
+        streamId, // Frontend matches on 'streamId'
+        chunk: word + ' ', // Frontend uses 'chunk' not 'content'
       });
     }
 
     this.send({
       type: 'stream_end',
       conversationId: opts.conversationId,
-      turnId,
-      messageId,
+      streamId, // Frontend matches on 'streamId'
       usage: opts.usage || { inputTokens: 50, outputTokens: 25 },
     });
   }

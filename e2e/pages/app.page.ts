@@ -108,10 +108,10 @@ export class OllieBotApp {
   // --- Helpers ---
 
   private modeButton(mode: string): Locator {
-    // Mode buttons have text content: 💬 Chat, 📊 Logs, 🎯 Mission, 🧪 Eval
+    // Mode buttons have text content: 💬 Chat, 📋 Trace, 🎯 Mission, 📊 Eval
     const labels: Record<string, string> = {
       chat: 'Chat',
-      traces: 'Logs',
+      traces: 'Trace',
       mission: 'Mission',
       eval: 'Eval',
     };

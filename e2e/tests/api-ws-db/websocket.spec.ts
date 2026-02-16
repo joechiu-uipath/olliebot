@@ -123,8 +123,9 @@ test.describe('WebSocket Communication', () => {
     app.ws.send({
       type: 'stream_resume',
       conversationId: 'conv-resume',
-      turnId: 'turn-resume',
-      content: 'Partial response that was already streaming...',
+      streamId: 'stream-resume',
+      accumulatedContent: 'Partial response that was already streaming...',
+      active: true,
     });
 
     await app.chat.waitForMessageContaining('Partial response');

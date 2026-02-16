@@ -135,7 +135,7 @@ export class ChatPage {
 
   /** Wait for a message containing specific text. */
   async waitForMessageContaining(text: string, timeout = 5000): Promise<void> {
-    await expect(this.page.locator('.message-content', { hasText: text })).toBeVisible({ timeout });
+    await expect(this.page.locator('.message-content', { hasText: text }).first()).toBeVisible({ timeout });
   }
 
   /** Check if a message is currently streaming. */
@@ -174,14 +174,19 @@ export class ChatPage {
 
   // --- Tool Execution ---
 
-  /** Get tool detail blocks in the chat. */
-  get toolDetails(): Locator {
-    return this.page.locator('.tool-details');
+  /** Get tool event blocks in the chat (the clickable header row). */
+  get toolEvents(): Locator {
+    return this.page.locator('.tool-event');
   }
 
-  /** Get tool details by tool name. */
+  /** Get tool event by tool name. */
   toolByName(name: string): Locator {
-    return this.page.locator('.tool-details', { hasText: name });
+    return this.page.locator('.tool-event', { hasText: name });
+  }
+
+  /** Get expanded tool details (visible after clicking tool event). */
+  get toolDetails(): Locator {
+    return this.page.locator('.tool-details');
   }
 
   /** Get the tool progress bar. */
