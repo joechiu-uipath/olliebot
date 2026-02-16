@@ -30,11 +30,24 @@ export default defineConfig({
       reporter: ['text', 'text-summary', 'html', 'lcov'],
       reportsDirectory: './coverage',
       include: ['src/**/*.ts'],
+      // Exclude non-production code from coverage reporting.
+      // Without an explicit `include`, vitest reports coverage only for files
+      // actually imported during the test run — this is intentional so the
+      // percentage reflects "how well-tested is the code we DO exercise" rather
+      // than being diluted by modules with no tests yet.
       exclude: [
+        // Test files themselves
         'src/**/*.test.ts',
         'src/**/*.d.ts',
         'src/**/types.ts',
         'src/index.ts', // Entry point
+
+        // Test infrastructure — utilities, builders, and helpers used only by tests
+        'src/test-helpers/**',
+
+        // MCP debug server — internal dev/debug tool that exposes OllieBot internals
+        // over MCP protocol for inspection; not user-facing production code
+        'src/mcp-server/**',
       ],
       // Thresholds - start low and increase as coverage improves
       thresholds: {
@@ -43,6 +56,10 @@ export default defineConfig({
         branches: 0,
         statements: 0,
       },
+      // 'text' = terminal summary table (always on)
+      // 'html' = interactive line-by-line report at coverage/index.html
+      reporter: ['text', 'html'],
+      reportsDirectory: './coverage',
     },
   },
 });
