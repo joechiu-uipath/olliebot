@@ -253,37 +253,39 @@ async function main(): Promise<void> {
   console.log(`[Init] Main LLM: ${CONFIG.mainProvider}/${CONFIG.mainModel}`);
   console.log(`[Init] Fast LLM: ${CONFIG.fastProvider}/${CONFIG.fastModel}`);
 
-  // Initialize Memory Service
-  console.log('[Init] Initializing memory service...');
+  // Initialize Memory Service and Skill Manager in parallel (both independent, file-based)
+  console.log('[Init] Initializing memory service and skill manager...');
   const memoryService = new MemoryService(process.cwd());
-  await memoryService.init();
+  const skillManager = new SkillManager(CONFIG.skillsDir);
+  await Promise.all([
+    memoryService.init(),
+    skillManager.init(),
+  ]);
+  console.log('[Init] Memory service and skill manager initialized');
 
   // Initialize MCP Client
   console.log('[Init] Initializing MCP client...');
   const mcpClient = new MCPClient();
 
-  // Check user settings for disabled MCPs
+  // Register MCP servers in parallel for faster startup
   const disabledMcps = userSettings.getDisabledMcps();
-
   const mcpServers = parseMCPServers(CONFIG.mcpServers);
-  for (const serverConfig of mcpServers) {
-    try {
-      // Check if this MCP is disabled in user settings
-      if (disabledMcps.includes(serverConfig.id)) {
-        serverConfig.enabled = false;
-        console.log(`[Init] MCP server ${serverConfig.id} is disabled by user settings`);
-      }
-      await mcpClient.registerServer(serverConfig);
-    } catch (error) {
-      console.warn(`[Init] Failed to register MCP server ${serverConfig.id}:`, error);
-    }
+  if (mcpServers.length > 0) {
+    await Promise.all(
+      mcpServers.map(async (serverConfig) => {
+        try {
+          if (disabledMcps.includes(serverConfig.id)) {
+            serverConfig.enabled = false;
+            console.log(`[Init] MCP server ${serverConfig.id} is disabled by user settings`);
+          }
+          await mcpClient.registerServer(serverConfig);
+        } catch (error) {
+          console.warn(`[Init] Failed to register MCP server ${serverConfig.id}:`, error);
+        }
+      })
+    );
   }
   console.log(`[Init] Registered ${mcpClient.getServers().length} MCP servers`);
-
-  // Initialize Skill Manager
-  console.log('[Init] Initializing skill manager...');
-  const skillManager = new SkillManager(CONFIG.skillsDir);
-  await skillManager.init();
 
   // Initialize RAG Project Service (folder-based RAG with vector storage)
   let ragProjectService: RAGProjectService | null = null;
@@ -469,22 +471,22 @@ async function main(): Promise<void> {
 
   console.log(`[Init] Tool runner initialized with ${toolRunner.getToolsForLLM().length} tools`);
 
-  // Initialize Task Manager (watches user/tasks for .md task configs)
-  console.log('[Init] Initializing task manager...');
+  // Initialize Task Manager and Mission Manager in parallel (both file-based, independent)
+  console.log('[Init] Initializing task and mission managers...');
+  initMissionSchema();
   const taskManager = new TaskManager({
     tasksDir: CONFIG.tasksDir,
     llmService,
   });
-  await taskManager.init();
-
-  // Initialize Mission Manager (watches user/missions for .md mission configs)
-  console.log('[Init] Initializing mission manager...');
-  initMissionSchema();
   const missionManager = new MissionManager({
     missionsDir: CONFIG.missionsDir,
     llmService,
   });
-  await missionManager.init();
+  await Promise.all([
+    taskManager.init(),
+    missionManager.init(),
+  ]);
+  console.log('[Init] Task and mission managers initialized');
 
   // Validate all well-known mission conversations exist (non-blocking)
   validateMissionConversations();
