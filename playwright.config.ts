@@ -40,13 +40,13 @@ export default defineConfig({
       command: 'pnpm dev:web',
       port: 5173,
       reuseExistingServer: !process.env.CI,
-      timeout: 30_000,
+      timeout: 15_000, // Reduced from 30s - Vite starts fast
     },
     {
       command: 'pnpm dev:server',
       port: 3000,
       reuseExistingServer: !process.env.CI,
-      timeout: 30_000,
+      timeout: 15_000, // Reduced from 30s - MCP/RAG/UserTools now init in background
       env: {
         E2E_SIMULATOR_URL: 'http://localhost:4100',
         ANTHROPIC_API_KEY: 'test-key',

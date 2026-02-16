@@ -31,6 +31,22 @@ export default defineConfig({
     }),
   ],
 
+  // Build optimization - code splitting for better caching and smaller initial bundle
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          // Core React dependencies - rarely change, cache well
+          'vendor-react': ['react', 'react-dom', 'react-router-dom'],
+          // Syntax highlighting - large, only needed for code blocks
+          'vendor-syntax': ['react-syntax-highlighter'],
+          // Virtualization - only needed for chat scrolling
+          'vendor-virtuoso': ['react-virtuoso'],
+        },
+      },
+    },
+  },
+
   server: {
     // Vite dev server port - access UI at http://localhost:5173
     port: 5173,
