@@ -42,7 +42,8 @@ test.describe('User-Defined Tools', () => {
       result: 'Custom tool executed with result: test output',
     });
 
-    await expect(app.chat.toolDetails.first()).toBeVisible({ timeout: 5000 });
+    // Tool event card should appear (collapsed by default)
+    await expect(app.chat.toolByName('user.my_custom_tool')).toBeVisible({ timeout: 5000 });
   });
 
   // USERTOOL-004: Tool input validation
@@ -60,7 +61,10 @@ test.describe('User-Defined Tools', () => {
       success: false,
     });
 
-    await expect(app.chat.toolDetails.first()).toBeVisible({ timeout: 5000 });
+    // Failed tool event should be visible with failed status
+    const toolEvent = app.chat.toolByName('user.my_custom_tool');
+    await expect(toolEvent).toBeVisible({ timeout: 5000 });
+    await expect(toolEvent).toHaveClass(/failed/);
   });
 
   // USERTOOL-005: Tool sandbox execution
@@ -77,6 +81,7 @@ test.describe('User-Defined Tools', () => {
       result: 'Executed in sandbox. Result: sandbox output.',
     });
 
-    await expect(app.chat.toolDetails.first()).toBeVisible({ timeout: 5000 });
+    // Tool event card shows the tool executed
+    await expect(app.chat.toolByName('user.my_custom_tool')).toBeVisible({ timeout: 5000 });
   });
 });

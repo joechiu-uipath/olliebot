@@ -5,7 +5,7 @@
  */
 
 import { test, expect } from '../../utils/test-base.js';
-import { createMission } from '../../fixtures/index.js';
+import { createMission, createConversation } from '../../fixtures/index.js';
 
 test.describe('Missions', () => {
 
@@ -154,7 +154,6 @@ test.describe('Missions', () => {
   test('switches between dashboard/pillars/config tabs', async ({ app }) => {
     await app.switchToMission();
     // The mission mode should be active
-    const activeMode = await app.getActiveMode();
-    expect(activeMode).toContain('mission');
+    await expect(app.page.locator('.mode-btn.active')).toContainText('Mission');
   });
 });

@@ -2,11 +2,26 @@
  * Browser Automation - Session Management & UI Tests
  *
  * Covers: BROWSER-001, BROWSER-007, BROWSER-008, BROWSER-012 through BROWSER-017
- * Note: BROWSER-002 to BROWSER-006 require actual Playwright browser interaction (untestable in E2E sim)
+ *
+ * Browser sessions are created via WS event 'browser_session_created' with data.session object.
+ * They appear in the "Computer Use" accordion which auto-expands when sessions exist.
+ * Session items use .browser-session-item class.
  */
 
 import { test, expect } from '../../utils/test-base.js';
-import { createConversation, createBrowserSession } from '../../fixtures/index.js';
+import { createConversation } from '../../fixtures/index.js';
+
+function makeBrowserSession(id: string, overrides: Record<string, unknown> = {}) {
+  return {
+    id,
+    name: `Session ${id}`,
+    status: 'active',
+    strategy: 'computer-use',
+    provider: 'anthropic',
+    currentUrl: 'https://example.com',
+    ...overrides,
+  };
+}
 
 test.describe('Browser Automation', () => {
 
@@ -20,7 +35,13 @@ test.describe('Browser Automation', () => {
 
     await app.chat.sendMessage('Open a browser to example.com');
 
-    // Simulate browser session creation
+    // Simulate browser session creation via WS
+    app.ws.send({
+      type: 'browser_session_created',
+      session: makeBrowserSession('session-1'),
+    });
+
+    // Simulate tool execution for the browser_session tool
     app.ws.simulateToolExecution({
       conversationId: 'conv-browser',
       turnId: 'turn-b1',
@@ -28,14 +49,6 @@ test.describe('Browser Automation', () => {
       toolName: 'browser_session',
       parameters: { action: 'create' },
       result: JSON.stringify({ sessionId: 'session-1', status: 'active' }),
-    });
-
-    // Simulate browser session WS event
-    app.ws.send({
-      type: 'browser_session_created',
-      sessionId: 'session-1',
-      status: 'active',
-      url: 'about:blank',
     });
 
     await expect(app.chat.toolByName('browser_session')).toBeVisible({ timeout: 5000 });
@@ -46,9 +59,7 @@ test.describe('Browser Automation', () => {
     // Simulate an active session
     app.ws.send({
       type: 'browser_session_created',
-      sessionId: 'session-close',
-      status: 'active',
-      url: 'https://example.com',
+      session: makeBrowserSession('session-close'),
     });
 
     // Close it
@@ -60,23 +71,19 @@ test.describe('Browser Automation', () => {
 
   // BROWSER-008: List sessions
   test('shows all active browser sessions', async ({ app }) => {
-    // Create multiple sessions
+    // Create multiple sessions — the Computer Use accordion auto-expands
     app.ws.send({
       type: 'browser_session_created',
-      sessionId: 'session-a',
-      status: 'active',
-      url: 'https://example.com',
+      session: makeBrowserSession('session-a', { name: 'Session A' }),
     });
 
     app.ws.send({
       type: 'browser_session_created',
-      sessionId: 'session-b',
-      status: 'active',
-      url: 'https://playwright.dev',
+      session: makeBrowserSession('session-b', { name: 'Session B' }),
     });
 
-    // Expand Computer Use accordion
-    await app.sidebar.toggleAccordion('Computer Use');
+    // Wait for the auto-expanded Computer Use accordion
+    await expect(app.page.locator('.browser-session-item')).toHaveCount(2, { timeout: 5000 });
   });
 
   // BROWSER-012: Multiple sessions
@@ -90,16 +97,12 @@ test.describe('Browser Automation', () => {
     // Create two sessions
     app.ws.send({
       type: 'browser_session_created',
-      sessionId: 'multi-1',
-      status: 'active',
-      url: 'https://site1.com',
+      session: makeBrowserSession('multi-1', { name: 'First' }),
     });
 
     app.ws.send({
       type: 'browser_session_created',
-      sessionId: 'multi-2',
-      status: 'active',
-      url: 'https://site2.com',
+      session: makeBrowserSession('multi-2', { name: 'Second' }),
     });
   });
 
@@ -107,9 +110,7 @@ test.describe('Browser Automation', () => {
   test('browser preview shown in UI', async ({ app }) => {
     app.ws.send({
       type: 'browser_session_created',
-      sessionId: 'preview-session',
-      status: 'active',
-      url: 'https://example.com',
+      session: makeBrowserSession('preview-session', { name: 'Preview' }),
     });
 
     // Send a screenshot
@@ -124,12 +125,19 @@ test.describe('Browser Automation', () => {
   test('status badge shows active/busy/idle/error', async ({ app }) => {
     app.ws.send({
       type: 'browser_session_created',
-      sessionId: 'status-session',
-      status: 'active',
-      url: 'https://example.com',
+      session: makeBrowserSession('status-session', { name: 'Status Test' }),
     });
 
-    // The session status should be visible in the sidebar
-    await app.sidebar.toggleAccordion('Computer Use');
+    // Wait for session item to appear with status badge
+    const sessionItem = app.page.locator('.browser-session-item', { hasText: 'Status Test' });
+    await expect(sessionItem).toBeVisible({ timeout: 5000 });
+    await expect(sessionItem.locator('.browser-session-status-badge')).toBeVisible();
+
+    // Update status to busy
+    app.ws.send({
+      type: 'browser_session_updated',
+      sessionId: 'status-session',
+      updates: { status: 'busy' },
+    });
   });
 });

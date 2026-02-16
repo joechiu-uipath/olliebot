@@ -260,7 +260,17 @@ export class ApiMock {
 
     // POST /api/conversations
     this.handlers.set('POST /api/conversations', async (route) => {
-      const body = route.request().postDataJSON();
+      let body: Record<string, unknown> | null = null;
+      try {
+        body = route.request().postDataJSON();
+      } catch {
+        await route.fulfill({
+          status: 400,
+          contentType: 'application/json',
+          body: JSON.stringify({ error: 'Invalid JSON body' }),
+        });
+        return;
+      }
       const id = `conv-${++this.conversationIdCounter}`;
       const conv = {
         id,
@@ -331,10 +341,12 @@ export class ApiMock {
     if (method === 'PATCH' && /^\/api\/conversations\/[^/]+$/.test(path)) {
       return async (route) => {
         const body = route.request().postDataJSON();
+        const match = path.match(/^\/api\/conversations\/([^/]+)$/);
+        const convId = match ? decodeURIComponent(match[1]) : '';
         await route.fulfill({
           status: 200,
           contentType: 'application/json',
-          body: JSON.stringify({ success: true, title: body?.title }),
+          body: JSON.stringify({ conversation: { id: convId, title: body?.title } }),
         });
       };
     }

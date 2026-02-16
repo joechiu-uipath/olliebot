@@ -124,7 +124,12 @@ export function createCitationMessage(content: string, conversationId: string, c
     createdAt: new Date().toISOString(),
     agentName: 'OllieBot',
     agentEmoji: '🐙',
-    citations,
+    citations: {
+      sources: citations.map((c, i) => ({
+        id: `src-${i}`,
+        ...c,
+      })),
+    },
   };
 }
 

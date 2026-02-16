@@ -101,13 +101,14 @@ test.describe('System Tools', () => {
       content: '',
       conversationId: 'conv-sys',
       createdAt: new Date().toISOString(),
-      messageType: 'tool_execution',
+      messageType: 'tool_event',
       toolName: 'web_search',
-      toolSource: 'native',
-      toolSuccess: true,
-      toolDurationMs: 200,
-      toolParameters: { query: 'test query' },
-      toolResult: 'Search results...',
+      source: 'native',
+      status: 'completed',
+      success: true,
+      durationMs: 200,
+      parameters: { query: 'test query' },
+      result: 'Search results...',
     }];
     app.api.setConversationMessages('conv-sys', messages);
 

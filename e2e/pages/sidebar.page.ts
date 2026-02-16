@@ -80,20 +80,16 @@ export class SidebarPage {
   /** Right-click or find actions menu for a conversation. */
   async openConversationActions(title: string): Promise<void> {
     const item = this.conversationByTitle(title);
-    const actionsBtn = item.locator('.conversation-actions');
-    if (await actionsBtn.isVisible()) {
-      await actionsBtn.click();
-    } else {
-      // Hover to reveal actions
-      await item.hover();
-      await actionsBtn.click();
-    }
+    // Hover to reveal the actions button (it's hidden until hover)
+    await item.hover();
+    const actionsBtn = item.locator('.actions-menu-btn');
+    await actionsBtn.click();
   }
 
   /** Start inline rename of a conversation. */
   async startRename(title: string): Promise<void> {
     await this.openConversationActions(title);
-    await this.page.locator('button, [class*="rename"]', { hasText: /rename/i }).click();
+    await this.page.locator('.actions-menu-item', { hasText: /rename/i }).click();
   }
 
   /** Complete inline rename. */
@@ -106,7 +102,7 @@ export class SidebarPage {
   /** Delete a conversation. */
   async deleteConversation(title: string): Promise<void> {
     await this.openConversationActions(title);
-    await this.page.locator('button, [class*="delete"]', { hasText: /delete/i }).click();
+    await this.page.locator('.actions-menu-item', { hasText: /delete/i }).click();
   }
 
   /** Get the count of conversations (excluding well-known). */
@@ -151,10 +147,11 @@ export class SidebarPage {
     await taskItem.locator('.task-toggle').click();
   }
 
-  /** Run a task by name. */
+  /** Run a task by name (run button is hover-revealed). */
   async runTask(taskName: string): Promise<void> {
     const taskItem = this.page.locator('.task-item', { hasText: taskName });
-    await taskItem.locator('button, [class*="run"]', { hasText: /run/i }).click();
+    await taskItem.hover();
+    await taskItem.locator('.task-run-btn').click();
   }
 
   // --- MCP Accordion ---

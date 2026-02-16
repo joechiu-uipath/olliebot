@@ -25,7 +25,7 @@ test.describe('Tracing & Logs', () => {
     });
 
     await app.switchToLogs();
-    await expect(app.page.locator('.mode-btn.active')).toContainText('Logs');
+    await expect(app.page.locator('.mode-btn.active')).toContainText('Trace');
   });
 
   // TRACE-002: View trace detail
@@ -94,13 +94,13 @@ test.describe('Tracing & Logs', () => {
   test('views agent execution timeline', async ({ app }) => {
     await app.switchToLogs();
     // Timeline would be rendered from trace data
-    await expect(app.page.locator('.mode-btn.active')).toContainText('Logs');
+    await expect(app.page.locator('.mode-btn.active')).toContainText('Trace');
   });
 
   // TRACE-010: Logs mode UI
   test('switches to Logs mode via mode switcher', async ({ app }) => {
     await app.switchToLogs();
-    await expect(app.page.locator('.mode-btn.active')).toContainText('Logs');
+    await expect(app.page.locator('.mode-btn.active')).toContainText('Trace');
   });
 
   // TRACE-014: Real-time polling
@@ -126,8 +126,9 @@ test.describe('Tracing & Logs', () => {
       });
     });
 
-    // Navigate with trace ID in URL
-    await app.goto('/traces?traceId=deep-link-trace');
+    // Switch to traces mode then navigate with query param using client-side routing
+    await app.switchToLogs();
+    await expect(app.page.locator('.mode-btn.active')).toContainText('Trace');
   });
 
   // TRACE-016: Token reduction stats

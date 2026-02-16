@@ -3,21 +3,33 @@
  *
  * Covers: DESKTOP-011 through DESKTOP-015
  * Note: DESKTOP-001 to DESKTOP-010 require actual Windows Sandbox (untestable)
+ *
+ * Desktop sessions are created via WS event 'desktop_session_created' with data.session object.
+ * They appear in the "Computer Use" accordion alongside browser sessions.
+ * Session items use .browser-session-item class (shared for both types).
  */
 
 import { test, expect } from '../../utils/test-base.js';
-import { createConversation } from '../../fixtures/index.js';
+
+function makeDesktopSession(id: string, overrides: Record<string, unknown> = {}) {
+  return {
+    id,
+    name: `Desktop ${id}`,
+    status: 'active',
+    sandbox: { type: 'windows-sandbox' },
+    viewport: { width: 1920, height: 1080 },
+    ...overrides,
+  };
+}
 
 test.describe('Desktop Automation UI', () => {
 
   // DESKTOP-011: Session thumbnail
   test('desktop session shows thumbnail in sidebar accordion', async ({ app }) => {
-    // Create a desktop session via WS event
+    // Create a desktop session via WS event (auto-expands Computer Use accordion)
     app.ws.send({
       type: 'desktop_session_created',
-      sessionId: 'desktop-1',
-      status: 'active',
-      platform: 'windows',
+      session: makeDesktopSession('desktop-1', { name: 'Win Desktop' }),
     });
 
     // Send screenshot
@@ -27,28 +39,28 @@ test.describe('Desktop Automation UI', () => {
       screenshot: 'data:image/png;base64,iVBORw0KGgo=',
     });
 
-    await app.sidebar.toggleAccordion('Computer Use');
+    // Session should appear in the auto-expanded accordion
+    const sessionItem = app.page.locator('.browser-session-item', { hasText: 'Win Desktop' });
+    await expect(sessionItem).toBeVisible({ timeout: 5000 });
   });
 
   // DESKTOP-012: Session status badge
   test('status badge shows provisioning/active/error', async ({ app }) => {
     app.ws.send({
       type: 'desktop_session_created',
-      sessionId: 'desktop-status',
-      status: 'provisioning',
-      platform: 'windows',
+      session: makeDesktopSession('desktop-status', { name: 'Status Desktop', status: 'provisioning' }),
     });
 
-    await app.sidebar.toggleAccordion('Computer Use');
+    const sessionItem = app.page.locator('.browser-session-item', { hasText: 'Status Desktop' });
+    await expect(sessionItem).toBeVisible({ timeout: 5000 });
+    await expect(sessionItem.locator('.browser-session-status-badge')).toBeVisible();
   });
 
   // DESKTOP-013: Preview modal
   test('click session opens live preview modal', async ({ app }) => {
     app.ws.send({
       type: 'desktop_session_created',
-      sessionId: 'desktop-preview',
-      status: 'active',
-      platform: 'windows',
+      session: makeDesktopSession('desktop-preview', { name: 'Preview Desktop' }),
     });
 
     app.ws.send({
@@ -57,33 +69,44 @@ test.describe('Desktop Automation UI', () => {
       screenshot: 'data:image/png;base64,iVBORw0KGgo=',
     });
 
-    // The preview modal would open on click
-    await app.sidebar.toggleAccordion('Computer Use');
+    // Click the session item to select it (which triggers the preview)
+    const sessionItem = app.page.locator('.browser-session-item', { hasText: 'Preview Desktop' });
+    await expect(sessionItem).toBeVisible({ timeout: 5000 });
+    await sessionItem.click();
+
+    // Selected state should be applied
+    await expect(sessionItem).toHaveClass(/selected/);
   });
 
   // DESKTOP-014: Viewport dimensions
   test('modal shows viewport dimensions', async ({ app }) => {
     app.ws.send({
       type: 'desktop_session_created',
-      sessionId: 'desktop-viewport',
-      status: 'active',
-      platform: 'windows',
-      width: 1920,
-      height: 1080,
+      session: makeDesktopSession('desktop-viewport', {
+        name: 'Viewport Desktop',
+        viewport: { width: 1920, height: 1080 },
+      }),
     });
 
-    await app.sidebar.toggleAccordion('Computer Use');
+    // Session item shows viewport info in the URL field
+    const sessionItem = app.page.locator('.browser-session-item', { hasText: 'Viewport Desktop' });
+    await expect(sessionItem).toBeVisible({ timeout: 5000 });
+    await expect(sessionItem.locator('.browser-session-url')).toContainText('1920');
   });
 
   // DESKTOP-015: Platform icon
   test('modal shows platform icon', async ({ app }) => {
     app.ws.send({
       type: 'desktop_session_created',
-      sessionId: 'desktop-platform',
-      status: 'active',
-      platform: 'windows',
+      session: makeDesktopSession('desktop-platform', {
+        name: 'Platform Desktop',
+        sandbox: { type: 'windows-sandbox' },
+      }),
     });
 
-    await app.sidebar.toggleAccordion('Computer Use');
+    // Session should show the WinSandbox strategy label
+    const sessionItem = app.page.locator('.browser-session-item', { hasText: 'Platform Desktop' });
+    await expect(sessionItem).toBeVisible({ timeout: 5000 });
+    await expect(sessionItem.locator('.browser-session-strategy')).toContainText('WinSandbox');
   });
 });

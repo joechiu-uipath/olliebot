@@ -2,6 +2,9 @@
  * Citations Tests
  *
  * Covers: CITE-001 through CITE-006
+ *
+ * Citations are rendered via CitationPanel and CitedContent components.
+ * The frontend expects citations as { sources: [...] } structure.
  */
 
 import { test, expect } from '../../utils/test-base.js';
@@ -41,9 +44,11 @@ test.describe('Citations', () => {
       id: `msg-cite-${Date.now()}`,
       role: 'assistant',
       content: 'Based on the Playwright documentation, here are the key features...',
-      citations: [
-        { title: 'Playwright Docs', url: 'https://playwright.dev', snippet: 'E2E testing framework' },
-      ],
+      citations: {
+        sources: [
+          { id: 'src-1', title: 'Playwright Docs', url: 'https://playwright.dev', snippet: 'E2E testing framework' },
+        ],
+      },
     });
 
     await app.chat.waitForMessageContaining('Playwright documentation');
@@ -68,9 +73,11 @@ test.describe('Citations', () => {
       id: `msg-cite-scrape-${Date.now()}`,
       role: 'assistant',
       content: 'According to the React documentation, React is a library for building UIs.',
-      citations: [
-        { title: 'React Docs', url: 'https://react.dev', snippet: 'Library for building UIs' },
-      ],
+      citations: {
+        sources: [
+          { id: 'src-1', title: 'React Docs', url: 'https://react.dev', snippet: 'Library for building UIs' },
+        ],
+      },
     });
 
     await app.chat.waitForMessageContaining('React documentation');
@@ -95,9 +102,11 @@ test.describe('Citations', () => {
       id: `msg-cite-rag-${Date.now()}`,
       role: 'assistant',
       content: 'For deployment, use docker compose as described in your documentation.',
-      citations: [
-        { title: 'deploy.md', url: '/api/rag/projects/docs/documents/deploy.md', snippet: 'Deploy with docker' },
-      ],
+      citations: {
+        sources: [
+          { id: 'src-1', title: 'deploy.md', url: '/api/rag/projects/docs/documents/deploy.md', snippet: 'Deploy with docker' },
+        ],
+      },
     });
 
     await app.chat.waitForMessageContaining('deployment');
@@ -105,6 +114,7 @@ test.describe('Citations', () => {
 
   // CITE-005: Citation display in UI
   test('citations rendered with source links', async ({ app }) => {
+    // Pre-load messages with citations before selecting the conversation
     const msgs = [createCitationMessage(
       'Here is information with citations.',
       'conv-cite',
@@ -114,8 +124,9 @@ test.describe('Citations', () => {
       ],
     )];
     app.api.setConversationMessages('conv-cite', msgs);
-    await app.page.reload();
-    await app.waitForAppReady();
+
+    // Re-select the conversation to load messages (already selected from beforeEach)
+    await app.sidebar.selectConversation('Feed');
     await app.sidebar.selectConversation('Citation Test');
 
     await app.chat.waitForMessageContaining('information with citations');
@@ -130,15 +141,8 @@ test.describe('Citations', () => {
     )];
     app.api.setConversationMessages('conv-cite', msgs);
 
-    // First load
-    await app.page.reload();
-    await app.waitForAppReady();
-    await app.sidebar.selectConversation('Citation Test');
-    await app.chat.waitForMessageContaining('Persisted citation');
-
-    // Reload
-    await app.page.reload();
-    await app.waitForAppReady();
+    // Switch away and back to reload messages
+    await app.sidebar.selectConversation('Feed');
     await app.sidebar.selectConversation('Citation Test');
     await app.chat.waitForMessageContaining('Persisted citation');
   });

@@ -19,8 +19,8 @@ test.describe('Scheduled Tasks', () => {
     await app.page.reload();
     await app.waitForAppReady();
 
-    await app.sidebar.toggleAccordion('Tasks');
-    await expect(app.sidebar.accordion('Tasks').locator('.accordion-content')).toBeVisible({ timeout: 3000 });
+    await app.sidebar.toggleAccordion('Agent Tasks');
+    await expect(app.sidebar.accordion('Agent Tasks').locator('.accordion-content')).toBeVisible({ timeout: 3000 });
   });
 
   // TASK-002: Run task manually
@@ -30,7 +30,7 @@ test.describe('Scheduled Tasks', () => {
     await app.page.reload();
     await app.waitForAppReady();
 
-    await app.sidebar.toggleAccordion('Tasks');
+    await app.sidebar.toggleAccordion('Agent Tasks');
 
     // Run the task
     await app.sidebar.runTask('Manual Task');
@@ -61,7 +61,7 @@ test.describe('Scheduled Tasks', () => {
     await app.page.reload();
     await app.waitForAppReady();
 
-    await app.sidebar.toggleAccordion('Tasks');
+    await app.sidebar.toggleAccordion('Agent Tasks');
     await app.sidebar.toggleTask('Toggle Task');
   });
 
@@ -98,7 +98,8 @@ test.describe('Scheduled Tasks', () => {
       content: 'Task result for this conversation.',
     });
 
-    await app.chat.waitForMessageContaining('Task result for this conversation');
+    // Task run renders as .task-run-event showing the task name
+    await app.chat.waitForMessageContaining('Targeted Task');
   });
 
   // TASK-009: No duplicate task messages
@@ -120,8 +121,8 @@ test.describe('Scheduled Tasks', () => {
     await app.waitForAppReady();
     await app.sidebar.selectConversation('Dedup Test');
 
-    // Only one instance should appear
-    await app.chat.waitForMessageContaining('Task result.');
+    // Only one instance should appear (task_run renders showing taskName)
+    await app.chat.waitForMessageContaining('Dedup Task');
     const taskEvents = app.chat.taskRunEvents;
     const count = await taskEvents.count();
     // Should have exactly 1 task run message

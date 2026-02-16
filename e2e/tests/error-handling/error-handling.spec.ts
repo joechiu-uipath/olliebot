@@ -74,16 +74,17 @@ test.describe('Error Handling & Recovery', () => {
   test('bad API input returns error', async ({ app }) => {
     await app.waitForAppReady();
 
+    // Send a request with invalid JSON and verify the mock handles it
     const response = await app.page.evaluate(async () => {
       const res = await fetch('/api/conversations', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'text/plain' },
         body: '{ invalid json }',
       });
       return { status: res.status };
     });
 
-    // The mock should handle this gracefully
+    // The mock or server should return an error status for invalid input
     expect(response.status).toBeDefined();
   });
 
@@ -137,12 +138,17 @@ test.describe('Error Handling & Recovery', () => {
 
   // ERR-008: Browser session crash
   test('browser session crash handled gracefully', async ({ app }) => {
-    // Create a session
+    // Create a session (uses data.session shape)
     app.ws.send({
       type: 'browser_session_created',
-      sessionId: 'crash-session',
-      status: 'active',
-      url: 'https://example.com',
+      session: {
+        id: 'crash-session',
+        name: 'Crash Browser',
+        status: 'active',
+        strategy: 'computer-use',
+        provider: 'anthropic',
+        currentUrl: 'https://example.com',
+      },
     });
 
     // Simulate crash
@@ -152,17 +158,21 @@ test.describe('Error Handling & Recovery', () => {
       error: 'Browser process crashed unexpectedly',
     });
 
-    // App should remain functional
-    await expect(app.connectionStatus).toContainText('Connected');
+    // App should remain functional (connection status is visible)
+    await expect(app.connectionStatus).toContainText('Connected', { timeout: 5000 });
   });
 
   // ERR-009: Desktop session crash
   test('desktop sandbox crash handled gracefully', async ({ app }) => {
     app.ws.send({
       type: 'desktop_session_created',
-      sessionId: 'desktop-crash',
-      status: 'active',
-      platform: 'windows',
+      session: {
+        id: 'desktop-crash',
+        name: 'Crash Desktop',
+        status: 'active',
+        sandbox: { type: 'windows-sandbox' },
+        viewport: { width: 1920, height: 1080 },
+      },
     });
 
     app.ws.send({
@@ -172,6 +182,6 @@ test.describe('Error Handling & Recovery', () => {
     });
 
     // App should remain functional
-    await expect(app.connectionStatus).toContainText('Connected');
+    await expect(app.connectionStatus).toContainText('Connected', { timeout: 5000 });
   });
 });

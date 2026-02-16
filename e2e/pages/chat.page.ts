@@ -135,9 +135,11 @@ export class ChatPage {
     return 'assistant';
   }
 
-  /** Wait for a message containing specific text. */
+  /** Wait for a message containing specific text (checks message content and task-run events). */
   async waitForMessageContaining(text: string, timeout = 5000): Promise<void> {
-    await expect(this.page.locator('.message-content', { hasText: text }).first()).toBeVisible({ timeout });
+    await expect(
+      this.page.locator('.message-content, .task-run-event', { hasText: text }).first()
+    ).toBeVisible({ timeout });
   }
 
   /** Check if a message is currently streaming. */

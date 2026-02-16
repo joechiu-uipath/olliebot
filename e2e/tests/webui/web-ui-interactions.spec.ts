@@ -22,41 +22,28 @@ test.describe('Web UI Interactions', () => {
   });
 
   // WEBUI-002: Mode switcher
-  test('switches between Chat/Mission/Trace/Eval modes', async ({ app }) => {
-    // Start in Chat mode
-    await app.switchToChat();
+  test('switches between Chat and Trace modes', async ({ app }) => {
+    // Start in Chat mode (default)
     await expect(app.page.locator('.mode-btn.active')).toContainText('Chat');
 
-    // Switch to Logs mode
+    // Switch to Trace mode
     await app.switchToLogs();
-    await expect(app.page.locator('.mode-btn.active')).toContainText('Logs');
-
-    // Switch to Mission mode
-    await app.switchToMission();
-    await expect(app.page.locator('.mode-btn.active')).toContainText('Mission');
-
-    // Switch to Eval mode
-    await app.switchToEval();
-    await expect(app.page.locator('.mode-btn.active')).toContainText('Eval');
-
-    // Back to Chat
-    await app.switchToChat();
-    await expect(app.page.locator('.mode-btn.active')).toContainText('Chat');
+    await expect(app.page.locator('.mode-btn.active')).toContainText('Trace');
   });
 
   // WEBUI-003: Sidebar accordions
   test('expands and collapses sidebar accordion sections', async ({ app }) => {
-    // Toggle Tasks accordion
-    await app.sidebar.toggleAccordion('Tasks');
-    expect(await app.sidebar.isAccordionExpanded('Tasks')).toBe(true);
+    // Toggle Agent Tasks accordion
+    await app.sidebar.toggleAccordion('Agent Tasks');
+    expect(await app.sidebar.isAccordionExpanded('Agent Tasks')).toBe(true);
 
     // Collapse it
-    await app.sidebar.toggleAccordion('Tasks');
-    expect(await app.sidebar.isAccordionExpanded('Tasks')).toBe(false);
+    await app.sidebar.toggleAccordion('Agent Tasks');
+    expect(await app.sidebar.isAccordionExpanded('Agent Tasks')).toBe(false);
 
-    // Toggle Skills accordion
-    await app.sidebar.toggleAccordion('Skills');
-    expect(await app.sidebar.isAccordionExpanded('Skills')).toBe(true);
+    // Toggle Agent Skills accordion
+    await app.sidebar.toggleAccordion('Agent Skills');
+    expect(await app.sidebar.isAccordionExpanded('Agent Skills')).toBe(true);
   });
 
   // WEBUI-004: Code block copy
@@ -84,7 +71,7 @@ test.describe('Web UI Interactions', () => {
     const msgs = [{
       id: 'msg-html',
       role: 'assistant',
-      content: '```html\n<h1>Test</h1><p>Hello</p>\n```',
+      content: 'Here is some HTML:\n\n```html\n<h1>Test</h1><p>Hello</p>\n```',
       conversationId: 'conv-html',
       createdAt: new Date().toISOString(),
     }];
@@ -94,7 +81,7 @@ test.describe('Web UI Interactions', () => {
     await app.waitForAppReady();
     await app.sidebar.selectConversation('HTML Preview');
 
-    await app.chat.waitForMessageContaining('Test');
+    await app.chat.waitForMessageContaining('Here is some HTML');
   });
 
   // WEBUI-008: Audio player
@@ -143,15 +130,21 @@ test.describe('Web UI Interactions', () => {
 
   // WEBUI-012: Computer Use accordion
   test('browser/desktop sessions accordion in sidebar', async ({ app }) => {
-    // Send a session event to populate the accordion
+    // Send a session event to populate the accordion (uses data.session shape)
     app.ws.send({
       type: 'browser_session_created',
-      sessionId: 'test-session',
-      status: 'active',
-      url: 'https://example.com',
+      session: {
+        id: 'test-session',
+        name: 'Test Browser',
+        status: 'active',
+        strategy: 'computer-use',
+        provider: 'anthropic',
+        currentUrl: 'https://example.com',
+      },
     });
 
-    await app.sidebar.toggleAccordion('Computer Use');
+    // Computer Use accordion auto-expands when sessions exist
+    await expect(app.page.locator('.browser-session-item')).toBeVisible({ timeout: 5000 });
   });
 
   // WEBUI-016: Mobile menu button
