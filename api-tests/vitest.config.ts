@@ -18,5 +18,22 @@ export default defineConfig({
     // API tests are slower than unit tests — generous timeout
     testTimeout: 15_000,
     hookTimeout: 15_000,
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'text-summary', 'html', 'lcov'],
+      reportsDirectory: './coverage-api',
+      // Only measure the API surface — the code these tests are intended to exercise
+      include: [
+        'src/server/**/*.ts',
+        'src/channels/websocket.ts',
+        'src/db/index.ts',
+        'src/db/well-known-conversations.ts',
+        'src/settings/service.ts',
+      ],
+      exclude: [
+        '**/*.test.ts',
+        '**/types.ts',
+      ],
+    },
   },
 });

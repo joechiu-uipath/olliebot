@@ -24,18 +24,27 @@ src/
 
 ### Test Categories
 
-1. **Unit Tests** (`.test.ts`): Test pure functions and isolated logic
+1. **Unit Tests** (`src/**/*.test.ts`): Test pure functions and isolated logic
    - Fast, deterministic, no external dependencies
    - Focus on business logic, data transformations, algorithms
    - Use mocks for external services
+   - Run with: `pnpm test`
 
-2. **Integration Tests** (not yet implemented): Test component interactions
-   - Test database operations, API integrations
-   - May use test databases or sandboxed environments
+2. **API Integration Tests** (`api-tests/tests/**/*.test.ts`): Test the REST API and WebSocket layer
+   - Real Hono server with in-memory SQLite (no disk I/O)
+   - Real WebSocket connections (no browser mocking)
+   - Dynamic port allocation — safe to run alongside a dev server
+   - Dependency simulator absorbs all outbound network calls (LLM, search, etc.)
+   - No service mocks or DB seeding hacks — all state created through CRUD APIs
+   - Database cleared between tests for isolation
+   - Run with: `pnpm test:api`
+   - Coverage: `pnpm test:api:coverage` (reports to `coverage-api/`)
 
-3. **E2E Tests** (not yet implemented): Test complete workflows
-   - User scenarios, multi-step processes
-   - May require running servers, browsers
+3. **E2E Tests** (`e2e/tests/**/*.spec.ts`): Test complete user workflows through the UI
+   - Playwright with real browser (headless Chromium)
+   - Full frontend + mocked backend (API mock + WebSocket mock)
+   - Page Object Model for maintainable selectors
+   - Run with: `pnpm test:e2e`
 
 ## Test Helpers
 
@@ -300,20 +309,21 @@ it('reads PORT from environment', () => {
 ## Running Tests
 
 ```bash
-# Run all tests
-npm test
+# ── Unit Tests ──
+pnpm test                           # Run all unit tests
+pnpm test src/citations/            # Run specific directory
+pnpm test:watch                     # Watch mode
+pnpm test:coverage                  # Unit test coverage
 
-# Run specific test file
-npm test src/citations/extractors.test.ts
+# ── API Integration Tests ──
+pnpm test:api                       # Run all API tests
+pnpm test:api:watch                 # Watch mode
+pnpm test:api:coverage              # API coverage (reports to coverage-api/)
 
-# Run tests in directory
-npm test src/citations/
-
-# Run tests in watch mode
-npm run test:watch
-
-# Run with coverage (not yet configured)
-npm run test:coverage
+# ── E2E Tests ──
+pnpm test:e2e                       # Run all E2E tests
+pnpm test:e2e:ui                    # Interactive UI mode
+pnpm test:e2e:debug                 # Debug mode
 ```
 
 ## Debugging Tests

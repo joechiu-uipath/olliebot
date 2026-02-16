@@ -39,4 +39,5 @@ log/
 
 # Test coverage
 coverage/
+coverage-api/
 test-results

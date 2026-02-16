@@ -273,7 +273,7 @@ Included for completeness, but **not recommended** for OllieBot.
 
 ### Hybrid Strategy
 
-Use **both** Playwright and Vitest Browser Mode for different test types:
+Use Playwright, API integration tests, and Vitest for different test types:
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -284,6 +284,12 @@ Use **both** Playwright and Vitest Browser Mode for different test types:
 │                      │ E2E     │  Playwright            │
 │                      │ (~50)   │  Full user flows       │
 │                      └────┬────┘                        │
+│                           │                             │
+│               ┌───────────┴───────────┐                 │
+│               │   API Integration    │  Vitest + real   │
+│               │   (~50+)             │  server + in-mem │
+│               │                      │  SQLite          │
+│               └───────────┬───────────┘                 │
 │                           │                             │
 │                 ┌─────────┴─────────┐                   │
 │                 │   Integration     │  Vitest Browser   │
@@ -306,6 +312,21 @@ Use **both** Playwright and Vitest Browser Mode for different test types:
 - Database queries (CRUD operations)
 - Utility functions (parsing, formatting, validation)
 - Service methods (event emission, state management)
+
+#### API Integration Tests (Vitest + real server)
+- REST endpoints (health, conversations, messages, settings, agents, traces)
+- WebSocket lifecycle (connect, stream, broadcast, disconnect)
+- Database persistence through the API layer (CRUD, pagination, cursors)
+- Request validation and error responses (malformed JSON, 404s, 400s)
+- Concurrent access (parallel writes, connection management)
+- Well-known conversation protection (delete/rename guards)
+
+See [`api-tests/`](../../api-tests/) for the implementation. Key properties:
+- **No mocks**: Real Hono server, real SQLite (in-memory), real WebSocket
+- **No outbound network**: `SimulatorServer` from `e2e/simulators/` absorbs all external calls
+- **Parallel-safe**: Dynamic port allocation (port 0) per test file
+- **Fast reset**: `DELETE FROM` + re-seed between tests (no server restart)
+- **Run command**: `pnpm test:api` / `pnpm test:api:coverage`
 
 #### Integration Tests (Vitest Browser Mode)
 - React components (rendering, interactions, state)
@@ -597,10 +618,28 @@ olliebot/
 | Tier | Technology | Test Count | Speed | Coverage Focus |
 |------|------------|------------|-------|----------------|
 | Unit | Vitest (Node.js) | ~500 | ~10ms/test | Logic, transformations |
+| **API Integration** | **Vitest + real server** | **~50+** | **~5ms/test** | **REST API, WebSocket, DB persistence** |
 | Integration | Vitest Browser | ~150 | ~200ms/test | Components, hooks |
 | E2E | Playwright | ~50 | ~1s/test | User workflows |
 
-**Total estimated tests**: ~700
+**Total estimated tests**: ~750+
 **Total estimated runtime**: ~5 minutes (parallel)
+
+### API Integration Test Coverage Target
+
+The API integration tests specifically measure coverage of the server-side API surface:
+
+| File | Description | Coverage Target |
+|------|-------------|-----------------|
+| `src/server/index.ts` | Main REST routes + WebSocket setup | Primary |
+| `src/server/eval-routes.ts` | Evaluation REST API | Future |
+| `src/server/mission-routes.ts` | Mission/pillar REST API | Future |
+| `src/server/voice-proxy.ts` | Voice WebSocket proxy | Out of scope (needs voice provider) |
+| `src/channels/websocket.ts` | WebSocket channel implementation | Primary |
+| `src/db/index.ts` | Database layer (repositories, pagination) | Primary |
+| `src/db/well-known-conversations.ts` | Well-known conversation seeding | Primary |
+| `src/settings/service.ts` | User settings persistence | Primary |
+
+Run coverage: `pnpm test:api:coverage` (reports to `coverage-api/`)
 
 The recommended approach balances test confidence with execution speed and cost, while clearly identifying areas that require manual testing due to external dependencies.
