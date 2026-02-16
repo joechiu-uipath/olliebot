@@ -6,6 +6,7 @@
 
 import { test, expect } from '../../utils/test-base.js';
 import { createConversation } from '../../fixtures/index.js';
+import { ToolName, AgentType, AgentInfo } from '../../constants/index.js';
 
 test.describe('WebSocket Communication', () => {
 
@@ -19,8 +20,7 @@ test.describe('WebSocket Communication', () => {
   test('message sent via WebSocket processed', async ({ app }) => {
     const conv = createConversation({ id: 'conv-ws', title: 'WS Test' });
     app.api.addConversation(conv);
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
     await app.sidebar.selectConversation('WS Test');
 
     await app.chat.sendMessage('Test WebSocket message');
@@ -37,8 +37,7 @@ test.describe('WebSocket Communication', () => {
   test('streaming chunks received and displayed', async ({ app }) => {
     const conv = createConversation({ id: 'conv-ws-stream', title: 'WS Stream' });
     app.api.addConversation(conv);
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
     await app.sidebar.selectConversation('WS Stream');
 
     await app.chat.sendMessage('Stream me');
@@ -55,8 +54,7 @@ test.describe('WebSocket Communication', () => {
   test('all event types handled', async ({ app }) => {
     const conv = createConversation({ id: 'conv-ws-events', title: 'WS Events' });
     app.api.addConversation(conv);
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
     await app.sidebar.selectConversation('WS Events');
 
     // Test different event types
@@ -66,7 +64,7 @@ test.describe('WebSocket Communication', () => {
     app.ws.send({ type: 'stream_end', conversationId: 'conv-ws-events', turnId: 'turn-1', messageId: 'msg-2' });
     app.ws.send({ type: 'tool_requested', conversationId: 'conv-ws-events', turnId: 'turn-1', requestId: 'req-1', toolName: 'test_tool' });
     app.ws.send({ type: 'tool_execution_finished', conversationId: 'conv-ws-events', turnId: 'turn-1', requestId: 'req-1', toolName: 'test_tool', success: true, result: 'ok' });
-    app.ws.send({ type: 'delegation', conversationId: 'conv-ws-events', agentId: 'a1', agentType: 'researcher', agentName: 'Test', agentEmoji: '🔬', mission: 'Test' });
+    app.ws.send({ type: 'delegation', conversationId: 'conv-ws-events', agentId: 'a1', agentType: AgentType.RESEARCHER, agentName: AgentInfo[AgentType.RESEARCHER].name, agentEmoji: AgentInfo[AgentType.RESEARCHER].emoji, mission: 'Test' });
     app.ws.send({ type: 'error', conversationId: 'conv-ws-events', error: 'Test error' });
 
     await app.chat.waitForMessageContaining('Direct message');
@@ -78,8 +76,7 @@ test.describe('WebSocket Communication', () => {
     const conv2 = createConversation({ id: 'conv-filter-2', title: 'Filter 2' });
     app.api.addConversation(conv1);
     app.api.addConversation(conv2);
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
 
     // Select conv1
     await app.sidebar.selectConversation('Filter 1');
@@ -115,8 +112,7 @@ test.describe('WebSocket Communication', () => {
   test('stream_resume event on conversation switch', async ({ app }) => {
     const conv = createConversation({ id: 'conv-resume', title: 'Resume Test' });
     app.api.addConversation(conv);
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
     await app.sidebar.selectConversation('Resume Test');
 
     // Simulate a stream_resume (server sends active stream state on switch)
@@ -135,8 +131,7 @@ test.describe('WebSocket Communication', () => {
   test('tool_resume event restores tool state', async ({ app }) => {
     const conv = createConversation({ id: 'conv-tool-resume', title: 'Tool Resume' });
     app.api.addConversation(conv);
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
     await app.sidebar.selectConversation('Tool Resume');
 
     // Simulate tool_resume (restoring a running tool's state)
@@ -145,13 +140,13 @@ test.describe('WebSocket Communication', () => {
       conversationId: 'conv-tool-resume',
       turnId: 'turn-tr',
       requestId: 'req-tr',
-      toolName: 'web_search',
+      toolName: ToolName.WEB_SEARCH,
       source: 'native',
       parameters: { query: 'test' },
       status: 'running',
     });
 
-    await expect(app.chat.toolByName('web_search')).toBeVisible({ timeout: 5000 });
+    await expect(app.chat.toolByName(ToolName.WEB_SEARCH)).toBeVisible();
   });
 
   // WS-012 through WS-016: Additional WebSocket events
@@ -168,8 +163,7 @@ test.describe('WebSocket Communication', () => {
   test('deep research events received', async ({ app }) => {
     const conv = createConversation({ id: 'conv-dr', title: 'DR Test' });
     app.api.addConversation(conv);
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
     await app.sidebar.selectConversation('DR Test');
 
     app.ws.send({ type: 'deep_research_plan', conversationId: 'conv-dr', plan: { steps: [] } });

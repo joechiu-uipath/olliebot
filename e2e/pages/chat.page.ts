@@ -83,6 +83,16 @@ export class ChatPage {
     return items.allTextContents();
   }
 
+  /** Get hashtag menu items locator. */
+  get hashtagMenuItems(): Locator {
+    return this.page.locator('.hashtag-menu-item, .agent-chat-hashtag-menu-item');
+  }
+
+  /** Get hashtag menu item count. */
+  async getHashtagMenuItemCount(): Promise<number> {
+    return this.hashtagMenuItems.count();
+  }
+
   // --- Command Chips ---
 
   /** Get the active command chip (e.g., #Deep Research). */
@@ -110,6 +120,16 @@ export class ChatPage {
   /** Get the last message. */
   get lastMessage(): Locator {
     return this.messages.last();
+  }
+
+  /** Get the avatar for a message by index. */
+  messageAvatar(index: number): Locator {
+    return this.message(index).locator('.message-avatar, [class*="avatar"]');
+  }
+
+  /** Get the avatar for the last message. */
+  get lastMessageAvatar(): Locator {
+    return this.lastMessage.locator('.message-avatar, [class*="avatar"]');
   }
 
   /** Get message content text. */
@@ -145,6 +165,16 @@ export class ChatPage {
   /** Check if a message is currently streaming. */
   async isStreaming(): Promise<boolean> {
     return this.page.locator('.message.streaming').isVisible();
+  }
+
+  /** Wait for streaming indicator to be visible. */
+  async waitForStreaming(timeout = 3000): Promise<void> {
+    await expect(this.page.locator('.message.streaming')).toBeVisible({ timeout });
+  }
+
+  /** Wait for streaming to complete (no streaming indicator). */
+  async waitForStreamingComplete(timeout = 3000): Promise<void> {
+    await expect(this.page.locator('.message.streaming')).not.toBeVisible({ timeout });
   }
 
   // --- User Message Display ---
@@ -191,6 +221,12 @@ export class ChatPage {
   /** Get expanded tool details (visible after clicking tool event). */
   get toolDetails(): Locator {
     return this.page.locator('.tool-details');
+  }
+
+  /** Expand a tool event by clicking it. Waits for tool details to be visible. */
+  async expandTool(toolName: string): Promise<void> {
+    await this.toolByName(toolName).click();
+    await this.toolDetails.waitFor({ state: 'visible' });
   }
 
   /** Get the tool progress bar. */
@@ -307,6 +343,28 @@ export class ChatPage {
   /** Get audio players in messages. */
   get audioPlayers(): Locator {
     return this.page.locator('.tool-result-audio, [class*="audio-player"]');
+  }
+
+  /** Get the audio play button. */
+  get audioPlayButton(): Locator {
+    return this.page.locator('.audio-play-button');
+  }
+
+  /** Get audio play button text (e.g., "▶️ Play" or "🔊 Playing..."). */
+  async getAudioPlayButtonText(): Promise<string> {
+    return (await this.audioPlayButton.textContent()) || '';
+  }
+
+  // --- Image Preview ---
+
+  /** Get image preview elements in tool results. */
+  get toolResultImages(): Locator {
+    return this.page.locator('.tool-result-image img, .tool-result-with-image img');
+  }
+
+  /** Get image src attribute from tool result. */
+  async getToolResultImageSrc(index = 0): Promise<string> {
+    return (await this.toolResultImages.nth(index).getAttribute('src')) || '';
   }
 
   // --- PDF Viewer ---

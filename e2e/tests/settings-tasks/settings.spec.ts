@@ -5,6 +5,7 @@
  */
 
 import { test, expect } from '../../utils/test-base.js';
+import { ToolName, AgentType } from '../../constants/index.js';
 
 test.describe('Settings', () => {
 
@@ -22,8 +23,7 @@ test.describe('Settings', () => {
       });
     });
 
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
     // Settings are loaded at startup - verify the app functions
     await expect(app.connectionStatus).toContainText('Connected');
   });
@@ -42,7 +42,6 @@ test.describe('Settings', () => {
     });
 
     // Settings changes happen through the UI (toggle switches, etc.)
-    await app.waitForAppReady();
   });
 
   // SETTINGS-003: Settings persistence
@@ -57,12 +56,10 @@ test.describe('Settings', () => {
       });
     });
 
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
 
     // Reload again and verify settings still load
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
     await expect(app.connectionStatus).toContainText('Connected');
   });
 });

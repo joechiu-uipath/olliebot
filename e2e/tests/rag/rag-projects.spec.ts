@@ -6,6 +6,7 @@
 
 import { test, expect } from '../../utils/test-base.js';
 import { createRagProject, createConversation } from '../../fixtures/index.js';
+import { ToolName } from '../../constants/index.js';
 
 test.describe('RAG Projects', () => {
 
@@ -13,15 +14,14 @@ test.describe('RAG Projects', () => {
   test('queries indexed documents via tool', async ({ app }) => {
     const conv = createConversation({ id: 'conv-rag', title: 'RAG Test' });
     app.api.addConversation(conv);
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
     await app.sidebar.selectConversation('RAG Test');
 
     app.ws.simulateToolExecution({
       conversationId: 'conv-rag',
       turnId: 'turn-rag',
       requestId: 'req-rag',
-      toolName: 'query_rag_project',
+      toolName: ToolName.QUERY_RAG_PROJECT,
       parameters: { projectId: 'docs', query: 'deployment instructions' },
       result: JSON.stringify({
         results: [
@@ -30,7 +30,7 @@ test.describe('RAG Projects', () => {
       }),
     });
 
-    await expect(app.chat.toolByName('query_rag_project')).toBeVisible({ timeout: 5000 });
+    await expect(app.chat.toolByName(ToolName.QUERY_RAG_PROJECT)).toBeVisible();
   });
 
   // RAG-002: RAG results in citations
@@ -48,8 +48,7 @@ test.describe('RAG Projects', () => {
     }];
     app.api.addConversation(conv);
     app.api.setConversationMessages('conv-rag-cite', msgs);
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
     await app.sidebar.selectConversation('RAG Citations');
 
     await app.chat.waitForMessageContaining('docker compose');
@@ -59,8 +58,7 @@ test.describe('RAG Projects', () => {
   test('uploads file to RAG project', async ({ app }) => {
     const project = createRagProject({ id: 'rag-upload', name: 'Upload Test' });
     app.api.setRagProjects([project]);
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
 
     // Verify RAG projects accordion
     await app.sidebar.toggleAccordion('RAG');
@@ -70,8 +68,7 @@ test.describe('RAG Projects', () => {
   test('indexing progress bar shows percentage', async ({ app }) => {
     const project = createRagProject({ id: 'rag-index', name: 'Indexing Test', isIndexing: false });
     app.api.setRagProjects([project]);
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
 
     // Simulate indexing events
     app.ws.send({
@@ -125,8 +122,7 @@ test.describe('RAG Projects', () => {
       });
     });
 
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
   });
 
   // RAG-011: Document count display
@@ -139,8 +135,7 @@ test.describe('RAG Projects', () => {
       vectorCount: 180,
     });
     app.api.setRagProjects([project]);
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
 
     await app.sidebar.toggleAccordion('RAG');
   });

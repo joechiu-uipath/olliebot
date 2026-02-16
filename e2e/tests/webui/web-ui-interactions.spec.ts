@@ -6,6 +6,7 @@
 
 import { test, expect } from '../../utils/test-base.js';
 import { createConversation } from '../../fixtures/index.js';
+import { ToolName, Mode } from '../../constants/index.js';
 
 test.describe('Web UI Interactions', () => {
 
@@ -24,7 +25,7 @@ test.describe('Web UI Interactions', () => {
   // WEBUI-002: Mode switcher
   test('switches between Chat and Trace modes', async ({ app }) => {
     // Start in Chat mode (default)
-    await expect(app.page.locator('.mode-btn.active')).toContainText('Chat');
+    await expect(app.activeModeButton).toContainText(Mode.CHAT);
 
     // Switch to Trace mode
     await app.switchToLogs();
@@ -57,8 +58,7 @@ test.describe('Web UI Interactions', () => {
     }];
     app.api.addConversation(conv);
     app.api.setConversationMessages('conv-code-block', msgs);
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
     await app.sidebar.selectConversation('Code Blocks');
 
     await app.chat.waitForMessageContaining('Hello World');
@@ -76,8 +76,7 @@ test.describe('Web UI Interactions', () => {
     }];
     app.api.addConversation(conv);
     app.api.setConversationMessages('conv-html', msgs);
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
     await app.sidebar.selectConversation('HTML Preview');
 
     await app.chat.waitForMessageContaining('Here is some HTML');
@@ -87,8 +86,7 @@ test.describe('Web UI Interactions', () => {
   test('audio content has play button', async ({ app }) => {
     const conv = createConversation({ id: 'conv-audio', title: 'Audio Test' });
     app.api.addConversation(conv);
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
     await app.sidebar.selectConversation('Audio Test');
 
     // Simulate audio generation
@@ -96,12 +94,12 @@ test.describe('Web UI Interactions', () => {
       conversationId: 'conv-audio',
       turnId: 'turn-audio',
       requestId: 'req-audio',
-      toolName: 'speak',
+      toolName: ToolName.SPEAK,
       parameters: { text: 'Hello' },
       result: JSON.stringify({ audioData: 'base64audio' }),
     });
 
-    await expect(app.chat.toolByName('speak')).toBeVisible({ timeout: 5000 });
+    await expect(app.chat.toolByName(ToolName.SPEAK)).toBeVisible();
   });
 
   // WEBUI-011: Message action buttons
@@ -120,8 +118,7 @@ test.describe('Web UI Interactions', () => {
     }];
     app.api.addConversation(conv);
     app.api.setConversationMessages('conv-actions', msgs);
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
     await app.sidebar.selectConversation('Actions Test');
 
     await app.chat.waitForMessageContaining('actions you can take');
@@ -143,15 +140,14 @@ test.describe('Web UI Interactions', () => {
     });
 
     // Computer Use accordion auto-expands when sessions exist
-    await expect(app.page.locator('.browser-session-item')).toBeVisible({ timeout: 5000 });
+    await expect(app.sidebar.sessionByName('Test Browser')).toBeVisible();
   });
 
   // WEBUI-016: Mobile menu button
   test('hamburger menu exists for mobile', async ({ app }) => {
     // Set a mobile viewport
     await app.page.setViewportSize({ width: 375, height: 667 });
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
 
     // Check for mobile menu button
     const mobileBtn = app.sidebar.mobileMenuButton;

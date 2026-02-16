@@ -6,14 +6,14 @@
 
 import { test, expect } from '../../utils/test-base.js';
 import { createConversation } from '../../fixtures/index.js';
+import { ToolName, AgentType } from '../../constants/index.js';
 
 test.describe('Web & Search Tools', () => {
 
   test.beforeEach(async ({ app }) => {
     const conv = createConversation({ id: 'conv-tools', title: 'Tools Test' });
     app.api.addConversation(conv);
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
     await app.sidebar.selectConversation('Tools Test');
   });
 
@@ -25,7 +25,7 @@ test.describe('Web & Search Tools', () => {
       conversationId: 'conv-tools',
       turnId: 'turn-ws1',
       requestId: 'req-ws1',
-      toolName: 'web_search',
+      toolName: ToolName.WEB_SEARCH,
       parameters: { query: 'Playwright testing' },
       result: JSON.stringify({
         results: [
@@ -40,7 +40,7 @@ test.describe('Web & Search Tools', () => {
       turnId: 'turn-ws1',
     });
 
-    await expect(app.chat.toolByName('web_search')).toBeVisible({ timeout: 5000 });
+    await expect(app.chat.toolByName(ToolName.WEB_SEARCH)).toBeVisible();
     await app.chat.waitForMessageContaining('Playwright');
   });
 
@@ -52,12 +52,12 @@ test.describe('Web & Search Tools', () => {
       conversationId: 'conv-tools',
       turnId: 'turn-scrape',
       requestId: 'req-scrape',
-      toolName: 'web_scrape',
+      toolName: ToolName.WEB_SCRAPE,
       parameters: { url: 'https://example.com' },
       result: 'Page title: Example Domain. Content: This domain is for use in illustrative examples.',
     });
 
-    await expect(app.chat.toolByName('web_scrape')).toBeVisible({ timeout: 5000 });
+    await expect(app.chat.toolByName(ToolName.WEB_SCRAPE)).toBeVisible();
   });
 
   // TOOL-WEB-003: Wikipedia search
@@ -68,12 +68,12 @@ test.describe('Web & Search Tools', () => {
       conversationId: 'conv-tools',
       turnId: 'turn-wiki',
       requestId: 'req-wiki',
-      toolName: 'wikipedia_search',
+      toolName: ToolName.WIKIPEDIA_SEARCH,
       parameters: { query: 'quantum computing' },
       result: 'Quantum computing is a type of computation...',
     });
 
-    await expect(app.chat.toolByName('wikipedia_search')).toBeVisible({ timeout: 5000 });
+    await expect(app.chat.toolByName(ToolName.WIKIPEDIA_SEARCH)).toBeVisible();
   });
 
   // TOOL-WEB-004: HTTP client
@@ -84,12 +84,12 @@ test.describe('Web & Search Tools', () => {
       conversationId: 'conv-tools',
       turnId: 'turn-http',
       requestId: 'req-http',
-      toolName: 'http_client',
+      toolName: ToolName.HTTP_CLIENT,
       parameters: { method: 'GET', url: 'https://api.example.com/data' },
       result: JSON.stringify({ status: 200, body: { data: 'test' } }),
     });
 
-    await expect(app.chat.toolByName('http_client')).toBeVisible({ timeout: 5000 });
+    await expect(app.chat.toolByName(ToolName.HTTP_CLIENT)).toBeVisible();
   });
 
   // TOOL-WEB-005: Website crawler
@@ -100,11 +100,11 @@ test.describe('Web & Search Tools', () => {
       conversationId: 'conv-tools',
       turnId: 'turn-crawl',
       requestId: 'req-crawl',
-      toolName: 'website_crawler',
+      toolName: ToolName.WEBSITE_CRAWLER,
       parameters: { url: 'https://docs.example.com', maxPages: 5 },
       result: 'Crawled 5 pages. Summary: Documentation for example project.',
     });
 
-    await expect(app.chat.toolByName('website_crawler')).toBeVisible({ timeout: 5000 });
+    await expect(app.chat.toolByName(ToolName.WEBSITE_CRAWLER)).toBeVisible();
   });
 });

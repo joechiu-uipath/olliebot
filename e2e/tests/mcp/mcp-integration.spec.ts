@@ -9,6 +9,11 @@
 
 import { test, expect } from '../../utils/test-base.js';
 import { createConversation, createMcpServer } from '../../fixtures/index.js';
+import { ToolName } from '../../constants/index.js';
+
+// MCP tool names are dynamic (format: mcp.<server>__<tool>)
+// Keep as string constants for consistency
+const MCP_TOOL_GITHUB_LIST_REPOS = 'mcp.github__list_repos';
 
 test.describe('MCP Integration', () => {
 
@@ -25,17 +30,15 @@ test.describe('MCP Integration', () => {
         ],
       },
     });
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
 
     // Expand Tools accordion to see MCP servers
     await app.sidebar.toggleAccordion('Tools');
-    await expect(app.sidebar.accordion('Tools').locator('.accordion-content')).toBeVisible({ timeout: 3000 });
+    await expect(app.sidebar.accordionContent('Tools')).toBeVisible();
 
     // Verify the MCP server group appears with connected status
-    const mcpGroup = app.page.locator('.mcp-tool-group', { hasText: 'GitHub MCP' });
-    await expect(mcpGroup).toBeVisible();
-    await expect(mcpGroup.locator('.mcp-status.connected')).toBeVisible();
+    await expect(app.sidebar.mcpToolGroup('GitHub MCP')).toBeVisible();
+    await expect(app.sidebar.mcpStatusConnected('GitHub MCP')).toBeVisible();
   });
 
   // MCP-002: Tool discovery
@@ -53,23 +56,21 @@ test.describe('MCP Integration', () => {
         ],
       },
     });
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
 
     // Expand Tools accordion to see MCP tools
     await app.sidebar.toggleAccordion('Tools');
-    await expect(app.sidebar.accordion('Tools').locator('.accordion-content')).toBeVisible({ timeout: 3000 });
+    await expect(app.sidebar.accordionContent('Tools')).toBeVisible();
 
     // Verify the MCP tool group is visible
-    await expect(app.page.locator('.mcp-tool-group', { hasText: 'Tools MCP' })).toBeVisible();
+    await expect(app.sidebar.mcpToolGroup('Tools MCP')).toBeVisible();
   });
 
   // MCP-003: Tool execution
   test('executes MCP tool and shows result', async ({ app }) => {
     const conv = createConversation({ id: 'conv-mcp', title: 'MCP Test' });
     app.api.addConversation(conv);
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
     await app.sidebar.selectConversation('MCP Test');
 
     await app.chat.sendMessage('Use GitHub tool to list repos');
@@ -78,14 +79,14 @@ test.describe('MCP Integration', () => {
       conversationId: 'conv-mcp',
       turnId: 'turn-mcp',
       requestId: 'req-mcp',
-      toolName: 'mcp.github__list_repos',
+      toolName: MCP_TOOL_GITHUB_LIST_REPOS,
       toolSource: 'mcp',
       parameters: { org: 'test-org' },
       result: JSON.stringify({ repos: ['repo-1', 'repo-2'] }),
     });
 
     // Tool event card should be visible (click to expand for details)
-    await expect(app.chat.toolByName('mcp.github__list_repos')).toBeVisible({ timeout: 5000 });
+    await expect(app.chat.toolByName(MCP_TOOL_GITHUB_LIST_REPOS)).toBeVisible();
   });
 
   // MCP-004: Server enable/disable
@@ -93,15 +94,13 @@ test.describe('MCP Integration', () => {
     const mcpServer = createMcpServer({ id: 'mcp-toggle', name: 'Toggle MCP', enabled: true });
     app.api.setMcps([mcpServer]);
     app.api.setTools({ builtin: [], user: [], mcp: { 'Toggle MCP': [] } });
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
 
     await app.sidebar.toggleAccordion('Tools');
 
     // Toggle the MCP server via its toggle slider (input is hidden, click the label)
-    const mcpGroup = app.page.locator('.mcp-tool-group', { hasText: 'Toggle MCP' });
-    await expect(mcpGroup).toBeVisible();
-    await mcpGroup.locator('.mcp-toggle').click();
+    await expect(app.sidebar.mcpToolGroup('Toggle MCP')).toBeVisible();
+    await app.sidebar.mcpToggle('Toggle MCP').click();
   });
 
   // MCP-005: Server reconnection
@@ -109,8 +108,7 @@ test.describe('MCP Integration', () => {
     const mcpServer = createMcpServer({ id: 'mcp-reconnect', name: 'Reconnect MCP', status: 'connected' });
     app.api.setMcps([mcpServer]);
     app.api.setTools({ builtin: [], user: [], mcp: { 'Reconnect MCP': [] } });
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
 
     // Simulate server status change via WS
     app.ws.send({
@@ -132,15 +130,13 @@ test.describe('MCP Integration', () => {
     const mcpServer = createMcpServer({ id: 'mcp-sidebar', name: 'Sidebar MCP', enabled: true });
     app.api.setMcps([mcpServer]);
     app.api.setTools({ builtin: [], user: [], mcp: { 'Sidebar MCP': [] } });
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
 
     await app.sidebar.toggleAccordion('Tools');
-    const mcpGroup = app.page.locator('.mcp-tool-group', { hasText: 'Sidebar MCP' });
-    await expect(mcpGroup).toBeVisible({ timeout: 3000 });
+    await expect(app.sidebar.mcpToolGroup('Sidebar MCP')).toBeVisible();
 
     // Toggle MCP via the label (input is hidden behind custom slider)
-    await mcpGroup.locator('.mcp-toggle').click();
+    await app.sidebar.mcpToggle('Sidebar MCP').click();
   });
 
   // MCP-008: MCP connection status
@@ -148,13 +144,11 @@ test.describe('MCP Integration', () => {
     const mcpServer = createMcpServer({ id: 'mcp-status', name: 'Status MCP', status: 'connected' });
     app.api.setMcps([mcpServer]);
     app.api.setTools({ builtin: [], user: [], mcp: { 'Status MCP': [] } });
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
 
     await app.sidebar.toggleAccordion('Tools');
-    const mcpGroup = app.page.locator('.mcp-tool-group', { hasText: 'Status MCP' });
-    await expect(mcpGroup).toBeVisible();
-    await expect(mcpGroup.locator('.mcp-status.connected')).toBeVisible();
+    await expect(app.sidebar.mcpToolGroup('Status MCP')).toBeVisible();
+    await expect(app.sidebar.mcpStatusConnected('Status MCP')).toBeVisible();
   });
 
   // MCP-009: MCP tool count
@@ -172,13 +166,11 @@ test.describe('MCP Integration', () => {
         ],
       },
     });
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
 
     await app.sidebar.toggleAccordion('Tools');
-    const mcpGroup = app.page.locator('.mcp-tool-group', { hasText: 'Count MCP' });
-    await expect(mcpGroup).toBeVisible();
+    await expect(app.sidebar.mcpToolGroup('Count MCP')).toBeVisible();
     // Tool count badge shows the number of tools
-    await expect(mcpGroup.locator('.tool-group-count')).toContainText('3');
+    await expect(app.sidebar.mcpToolCount('Count MCP')).toContainText('3');
   });
 });

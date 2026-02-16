@@ -6,6 +6,7 @@
 
 import { test, expect } from '../../utils/test-base.js';
 import { createEvalSuite, createEvalResult } from '../../fixtures/index.js';
+import { Mode } from '../../constants/index.js';
 
 test.describe('Evaluation System', () => {
 
@@ -23,7 +24,7 @@ test.describe('Evaluation System', () => {
     });
 
     await app.switchToEval();
-    await expect(app.page.locator('.mode-btn.active')).toContainText('Eval');
+    await expect(app.activeModeButton).toContainText(Mode.EVAL);
   });
 
   // EVAL-002: List suites
@@ -128,7 +129,7 @@ test.describe('Evaluation System', () => {
   // EVAL-011: Eval mode UI
   test('switches to Eval mode via mode switcher', async ({ app }) => {
     await app.switchToEval();
-    await expect(app.page.locator('.mode-btn.active')).toContainText('Eval');
+    await expect(app.activeModeButton).toContainText(Mode.EVAL);
   });
 
   // EVAL-014: List eval jobs

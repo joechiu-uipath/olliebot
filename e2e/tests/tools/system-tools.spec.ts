@@ -6,14 +6,14 @@
 
 import { test, expect } from '../../utils/test-base.js';
 import { createConversation } from '../../fixtures/index.js';
+import { ToolName, AgentType } from '../../constants/index.js';
 
 test.describe('System Tools', () => {
 
   test.beforeEach(async ({ app }) => {
     const conv = createConversation({ id: 'conv-sys', title: 'System Tools' });
     app.api.addConversation(conv);
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
     await app.sidebar.selectConversation('System Tools');
   });
 
@@ -25,12 +25,12 @@ test.describe('System Tools', () => {
       conversationId: 'conv-sys',
       turnId: 'turn-del',
       requestId: 'req-del',
-      toolName: 'delegate',
-      parameters: { task: 'Research AI trends', agentType: 'researcher' },
+      toolName: ToolName.DELEGATE,
+      parameters: { task: 'Research AI trends', agentType: AgentType.RESEARCHER },
       result: 'Delegated to researcher agent.',
     });
 
-    await expect(app.chat.toolByName('delegate')).toBeVisible({ timeout: 5000 });
+    await expect(app.chat.toolByName(ToolName.DELEGATE)).toBeVisible();
   });
 
   // TOOL-SYS-002: Query RAG project
@@ -41,14 +41,14 @@ test.describe('System Tools', () => {
       conversationId: 'conv-sys',
       turnId: 'turn-rag',
       requestId: 'req-rag',
-      toolName: 'query_rag_project',
+      toolName: ToolName.QUERY_RAG_PROJECT,
       parameters: { projectId: 'docs', query: 'deployment' },
       result: JSON.stringify({
         results: [{ content: 'Deploy using docker compose...', score: 0.92 }],
       }),
     });
 
-    await expect(app.chat.toolByName('query_rag_project')).toBeVisible({ timeout: 5000 });
+    await expect(app.chat.toolByName(ToolName.QUERY_RAG_PROJECT)).toBeVisible();
   });
 
   // TOOL-SYS-003: Tool event broadcast
@@ -61,12 +61,12 @@ test.describe('System Tools', () => {
       conversationId: 'conv-sys',
       turnId: 'turn-evt',
       requestId: 'req-evt',
-      toolName: 'web_search',
+      toolName: ToolName.WEB_SEARCH,
       source: 'native',
       parameters: { query: 'test' },
     });
 
-    await expect(app.chat.toolByName('web_search')).toBeVisible({ timeout: 5000 });
+    await expect(app.chat.toolByName(ToolName.WEB_SEARCH)).toBeVisible();
 
     // Send progress update
     app.ws.send({
@@ -84,7 +84,7 @@ test.describe('System Tools', () => {
       conversationId: 'conv-sys',
       turnId: 'turn-evt',
       requestId: 'req-evt',
-      toolName: 'web_search',
+      toolName: ToolName.WEB_SEARCH,
       source: 'native',
       success: true,
       result: 'Found 3 results.',
@@ -102,7 +102,7 @@ test.describe('System Tools', () => {
       conversationId: 'conv-sys',
       createdAt: new Date().toISOString(),
       messageType: 'tool_event',
-      toolName: 'web_search',
+      toolName: ToolName.WEB_SEARCH,
       source: 'native',
       status: 'completed',
       success: true,
@@ -112,12 +112,11 @@ test.describe('System Tools', () => {
     }];
     app.api.setConversationMessages('conv-sys', messages);
 
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
     await app.sidebar.selectConversation('System Tools');
 
     // Tool result should be loaded from persisted messages
-    await expect(app.chat.toolByName('web_search')).toBeVisible({ timeout: 5000 });
+    await expect(app.chat.toolByName(ToolName.WEB_SEARCH)).toBeVisible();
   });
 
   // TOOL-SYS-005: Tool progress updates
@@ -129,7 +128,7 @@ test.describe('System Tools', () => {
       conversationId: 'conv-sys',
       turnId: 'turn-prog',
       requestId: 'req-prog',
-      toolName: 'website_crawler',
+      toolName: ToolName.WEBSITE_CRAWLER,
       source: 'native',
       parameters: { url: 'https://example.com' },
     });
@@ -144,7 +143,7 @@ test.describe('System Tools', () => {
       message: 'Crawling page 1 of 4...',
     });
 
-    await expect(app.chat.toolByName('website_crawler')).toBeVisible({ timeout: 5000 });
+    await expect(app.chat.toolByName(ToolName.WEBSITE_CRAWLER)).toBeVisible();
   });
 
   // TOOL-SYS-006: Tool file output
@@ -155,7 +154,7 @@ test.describe('System Tools', () => {
       conversationId: 'conv-sys',
       turnId: 'turn-file',
       requestId: 'req-file',
-      toolName: 'run_python',
+      toolName: ToolName.RUN_PYTHON,
       parameters: { code: 'create_chart()' },
       result: JSON.stringify({
         output: 'Chart created.',
@@ -163,6 +162,6 @@ test.describe('System Tools', () => {
       }),
     });
 
-    await expect(app.chat.toolByName('run_python')).toBeVisible({ timeout: 5000 });
+    await expect(app.chat.toolByName(ToolName.RUN_PYTHON)).toBeVisible();
   });
 });

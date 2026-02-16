@@ -6,6 +6,7 @@
 
 import { test, expect } from '../../utils/test-base.js';
 import { createMission, createConversation } from '../../fixtures/index.js';
+import { Mode, ToolName } from '../../constants/index.js';
 
 test.describe('Missions', () => {
 
@@ -23,12 +24,11 @@ test.describe('Missions', () => {
       });
     });
 
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
     await app.switchToMission();
 
     // Mission mode should show mission list
-    await expect(app.page.locator('.mode-btn.active')).toContainText('Mission');
+    await expect(app.activeModeButton).toContainText(Mode.MISSION);
   });
 
   // MISSION-002: View mission details
@@ -58,8 +58,7 @@ test.describe('Missions', () => {
       });
     });
 
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
     await app.switchToMission();
   });
 
@@ -94,8 +93,7 @@ test.describe('Missions', () => {
   test('creates and manages mission todos', async ({ app }) => {
     const conv = createConversation({ id: 'conv-mission', title: 'Mission Chat' });
     app.api.addConversation(conv);
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
     await app.sidebar.selectConversation('Mission Chat');
 
     // Simulate todo creation tool
@@ -103,32 +101,31 @@ test.describe('Missions', () => {
       conversationId: 'conv-mission',
       turnId: 'turn-todo',
       requestId: 'req-todo',
-      toolName: 'mission_todo_create',
+      toolName: ToolName.MISSION_TODO_CREATE,
       parameters: { title: 'Complete feature X', pillarSlug: 'pillar-1' },
       result: 'Todo created: Complete feature X',
     });
 
-    await expect(app.chat.toolByName('mission_todo_create')).toBeVisible({ timeout: 5000 });
+    await expect(app.chat.toolByName(ToolName.MISSION_TODO_CREATE)).toBeVisible();
   });
 
   // MISSION-009: Update dashboard
   test('updates mission dashboard', async ({ app }) => {
     const conv = createConversation({ id: 'conv-dash', title: 'Dashboard Update' });
     app.api.addConversation(conv);
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
     await app.sidebar.selectConversation('Dashboard Update');
 
     app.ws.simulateToolExecution({
       conversationId: 'conv-dash',
       turnId: 'turn-dash',
       requestId: 'req-dash',
-      toolName: 'mission_update_dashboard',
+      toolName: ToolName.MISSION_UPDATE_DASHBOARD,
       parameters: { missionSlug: 'test-mission' },
       result: 'Dashboard updated.',
     });
 
-    await expect(app.chat.toolByName('mission_update_dashboard')).toBeVisible({ timeout: 5000 });
+    await expect(app.chat.toolByName(ToolName.MISSION_UPDATE_DASHBOARD)).toBeVisible();
   });
 
   // MISSION-010: Mission cycle
@@ -147,13 +144,13 @@ test.describe('Missions', () => {
   // MISSION-012: Mission mode UI
   test('switches to Mission mode via mode switcher', async ({ app }) => {
     await app.switchToMission();
-    await expect(app.page.locator('.mode-btn.active')).toContainText('Mission');
+    await expect(app.activeModeButton).toContainText(Mode.MISSION);
   });
 
   // MISSION-015: Mission tabs
   test('switches between dashboard/pillars/config tabs', async ({ app }) => {
     await app.switchToMission();
     // The mission mode should be active
-    await expect(app.page.locator('.mode-btn.active')).toContainText('Mission');
+    await expect(app.activeModeButton).toContainText(Mode.MISSION);
   });
 });

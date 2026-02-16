@@ -9,6 +9,7 @@ import {
   createConversation, createDelegationMessage, createToolMessage,
   createCitationMessage,
 } from '../../fixtures/index.js';
+import { ToolName, AgentType, AgentInfo } from '../../constants/index.js';
 
 test.describe('Chat UI Features', () => {
 
@@ -16,8 +17,7 @@ test.describe('Chat UI Features', () => {
   test('delegation events render correctly', async ({ app }) => {
     const conv = createConversation({ id: 'conv-deleg', title: 'Delegation' });
     app.api.addConversation(conv);
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
     await app.sidebar.selectConversation('Delegation');
 
     await app.chat.sendMessage('Research AI trends');
@@ -26,23 +26,22 @@ test.describe('Chat UI Features', () => {
     app.ws.simulateDelegation({
       conversationId: 'conv-deleg',
       agentId: 'agent-r1',
-      agentType: 'researcher',
-      agentName: 'Researcher',
-      agentEmoji: '🔬',
+      agentType: AgentType.RESEARCHER,
+      agentName: AgentInfo[AgentType.RESEARCHER].name,
+      agentEmoji: AgentInfo[AgentType.RESEARCHER].emoji,
       mission: 'Research AI trends in 2025',
       rationale: 'Delegating to research specialist',
     });
 
     // Verify delegation card appears
-    await expect(app.chat.delegationByAgent('Researcher')).toBeVisible({ timeout: 5000 });
+    await expect(app.chat.delegationByAgent(AgentInfo[AgentType.RESEARCHER].name)).toBeVisible();
   });
 
   // CHAT-014: Tool execution display
   test('tool calls show parameters and results', async ({ app }) => {
     const conv = createConversation({ id: 'conv-tool', title: 'Tool Test' });
     app.api.addConversation(conv);
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
     await app.sidebar.selectConversation('Tool Test');
 
     await app.chat.sendMessage('Search the web for Playwright');
@@ -52,7 +51,7 @@ test.describe('Chat UI Features', () => {
       conversationId: 'conv-tool',
       turnId: 'turn-t1',
       requestId: 'req-t1',
-      toolName: 'web_search',
+      toolName: ToolName.WEB_SEARCH,
       parameters: { query: 'Playwright testing' },
       result: JSON.stringify({ results: [{ title: 'Playwright Docs', url: 'https://playwright.dev' }] }),
       success: true,
@@ -60,7 +59,7 @@ test.describe('Chat UI Features', () => {
     });
 
     // Verify tool details appear
-    await expect(app.chat.toolByName('web_search')).toBeVisible({ timeout: 5000 });
+    await expect(app.chat.toolByName(ToolName.WEB_SEARCH)).toBeVisible();
   });
 
   // CHAT-016: Citations display
@@ -76,8 +75,7 @@ test.describe('Chat UI Features', () => {
     );
     app.api.addConversation(conv);
     app.api.setConversationMessages('conv-cite', [citationMsg]);
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
     await app.sidebar.selectConversation('Citations');
 
     await app.chat.waitForMessageContaining('AI is transforming healthcare');
@@ -88,7 +86,7 @@ test.describe('Chat UI Features', () => {
     await app.chat.openHashtagMenu();
 
     // Verify hashtag menu is visible
-    await expect(app.chat.hashtagMenu).toBeVisible({ timeout: 3000 });
+    await expect(app.chat.hashtagMenu).toBeVisible();
 
     // Check that Think option appears
     const items = await app.chat.getHashtagMenuItems();
@@ -98,7 +96,7 @@ test.describe('Chat UI Features', () => {
   // CHAT-018: Think+ mode toggle
   test('toggles Think+ (extended thinking) mode', async ({ app }) => {
     await app.chat.openHashtagMenu();
-    await expect(app.chat.hashtagMenu).toBeVisible({ timeout: 3000 });
+    await expect(app.chat.hashtagMenu).toBeVisible();
 
     // Extended thinking option should appear for supported models
     const items = await app.chat.getHashtagMenuItems();
@@ -108,7 +106,7 @@ test.describe('Chat UI Features', () => {
   // CHAT-019: Deep Research mode toggle
   test('toggles Deep Research mode via hashtag', async ({ app }) => {
     await app.chat.openHashtagMenu();
-    await expect(app.chat.hashtagMenu).toBeVisible({ timeout: 3000 });
+    await expect(app.chat.hashtagMenu).toBeVisible();
 
     // Deep Research option should be in the menu
     const items = await app.chat.getHashtagMenuItems();
@@ -118,7 +116,7 @@ test.describe('Chat UI Features', () => {
   // CHAT-021: Hashtag menu
   test('# shows command menu with modes and agents', async ({ app }) => {
     await app.chat.openHashtagMenu();
-    await expect(app.chat.hashtagMenu).toBeVisible({ timeout: 3000 });
+    await expect(app.chat.hashtagMenu).toBeVisible();
 
     const items = await app.chat.getHashtagMenuItems();
     // Should have at least Think + Deep Research + Modify (agent commands)
@@ -128,15 +126,15 @@ test.describe('Chat UI Features', () => {
   // CHAT-022: Agent command chip
   test('selected agent command shows as removable chip', async ({ app }) => {
     await app.chat.openHashtagMenu();
-    await expect(app.chat.hashtagMenu).toBeVisible({ timeout: 3000 });
+    await expect(app.chat.hashtagMenu).toBeVisible();
 
     // Select first available item
-    const items = app.page.locator('.hashtag-menu-item');
+    const items = app.chat.hashtagMenuItems;
     if (await items.count() > 0) {
       await items.first().click();
 
       // A chip should appear
-      await expect(app.chat.commandChip).toBeVisible({ timeout: 3000 });
+      await expect(app.chat.commandChip).toBeVisible();
     }
   });
 
@@ -153,8 +151,7 @@ test.describe('Chat UI Features', () => {
     }));
     app.api.addConversation(conv);
     app.api.setConversationMessages('conv-scroll', messages);
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
     await app.sidebar.selectConversation('Scroll Test');
 
     // Wait for messages to load

@@ -9,14 +9,14 @@
 
 import { test, expect } from '../../utils/test-base.js';
 import { createConversation, createCitationMessage } from '../../fixtures/index.js';
+import { ToolName, AgentType } from '../../constants/index.js';
 
 test.describe('Citations', () => {
 
   test.beforeEach(async ({ app }) => {
     const conv = createConversation({ id: 'conv-cite', title: 'Citation Test' });
     app.api.addConversation(conv);
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
     await app.sidebar.selectConversation('Citation Test');
   });
 
@@ -28,7 +28,7 @@ test.describe('Citations', () => {
       conversationId: 'conv-cite',
       turnId: 'turn-cite-ws',
       requestId: 'req-cite-ws',
-      toolName: 'web_search',
+      toolName: ToolName.WEB_SEARCH,
       parameters: { query: 'Playwright docs' },
       result: JSON.stringify({
         results: [
@@ -62,7 +62,7 @@ test.describe('Citations', () => {
       conversationId: 'conv-cite',
       turnId: 'turn-cite-scrape',
       requestId: 'req-cite-scrape',
-      toolName: 'web_scrape',
+      toolName: ToolName.WEB_SCRAPE,
       parameters: { url: 'https://react.dev' },
       result: 'React is a library for building user interfaces...',
     });
@@ -89,7 +89,7 @@ test.describe('Citations', () => {
       conversationId: 'conv-cite',
       turnId: 'turn-cite-rag',
       requestId: 'req-cite-rag',
-      toolName: 'query_rag_project',
+      toolName: ToolName.QUERY_RAG_PROJECT,
       parameters: { projectId: 'docs', query: 'deployment' },
       result: JSON.stringify({
         results: [{ content: 'Deploy with docker', score: 0.9, source: 'deploy.md' }],

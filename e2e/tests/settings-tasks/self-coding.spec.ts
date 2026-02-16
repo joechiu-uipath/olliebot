@@ -6,14 +6,14 @@
 
 import { test, expect } from '../../utils/test-base.js';
 import { createConversation } from '../../fixtures/index.js';
+import { ToolName, AgentType } from '../../constants/index.js';
 
 test.describe('Self-Coding', () => {
 
   test.beforeEach(async ({ app }) => {
     const conv = createConversation({ id: 'conv-selfcode', title: 'Self-Coding' });
     app.api.addConversation(conv);
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
     await app.sidebar.selectConversation('Self-Coding');
   });
 
@@ -23,12 +23,12 @@ test.describe('Self-Coding', () => {
       conversationId: 'conv-selfcode',
       turnId: 'turn-read',
       requestId: 'req-read',
-      toolName: 'read_frontend_code',
+      toolName: ToolName.READ_FRONTEND_CODE,
       parameters: { path: 'src/App.jsx' },
       result: 'import React from "react";\n// ... file contents',
     });
 
-    await expect(app.chat.toolByName('read_frontend_code')).toBeVisible({ timeout: 5000 });
+    await expect(app.chat.toolByName(ToolName.READ_FRONTEND_CODE)).toBeVisible();
   });
 
   // SELFCODE-002: List frontend directory
@@ -37,12 +37,12 @@ test.describe('Self-Coding', () => {
       conversationId: 'conv-selfcode',
       turnId: 'turn-list',
       requestId: 'req-list',
-      toolName: 'read_frontend_code',
+      toolName: ToolName.READ_FRONTEND_CODE,
       parameters: { path: 'src/components/', action: 'list' },
       result: 'ChatInput.jsx\nMessageContent.jsx\nCodeBlock.jsx\n...',
     });
 
-    await expect(app.chat.toolByName('read_frontend_code')).toBeVisible({ timeout: 5000 });
+    await expect(app.chat.toolByName(ToolName.READ_FRONTEND_CODE)).toBeVisible();
   });
 
   // SELFCODE-003: Create file
@@ -51,12 +51,12 @@ test.describe('Self-Coding', () => {
       conversationId: 'conv-selfcode',
       turnId: 'turn-create',
       requestId: 'req-create',
-      toolName: 'modify_frontend_code',
+      toolName: ToolName.MODIFY_FRONTEND_CODE,
       parameters: { path: 'src/components/NewComponent.jsx', action: 'create', content: 'export default function NewComponent() {}' },
       result: 'File created: src/components/NewComponent.jsx',
     });
 
-    await expect(app.chat.toolByName('modify_frontend_code')).toBeVisible({ timeout: 5000 });
+    await expect(app.chat.toolByName(ToolName.MODIFY_FRONTEND_CODE)).toBeVisible();
   });
 
   // SELFCODE-004: Edit file - replace
@@ -65,12 +65,12 @@ test.describe('Self-Coding', () => {
       conversationId: 'conv-selfcode',
       turnId: 'turn-replace',
       requestId: 'req-replace',
-      toolName: 'modify_frontend_code',
+      toolName: ToolName.MODIFY_FRONTEND_CODE,
       parameters: { path: 'src/App.jsx', action: 'replace', search: 'old text', replacement: 'new text' },
       result: 'Replaced 1 occurrence.',
     });
 
-    await expect(app.chat.toolByName('modify_frontend_code')).toBeVisible({ timeout: 5000 });
+    await expect(app.chat.toolByName(ToolName.MODIFY_FRONTEND_CODE)).toBeVisible();
   });
 
   // SELFCODE-005: Edit file - insert
@@ -79,12 +79,12 @@ test.describe('Self-Coding', () => {
       conversationId: 'conv-selfcode',
       turnId: 'turn-insert',
       requestId: 'req-insert',
-      toolName: 'modify_frontend_code',
+      toolName: ToolName.MODIFY_FRONTEND_CODE,
       parameters: { path: 'src/App.jsx', action: 'insert', line: 10, content: '// New comment' },
       result: 'Inserted at line 10.',
     });
 
-    await expect(app.chat.toolByName('modify_frontend_code')).toBeVisible({ timeout: 5000 });
+    await expect(app.chat.toolByName(ToolName.MODIFY_FRONTEND_CODE)).toBeVisible();
   });
 
   // SELFCODE-006: Delete file
@@ -93,12 +93,12 @@ test.describe('Self-Coding', () => {
       conversationId: 'conv-selfcode',
       turnId: 'turn-delete',
       requestId: 'req-delete',
-      toolName: 'modify_frontend_code',
+      toolName: ToolName.MODIFY_FRONTEND_CODE,
       parameters: { path: 'src/components/TempFile.jsx', action: 'delete' },
       result: 'File deleted: src/components/TempFile.jsx',
     });
 
-    await expect(app.chat.toolByName('modify_frontend_code')).toBeVisible({ timeout: 5000 });
+    await expect(app.chat.toolByName(ToolName.MODIFY_FRONTEND_CODE)).toBeVisible();
   });
 
   // SELFCODE-007: Protected file delete blocked
@@ -107,13 +107,13 @@ test.describe('Self-Coding', () => {
       conversationId: 'conv-selfcode',
       turnId: 'turn-protected',
       requestId: 'req-protected',
-      toolName: 'modify_frontend_code',
+      toolName: ToolName.MODIFY_FRONTEND_CODE,
       parameters: { path: 'src/main.jsx', action: 'delete' },
       result: 'Error: Cannot delete protected file: src/main.jsx',
       success: false,
     });
 
-    await expect(app.chat.toolByName('modify_frontend_code')).toBeVisible({ timeout: 5000 });
+    await expect(app.chat.toolByName(ToolName.MODIFY_FRONTEND_CODE)).toBeVisible();
   });
 
   // SELFCODE-008: Check frontend build
@@ -122,12 +122,12 @@ test.describe('Self-Coding', () => {
       conversationId: 'conv-selfcode',
       turnId: 'turn-check',
       requestId: 'req-check',
-      toolName: 'check_frontend_code',
+      toolName: ToolName.CHECK_FRONTEND_CODE,
       parameters: {},
       result: 'Build check passed. No errors found.',
     });
 
-    await expect(app.chat.toolByName('check_frontend_code')).toBeVisible({ timeout: 5000 });
+    await expect(app.chat.toolByName(ToolName.CHECK_FRONTEND_CODE)).toBeVisible();
   });
 
   // SELFCODE-009: Coding workflow delegation
@@ -137,13 +137,13 @@ test.describe('Self-Coding', () => {
     app.ws.simulateDelegation({
       conversationId: 'conv-selfcode',
       agentId: 'agent-cl',
-      agentType: 'coding-lead',
+      agentType: AgentType.CODING_LEAD,
       agentName: 'Coding Lead',
       agentEmoji: '💻',
       mission: 'Add dark mode to frontend',
     });
 
-    await expect(app.chat.delegationByAgent('Coding Lead')).toBeVisible({ timeout: 5000 });
+    await expect(app.chat.delegationByAgent('Coding Lead')).toBeVisible();
   });
 
   // SELFCODE-010: Code fixer on build failure
@@ -153,7 +153,7 @@ test.describe('Self-Coding', () => {
       conversationId: 'conv-selfcode',
       turnId: 'turn-fail',
       requestId: 'req-fail',
-      toolName: 'check_frontend_code',
+      toolName: ToolName.CHECK_FRONTEND_CODE,
       parameters: {},
       result: 'Build failed: SyntaxError in Component.jsx',
       success: false,
@@ -163,13 +163,13 @@ test.describe('Self-Coding', () => {
     app.ws.simulateDelegation({
       conversationId: 'conv-selfcode',
       agentId: 'agent-fix',
-      agentType: 'coding-fixer',
+      agentType: AgentType.CODING_FIXER,
       agentName: 'Code Fixer',
       agentEmoji: '🔧',
       mission: 'Fix build error in Component.jsx',
     });
 
-    await expect(app.chat.toolByName('check_frontend_code')).toBeVisible({ timeout: 5000 });
+    await expect(app.chat.toolByName(ToolName.CHECK_FRONTEND_CODE)).toBeVisible();
   });
 
   // SELFCODE-011: Path sandboxing
@@ -178,12 +178,12 @@ test.describe('Self-Coding', () => {
       conversationId: 'conv-selfcode',
       turnId: 'turn-sandbox',
       requestId: 'req-sandbox',
-      toolName: 'read_frontend_code',
+      toolName: ToolName.READ_FRONTEND_CODE,
       parameters: { path: '../src/index.ts' },
       result: 'Error: Path traversal not allowed. Operations restricted to web/ directory.',
       success: false,
     });
 
-    await expect(app.chat.toolByName('read_frontend_code')).toBeVisible({ timeout: 5000 });
+    await expect(app.chat.toolByName(ToolName.READ_FRONTEND_CODE)).toBeVisible();
   });
 });

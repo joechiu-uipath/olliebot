@@ -6,6 +6,7 @@
 
 import { test, expect } from '../../utils/test-base.js';
 import { createDashboardSnapshot } from '../../fixtures/index.js';
+import { AgentType, TraceStatus } from '../../constants/index.js';
 
 test.describe('Dashboards', () => {
 

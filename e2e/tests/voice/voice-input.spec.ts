@@ -7,13 +7,12 @@
  */
 
 import { test, expect } from '../../utils/test-base.js';
+import { AgentType, TraceStatus } from '../../constants/index.js';
 
 test.describe('Voice Input', () => {
 
   // VOICE-001: Voice mode toggle
   test('voice button exists and is clickable', async ({ app }) => {
-    await app.waitForAppReady();
-
     // The voice button should be present in the chat input area
     const voiceBtn = app.chat.voiceButton;
     if (await voiceBtn.isVisible()) {
@@ -24,8 +23,6 @@ test.describe('Voice Input', () => {
 
   // VOICE-005: Voice connection state
   test('UI reflects voice connection states', async ({ app }) => {
-    await app.waitForAppReady();
-
     // Voice button should exist
     const voiceBtn = app.chat.voiceButton;
     if (await voiceBtn.isVisible()) {
@@ -36,8 +33,6 @@ test.describe('Voice Input', () => {
 
   // VOICE-007: Voice placeholder text
   test('input placeholder changes based on voice state', async ({ app }) => {
-    await app.waitForAppReady();
-
     // Default placeholder (not in voice mode)
     const placeholder = await app.chat.getInputPlaceholder();
     expect(placeholder.length).toBeGreaterThan(0);

@@ -6,14 +6,15 @@
 
 import { test, expect } from '../../utils/test-base.js';
 import { createTrace } from '../../fixtures/index.js';
+import { AgentType, TraceStatus } from '../../constants/index.js';
 
 test.describe('Tracing & Logs', () => {
 
   // TRACE-001: List traces
   test('views traces in Logs mode', async ({ app }) => {
     const traces = [
-      createTrace({ id: 'trace-1', agentType: 'supervisor', status: 'completed', inputTokens: 200, outputTokens: 100 }),
-      createTrace({ id: 'trace-2', agentType: 'researcher', status: 'completed', inputTokens: 150, outputTokens: 80 }),
+      createTrace({ id: 'trace-1', agentType: AgentType.SUPERVISOR, status: TraceStatus.COMPLETED, inputTokens: 200, outputTokens: 100 }),
+      createTrace({ id: 'trace-2', agentType: AgentType.RESEARCHER, status: TraceStatus.COMPLETED, inputTokens: 150, outputTokens: 80 }),
     ];
 
     app.api.setHandler('GET', '/api/traces/traces', async (route) => {
@@ -105,7 +106,7 @@ test.describe('Tracing & Logs', () => {
     // Simulate a real-time log event
     app.ws.send({
       type: 'log_trace',
-      trace: createTrace({ id: 'realtime-trace', status: 'running' }),
+      trace: createTrace({ id: 'realtime-trace', status: TraceStatus.RUNNING }),
     });
   });
 

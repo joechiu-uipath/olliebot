@@ -24,8 +24,7 @@ test.describe('Conversation Management', () => {
     const conv2 = createConversation({ id: 'conv-2', title: 'Second Chat' });
     app.api.addConversation(conv1);
     app.api.addConversation(conv2);
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
 
     // Select first conversation
     await app.sidebar.selectConversation('First Chat');
@@ -40,8 +39,7 @@ test.describe('Conversation Management', () => {
   test('deletes a conversation and removes it from the list', async ({ app }) => {
     const conv = createConversation({ id: 'conv-delete', title: 'To Delete' });
     app.api.addConversation(conv);
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
 
     // Verify it exists
     await expect(app.sidebar.conversationByTitle('To Delete')).toBeVisible();
@@ -50,29 +48,27 @@ test.describe('Conversation Management', () => {
     await app.sidebar.deleteConversation('To Delete');
 
     // Verify it's gone (the API mock returns success, UI removes it)
-    await expect(app.sidebar.conversationByTitle('To Delete')).not.toBeVisible({ timeout: 3000 });
+    await expect(app.sidebar.conversationByTitle('To Delete')).not.toBeVisible();
   });
 
   // CHAT-008: Rename conversation
   test('manually renames a conversation', async ({ app }) => {
     const conv = createConversation({ id: 'conv-rename', title: 'Old Name' });
     app.api.addConversation(conv);
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
 
     await app.sidebar.startRename('Old Name');
     await app.sidebar.finishRename('New Name');
 
     // Verify the new title appears
-    await expect(app.sidebar.conversationByTitle('New Name')).toBeVisible({ timeout: 3000 });
+    await expect(app.sidebar.conversationByTitle('New Name')).toBeVisible();
   });
 
   // CHAT-009: Auto-naming
   test('conversation auto-named after LLM response', async ({ app }) => {
     const conv = createConversation({ id: 'conv-autoname', title: 'New Conversation' });
     app.api.addConversation(conv);
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
     await app.sidebar.selectConversation('New Conversation');
 
     await app.chat.sendMessage('What is quantum computing?');
@@ -92,15 +88,14 @@ test.describe('Conversation Management', () => {
     });
 
     // Verify the conversation title was updated
-    await expect(app.sidebar.conversationByTitle('Quantum Computing')).toBeVisible({ timeout: 5000 });
+    await expect(app.sidebar.conversationByTitle('Quantum Computing')).toBeVisible();
   });
 
   // CHAT-010: Clear conversation messages
   test('clears messages while keeping conversation', async ({ app }) => {
     const conv = createConversation({ id: 'conv-clear', title: 'Clear Me' });
     app.api.addConversation(conv);
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
 
     // The conversation should still exist in sidebar after clear
     await expect(app.sidebar.conversationByTitle('Clear Me')).toBeVisible();
@@ -110,8 +105,7 @@ test.describe('Conversation Management', () => {
   test('scheduled task events appear in Feed', async ({ app }) => {
     const taskMsg = createTaskRunMessage('Daily Summary', 'feed');
     app.api.setConversationMessages('feed', [taskMsg]);
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
 
     // Feed is the default view
     await app.chat.waitForMessageContaining('Daily Summary');
@@ -121,16 +115,15 @@ test.describe('Conversation Management', () => {
   test('edits conversation name directly in sidebar', async ({ app }) => {
     const conv = createConversation({ id: 'conv-inline', title: 'Inline Name' });
     app.api.addConversation(conv);
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
 
     // Start inline rename
     await app.sidebar.startRename('Inline Name');
 
     // Check that rename input is visible
-    await expect(app.page.locator('.conversation-rename-input, .conversation-item.editing input')).toBeVisible({ timeout: 3000 });
+    await app.sidebar.waitForRenameInput();
 
     await app.sidebar.finishRename('Renamed Inline');
-    await expect(app.sidebar.conversationByTitle('Renamed Inline')).toBeVisible({ timeout: 3000 });
+    await expect(app.sidebar.conversationByTitle('Renamed Inline')).toBeVisible();
   });
 });

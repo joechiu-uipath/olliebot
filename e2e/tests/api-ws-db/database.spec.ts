@@ -7,6 +7,7 @@
 
 import { test, expect } from '../../utils/test-base.js';
 import { createConversation, createUserMessage, createAssistantMessage } from '../../fixtures/index.js';
+import { ToolName, AgentType } from '../../constants/index.js';
 
 test.describe('Database Persistence', () => {
 
@@ -20,8 +21,7 @@ test.describe('Database Persistence', () => {
     app.api.addConversation(conv);
     app.api.setConversationMessages('conv-db', msgs);
 
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
     await app.sidebar.selectConversation('DB Test');
 
     await app.chat.waitForMessageContaining('Saved message');
@@ -37,8 +37,7 @@ test.describe('Database Persistence', () => {
     app.api.addConversation(conv);
     app.api.setConversationMessages('conv-db-query', msgs);
 
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
     await app.sidebar.selectConversation('Query Test');
 
     await app.chat.waitForMessageContaining('DB Message');
@@ -46,11 +45,12 @@ test.describe('Database Persistence', () => {
 
   // DB-003: Conversation create
   test('new conversations are created and persisted', async ({ app }) => {
+    const initialCount = await app.sidebar.getConversationCount();
     await app.sidebar.createNewConversation();
 
     // New conversation should be in the sidebar
     const count = await app.sidebar.getConversationCount();
-    expect(count).toBeGreaterThan(1);
+    expect(count).toBe(initialCount + 1);
   });
 
   // DB-004: Conversation query
@@ -62,8 +62,7 @@ test.describe('Database Persistence', () => {
     for (const conv of convs) {
       app.api.addConversation(conv);
     }
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
 
     await expect(app.sidebar.conversationByTitle('First Conversation')).toBeVisible();
     await expect(app.sidebar.conversationByTitle('Second Conversation')).toBeVisible();
@@ -76,7 +75,7 @@ test.describe('Database Persistence', () => {
         status: 200,
         contentType: 'application/json',
         body: JSON.stringify([
-          { id: 'trace-persist', agentType: 'supervisor', status: 'completed', inputTokens: 100, outputTokens: 50 },
+          { id: 'trace-persist', agentType: AgentType.SUPERVISOR, status: 'completed', inputTokens: 100, outputTokens: 50 },
         ]),
       });
     });

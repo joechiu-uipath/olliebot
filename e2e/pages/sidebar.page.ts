@@ -47,9 +47,12 @@ export class SidebarPage {
     return this.page.locator('.new-conversation-btn');
   }
 
-  /** Create a new conversation. */
+  /** Create a new conversation. Waits for the new conversation to appear in the sidebar. */
   async createNewConversation(): Promise<void> {
+    const countBefore = await this.conversations.count();
     await this.newChatButton.click();
+    // Wait for the conversation count to increase
+    await expect(this.conversations).toHaveCount(countBefore + 1);
   }
 
   /** Get all conversation items. */
@@ -94,9 +97,19 @@ export class SidebarPage {
 
   /** Complete inline rename. */
   async finishRename(newTitle: string): Promise<void> {
-    const input = this.page.locator('.conversation-rename-input');
+    const input = this.page.locator('.conversation-rename-input, .conversation-item.editing input');
     await input.fill(newTitle);
     await input.press('Enter');
+  }
+
+  /** Get the rename input locator. */
+  get renameInput(): Locator {
+    return this.page.locator('.conversation-rename-input, .conversation-item.editing input');
+  }
+
+  /** Wait for rename input to be visible. */
+  async waitForRenameInput(timeout = 3000): Promise<void> {
+    await expect(this.renameInput).toBeVisible({ timeout });
   }
 
   /** Delete a conversation. */
@@ -115,6 +128,11 @@ export class SidebarPage {
   /** Get an accordion by its title text. */
   accordion(label: string): Locator {
     return this.page.locator('.accordion', { hasText: label });
+  }
+
+  /** Get the content section of an accordion. */
+  accordionContent(label: string): Locator {
+    return this.accordion(label).locator('.accordion-content');
   }
 
   /** Toggle an accordion section. */
@@ -167,11 +185,42 @@ export class SidebarPage {
     await item.locator('.mcp-toggle').click();
   }
 
+  /** Get MCP status indicator for a server. */
+  mcpStatus(mcpName: string): Locator {
+    return this.mcpToolGroup(mcpName).locator('.mcp-status');
+  }
+
+  /** Get connected MCP status. */
+  mcpStatusConnected(mcpName: string): Locator {
+    return this.mcpToolGroup(mcpName).locator('.mcp-status.connected');
+  }
+
+  /** Get MCP toggle button for a server. */
+  mcpToggle(mcpName: string): Locator {
+    return this.mcpToolGroup(mcpName).locator('.mcp-toggle');
+  }
+
+  /** Get tool count indicator for an MCP group. */
+  mcpToolCount(mcpName: string): Locator {
+    return this.mcpToolGroup(mcpName).locator('.tool-group-count');
+  }
+
   // --- Tools Accordion ---
 
   /** Get the tool groups. */
   get toolGroups(): Locator {
     return this.page.locator('.tool-group, [class*="tool-category"]');
+  }
+
+  /** Get MCP tool group by name. */
+  mcpToolGroup(name: string): Locator {
+    return this.page.locator('.mcp-tool-group', { hasText: name });
+  }
+
+  /** Get tool count in MCP group. */
+  async getMcpToolCount(name: string): Promise<number> {
+    const group = this.mcpToolGroup(name);
+    return group.locator('.mcp-tool-item, [class*="tool-item"]').count();
   }
 
   // --- Computer Use Sessions ---
@@ -189,6 +238,36 @@ export class SidebarPage {
   /** Click a browser session to open preview. */
   async openBrowserPreview(sessionId: string): Promise<void> {
     await this.page.locator(`[class*="browser-session"][data-session-id="${sessionId}"], [class*="session-item"]`, { hasText: sessionId }).click();
+  }
+
+  /** Get a browser/desktop session item by name. */
+  sessionByName(name: string): Locator {
+    return this.page.locator('.browser-session-item', { hasText: name });
+  }
+
+  /** Get all browser session items. */
+  get browserSessionItems(): Locator {
+    return this.page.locator('.browser-session-item');
+  }
+
+  /** Get session status badge locator. */
+  sessionStatusBadge(name: string): Locator {
+    return this.sessionByName(name).locator('.session-status-badge, [class*="status"]');
+  }
+
+  /** Get session status badge text. */
+  async getSessionStatus(name: string): Promise<string> {
+    return (await this.sessionStatusBadge(name).textContent())?.toLowerCase().trim() || '';
+  }
+
+  /** Get session URL/viewport display. */
+  sessionUrl(name: string): Locator {
+    return this.sessionByName(name).locator('.browser-session-url');
+  }
+
+  /** Get session strategy display. */
+  sessionStrategy(name: string): Locator {
+    return this.sessionByName(name).locator('.browser-session-strategy');
   }
 
   // --- RAG Projects ---

@@ -6,14 +6,14 @@
 
 import { test, expect } from '../../utils/test-base.js';
 import { createConversation } from '../../fixtures/index.js';
+import { ToolName, AgentType } from '../../constants/index.js';
 
 test.describe('Memory & Context Tools', () => {
 
   test.beforeEach(async ({ app }) => {
     const conv = createConversation({ id: 'conv-mem', title: 'Memory Tools' });
     app.api.addConversation(conv);
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
     await app.sidebar.selectConversation('Memory Tools');
   });
 
@@ -25,7 +25,7 @@ test.describe('Memory & Context Tools', () => {
       conversationId: 'conv-mem',
       turnId: 'turn-rem',
       requestId: 'req-rem',
-      toolName: 'remember',
+      toolName: ToolName.REMEMBER,
       parameters: { content: 'User\'s favorite color is blue' },
       result: 'Memory stored successfully.',
     });
@@ -36,7 +36,7 @@ test.describe('Memory & Context Tools', () => {
       turnId: 'turn-rem',
     });
 
-    await expect(app.chat.toolByName('remember')).toBeVisible({ timeout: 5000 });
+    await expect(app.chat.toolByName(ToolName.REMEMBER)).toBeVisible();
     await app.chat.waitForMessageContaining('favorite color is blue');
   });
 
@@ -63,16 +63,15 @@ test.describe('Memory & Context Tools', () => {
       conversationId: 'conv-mem',
       turnId: 'turn-persist',
       requestId: 'req-persist',
-      toolName: 'remember',
+      toolName: ToolName.REMEMBER,
       parameters: { content: 'User\'s name is Alice' },
       result: 'Memory stored.',
     });
 
-    await expect(app.chat.toolByName('remember')).toBeVisible({ timeout: 5000 });
+    await expect(app.chat.toolByName(ToolName.REMEMBER)).toBeVisible();
 
     // Reload the page
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
     await app.sidebar.selectConversation('Memory Tools');
 
     // Memory is persisted server-side, so next question should still work

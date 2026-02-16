@@ -6,14 +6,14 @@
 
 import { test, expect } from '../../utils/test-base.js';
 import { createConversation } from '../../fixtures/index.js';
+import { AgentType, AgentInfo } from '../../constants/index.js';
 
 test.describe('Agent Delegation', () => {
 
   test.beforeEach(async ({ app }) => {
     const conv = createConversation({ id: 'conv-agent', title: 'Agent Test' });
     app.api.addConversation(conv);
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
     await app.sidebar.selectConversation('Agent Test');
   });
 
@@ -24,14 +24,14 @@ test.describe('Agent Delegation', () => {
     app.ws.simulateDelegation({
       conversationId: 'conv-agent',
       agentId: 'agent-res-1',
-      agentType: 'researcher',
-      agentName: 'Researcher',
-      agentEmoji: '🔬',
+      agentType: AgentType.RESEARCHER,
+      agentName: AgentInfo[AgentType.RESEARCHER].name,
+      agentEmoji: AgentInfo[AgentType.RESEARCHER].emoji,
       mission: 'Research latest AI developments',
       rationale: 'Delegating research task to specialist',
     });
 
-    await expect(app.chat.delegationByAgent('Researcher')).toBeVisible({ timeout: 5000 });
+    await expect(app.chat.delegationByAgent(AgentInfo[AgentType.RESEARCHER].name)).toBeVisible();
   });
 
   // AGENT-002: Delegate to coder
@@ -41,14 +41,14 @@ test.describe('Agent Delegation', () => {
     app.ws.simulateDelegation({
       conversationId: 'conv-agent',
       agentId: 'agent-code-1',
-      agentType: 'coder',
-      agentName: 'Coder',
-      agentEmoji: '💻',
+      agentType: AgentType.CODER,
+      agentName: AgentInfo[AgentType.CODER].name,
+      agentEmoji: AgentInfo[AgentType.CODER].emoji,
       mission: 'Write Python sort function',
       rationale: 'Delegating coding task to specialist',
     });
 
-    await expect(app.chat.delegationByAgent('Coder')).toBeVisible({ timeout: 5000 });
+    await expect(app.chat.delegationByAgent(AgentInfo[AgentType.CODER].name)).toBeVisible();
   });
 
   // AGENT-003: Delegate to writer
@@ -58,13 +58,13 @@ test.describe('Agent Delegation', () => {
     app.ws.simulateDelegation({
       conversationId: 'conv-agent',
       agentId: 'agent-write-1',
-      agentType: 'writer',
-      agentName: 'Writer',
-      agentEmoji: '✍️',
+      agentType: AgentType.WRITER,
+      agentName: AgentInfo[AgentType.WRITER].name,
+      agentEmoji: AgentInfo[AgentType.WRITER].emoji,
       mission: 'Write blog post',
     });
 
-    await expect(app.chat.delegationByAgent('Writer')).toBeVisible({ timeout: 5000 });
+    await expect(app.chat.delegationByAgent(AgentInfo[AgentType.WRITER].name)).toBeVisible();
   });
 
   // AGENT-004: Delegate to planner
@@ -74,39 +74,39 @@ test.describe('Agent Delegation', () => {
     app.ws.simulateDelegation({
       conversationId: 'conv-agent',
       agentId: 'agent-plan-1',
-      agentType: 'planner',
-      agentName: 'Planner',
-      agentEmoji: '📋',
+      agentType: AgentType.PLANNER,
+      agentName: AgentInfo[AgentType.PLANNER].name,
+      agentEmoji: AgentInfo[AgentType.PLANNER].emoji,
       mission: 'Plan migration strategy',
     });
 
-    await expect(app.chat.delegationByAgent('Planner')).toBeVisible({ timeout: 5000 });
+    await expect(app.chat.delegationByAgent(AgentInfo[AgentType.PLANNER].name)).toBeVisible();
   });
 
   // AGENT-005: Command trigger (#research)
   test('#research triggers direct delegation', async ({ app }) => {
     await app.chat.openHashtagMenu();
-    await expect(app.chat.hashtagMenu).toBeVisible({ timeout: 3000 });
+    await expect(app.chat.hashtagMenu).toBeVisible();
 
     // Select Deep Research from menu
     const items = await app.chat.getHashtagMenuItems();
     const researchItem = items.find(i => i.toLowerCase().includes('research'));
     if (researchItem) {
       await app.chat.selectHashtagItem(researchItem);
-      await expect(app.chat.commandChip).toBeVisible({ timeout: 3000 });
+      await expect(app.chat.commandChip).toBeVisible();
     }
   });
 
   // AGENT-006: Command trigger (#code / #Modify)
   test('#Modify triggers direct delegation', async ({ app }) => {
     await app.chat.openHashtagMenu();
-    await expect(app.chat.hashtagMenu).toBeVisible({ timeout: 3000 });
+    await expect(app.chat.hashtagMenu).toBeVisible();
 
     const items = await app.chat.getHashtagMenuItems();
     const codeItem = items.find(i => i.toLowerCase().includes('modify') || i.toLowerCase().includes('code'));
     if (codeItem) {
       await app.chat.selectHashtagItem(codeItem);
-      await expect(app.chat.commandChip).toBeVisible({ timeout: 3000 });
+      await expect(app.chat.commandChip).toBeVisible();
     }
   });
 
@@ -117,15 +117,15 @@ test.describe('Agent Delegation', () => {
     app.ws.simulateDelegation({
       conversationId: 'conv-agent',
       agentId: 'agent-n1',
-      agentType: 'researcher',
-      agentName: 'Researcher',
-      agentEmoji: '🔬',
+      agentType: AgentType.RESEARCHER,
+      agentName: AgentInfo[AgentType.RESEARCHER].name,
+      agentEmoji: AgentInfo[AgentType.RESEARCHER].emoji,
       mission: 'Research task',
       rationale: 'Spawning research specialist',
     });
 
-    const delegationCard = app.chat.delegationByAgent('Researcher');
-    await expect(delegationCard).toBeVisible({ timeout: 5000 });
+    const delegationCard = app.chat.delegationByAgent(AgentInfo[AgentType.RESEARCHER].name);
+    await expect(delegationCard).toBeVisible();
     await expect(delegationCard).toContainText('Research task');
   });
 
@@ -137,15 +137,14 @@ test.describe('Agent Delegation', () => {
     app.ws.simulateResponse({
       conversationId: 'conv-agent',
       content: 'Here are my research findings...',
-      agentName: 'Researcher',
-      agentEmoji: '🔬',
+      agentName: AgentInfo[AgentType.RESEARCHER].name,
+      agentEmoji: AgentInfo[AgentType.RESEARCHER].emoji,
     });
 
     await app.chat.waitForMessageContaining('research findings');
 
     // Verify agent avatar/name is shown
-    const lastMsg = app.chat.lastMessage;
-    await expect(lastMsg.locator('.message-avatar, [class*="avatar"]')).toBeVisible();
+    await expect(app.chat.lastMessageAvatar).toBeVisible();
   });
 
   // AGENT-010: Parallel delegation
@@ -156,23 +155,23 @@ test.describe('Agent Delegation', () => {
     app.ws.simulateDelegation({
       conversationId: 'conv-agent',
       agentId: 'agent-p1',
-      agentType: 'researcher',
-      agentName: 'Researcher',
-      agentEmoji: '🔬',
+      agentType: AgentType.RESEARCHER,
+      agentName: AgentInfo[AgentType.RESEARCHER].name,
+      agentEmoji: AgentInfo[AgentType.RESEARCHER].emoji,
       mission: 'Research the topic',
     });
 
     app.ws.simulateDelegation({
       conversationId: 'conv-agent',
       agentId: 'agent-p2',
-      agentType: 'coder',
-      agentName: 'Coder',
-      agentEmoji: '💻',
+      agentType: AgentType.CODER,
+      agentName: AgentInfo[AgentType.CODER].name,
+      agentEmoji: AgentInfo[AgentType.CODER].emoji,
       mission: 'Code the solution',
     });
 
-    await expect(app.chat.delegationByAgent('Researcher')).toBeVisible({ timeout: 5000 });
-    await expect(app.chat.delegationByAgent('Coder')).toBeVisible({ timeout: 5000 });
+    await expect(app.chat.delegationByAgent(AgentInfo[AgentType.RESEARCHER].name)).toBeVisible();
+    await expect(app.chat.delegationByAgent(AgentInfo[AgentType.CODER].name)).toBeVisible();
   });
 
   // AGENT-012: Delegation chain
@@ -183,9 +182,9 @@ test.describe('Agent Delegation', () => {
     app.ws.simulateDelegation({
       conversationId: 'conv-agent',
       agentId: 'agent-cl',
-      agentType: 'coding-lead',
-      agentName: 'Coding Lead',
-      agentEmoji: '💻',
+      agentType: AgentType.CODING_LEAD,
+      agentName: AgentInfo[AgentType.CODING_LEAD].name,
+      agentEmoji: AgentInfo[AgentType.CODING_LEAD].emoji,
       mission: 'Lead the coding task',
     });
 
@@ -193,11 +192,11 @@ test.describe('Agent Delegation', () => {
     app.ws.simulateResponse({
       conversationId: 'conv-agent',
       content: 'I have completed the coding task with my team.',
-      agentName: 'Coding Lead',
-      agentEmoji: '💻',
+      agentName: AgentInfo[AgentType.CODING_LEAD].name,
+      agentEmoji: AgentInfo[AgentType.CODING_LEAD].emoji,
     });
 
-    await expect(app.chat.delegationByAgent('Coding Lead')).toBeVisible({ timeout: 5000 });
+    await expect(app.chat.delegationByAgent(AgentInfo[AgentType.CODING_LEAD].name)).toBeVisible();
     await app.chat.waitForMessageContaining('completed the coding task');
   });
 });

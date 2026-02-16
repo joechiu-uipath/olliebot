@@ -6,6 +6,7 @@
 
 import { test, expect } from '../../utils/test-base.js';
 import { createConversation, createToolInfo } from '../../fixtures/index.js';
+import { ToolName, AgentType } from '../../constants/index.js';
 
 test.describe('User-Defined Tools', () => {
 
@@ -17,15 +18,14 @@ test.describe('User-Defined Tools', () => {
       user: [createToolInfo('my_custom_tool', 'A user-defined custom tool')],
       mcp: {},
     });
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
     await app.sidebar.selectConversation('User Tools');
   });
 
   // USERTOOL-001: Create tool from markdown
   test('user-defined tool appears in tool list', async ({ app }) => {
     await app.sidebar.toggleAccordion('Tools');
-    await expect(app.sidebar.accordion('Tools').locator('.accordion-content')).toBeVisible({ timeout: 3000 });
+    await expect(app.sidebar.accordionContent('Tools')).toBeVisible();
   });
 
   // USERTOOL-002: Execute user tool
@@ -43,7 +43,7 @@ test.describe('User-Defined Tools', () => {
     });
 
     // Tool event card should appear (collapsed by default)
-    await expect(app.chat.toolByName('user.my_custom_tool')).toBeVisible({ timeout: 5000 });
+    await expect(app.chat.toolByName('user.my_custom_tool')).toBeVisible();
   });
 
   // USERTOOL-004: Tool input validation
@@ -63,7 +63,7 @@ test.describe('User-Defined Tools', () => {
 
     // Failed tool event should be visible with failed status
     const toolEvent = app.chat.toolByName('user.my_custom_tool');
-    await expect(toolEvent).toBeVisible({ timeout: 5000 });
+    await expect(toolEvent).toBeVisible();
     await expect(toolEvent).toHaveClass(/failed/);
   });
 
@@ -82,6 +82,6 @@ test.describe('User-Defined Tools', () => {
     });
 
     // Tool event card shows the tool executed
-    await expect(app.chat.toolByName('user.my_custom_tool')).toBeVisible({ timeout: 5000 });
+    await expect(app.chat.toolByName('user.my_custom_tool')).toBeVisible();
   });
 });

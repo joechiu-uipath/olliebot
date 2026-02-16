@@ -6,6 +6,7 @@
 
 import { test, expect } from '../../utils/test-base.js';
 import { createConversation, createUserMessage, createAssistantMessage } from '../../fixtures/index.js';
+import { ToolName, AgentType } from '../../constants/index.js';
 
 test.describe('Chat Messaging', () => {
 
@@ -14,8 +15,7 @@ test.describe('Chat Messaging', () => {
     // Create a conversation to chat in
     const conv = createConversation({ id: 'conv-test-1', title: 'Test Chat' });
     app.api.addConversation(conv);
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
 
     await app.sidebar.selectConversation('Test Chat');
     await app.chat.sendMessage('Hello, OllieBot!');
@@ -37,8 +37,7 @@ test.describe('Chat Messaging', () => {
   test('displays streaming response token by token', async ({ app }) => {
     const conv = createConversation({ id: 'conv-stream', title: 'Stream Test' });
     app.api.addConversation(conv);
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
     await app.sidebar.selectConversation('Stream Test');
 
     await app.chat.sendMessage('Tell me a story');
@@ -52,7 +51,7 @@ test.describe('Chat Messaging', () => {
     });
 
     // Verify streaming state
-    await expect(app.page.locator('.message.streaming')).toBeVisible({ timeout: 3000 });
+    await app.chat.waitForStreaming();
 
     // Send chunks (frontend expects 'streamId' and 'chunk' fields)
     app.ws.send({ type: 'stream_chunk', conversationId: 'conv-stream', streamId, chunk: 'Once upon ' });
@@ -70,15 +69,14 @@ test.describe('Chat Messaging', () => {
     });
 
     // Verify streaming stopped
-    await expect(app.page.locator('.message.streaming')).not.toBeVisible({ timeout: 3000 });
+    await app.chat.waitForStreamingComplete();
   });
 
   // CHAT-003: Message with image attachment
   test('sends a message with image attachment', async ({ app }) => {
     const conv = createConversation({ id: 'conv-attach', title: 'Attach Test' });
     app.api.addConversation(conv);
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
     await app.sidebar.selectConversation('Attach Test');
 
     // Simulate file drop by checking if the attachment UI elements exist
@@ -100,8 +98,7 @@ test.describe('Chat Messaging', () => {
     app.api.addConversation(conv);
     app.api.setConversationMessages('conv-persist', messages);
 
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
     await app.sidebar.selectConversation('Persist Test');
 
     // Verify messages are loaded from API
@@ -118,8 +115,7 @@ test.describe('Chat Messaging', () => {
     app.api.addConversation(conv);
     app.api.setConversationMessages('conv-paginate', recentMessages);
 
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
     await app.sidebar.selectConversation('Paginate Test');
 
     // Verify recent messages load
@@ -130,8 +126,7 @@ test.describe('Chat Messaging', () => {
   test('displays error messages with details', async ({ app }) => {
     const conv = createConversation({ id: 'conv-error', title: 'Error Test' });
     app.api.addConversation(conv);
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
     await app.sidebar.selectConversation('Error Test');
 
     await app.chat.sendMessage('Trigger an error');
@@ -151,8 +146,7 @@ test.describe('Chat Messaging', () => {
   test('shows blinking cursor during streaming', async ({ app }) => {
     const conv = createConversation({ id: 'conv-cursor', title: 'Cursor Test' });
     app.api.addConversation(conv);
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
     await app.sidebar.selectConversation('Cursor Test');
 
     await app.chat.sendMessage('Show cursor');
@@ -164,15 +158,14 @@ test.describe('Chat Messaging', () => {
     });
 
     // Check that the streaming class is applied (which triggers cursor CSS)
-    await expect(app.page.locator('.message.streaming')).toBeVisible({ timeout: 3000 });
+    await app.chat.waitForStreaming();
   });
 
   // CHAT-025: Token usage display
   test('shows token usage after response completes', async ({ app }) => {
     const conv = createConversation({ id: 'conv-tokens', title: 'Tokens Test' });
     app.api.addConversation(conv);
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
     await app.sidebar.selectConversation('Tokens Test');
 
     await app.chat.sendMessage('Count my tokens');
@@ -186,6 +179,6 @@ test.describe('Chat Messaging', () => {
     await app.chat.waitForMessageContaining('Here is the response.');
 
     // Verify usage footer is visible
-    await expect(app.chat.lastMessageUsage).toBeVisible({ timeout: 3000 });
+    await expect(app.chat.lastMessageUsage).toBeVisible();
   });
 });

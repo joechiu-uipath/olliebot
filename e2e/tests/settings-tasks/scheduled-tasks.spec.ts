@@ -6,6 +6,7 @@
 
 import { test, expect } from '../../utils/test-base.js';
 import { createTask, createConversation } from '../../fixtures/index.js';
+import { ToolName, AgentType } from '../../constants/index.js';
 
 test.describe('Scheduled Tasks', () => {
 
@@ -16,19 +17,17 @@ test.describe('Scheduled Tasks', () => {
       createTask({ id: 'task-2', name: 'Daily Report', schedule: '0 18 * * *' }),
     ];
     app.api.setTasks(tasks);
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
 
     await app.sidebar.toggleAccordion('Agent Tasks');
-    await expect(app.sidebar.accordion('Agent Tasks').locator('.accordion-content')).toBeVisible({ timeout: 3000 });
+    await expect(app.sidebar.accordionContent('Agent Tasks')).toBeVisible();
   });
 
   // TASK-002: Run task manually
   test('triggers task execution via sidebar', async ({ app }) => {
     const tasks = [createTask({ id: 'task-manual', name: 'Manual Task' })];
     app.api.setTasks(tasks);
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
 
     await app.sidebar.toggleAccordion('Agent Tasks');
 
@@ -38,8 +37,6 @@ test.describe('Scheduled Tasks', () => {
 
   // TASK-003: Task run event
   test('task run appears in Feed conversation', async ({ app }) => {
-    await app.waitForAppReady();
-
     // Simulate a task run event
     app.ws.send({
       type: 'task_run',
@@ -58,8 +55,7 @@ test.describe('Scheduled Tasks', () => {
   test('toggles task active state', async ({ app }) => {
     const tasks = [createTask({ id: 'task-toggle', name: 'Toggle Task', enabled: true })];
     app.api.setTasks(tasks);
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
 
     await app.sidebar.toggleAccordion('Agent Tasks');
     await app.sidebar.toggleTask('Toggle Task');
@@ -69,8 +65,7 @@ test.describe('Scheduled Tasks', () => {
   test('lastRun timestamp updates after execution', async ({ app }) => {
     const tasks = [createTask({ id: 'task-lastrun', name: 'Track Task', lastRun: null })];
     app.api.setTasks(tasks);
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
 
     // After task runs, a task_updated event would come
     app.ws.send({
@@ -85,8 +80,7 @@ test.describe('Scheduled Tasks', () => {
   test('task targets specific conversation', async ({ app }) => {
     const conv = createConversation({ id: 'conv-task-target', title: 'Task Target' });
     app.api.addConversation(conv);
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
     await app.sidebar.selectConversation('Task Target');
 
     app.ws.send({
@@ -117,8 +111,7 @@ test.describe('Scheduled Tasks', () => {
     }];
     app.api.addConversation(conv);
     app.api.setConversationMessages('conv-task-dedup', messages);
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
     await app.sidebar.selectConversation('Dedup Test');
 
     // Only one instance should appear (task_run renders showing taskName)

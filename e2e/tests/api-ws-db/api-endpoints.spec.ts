@@ -10,8 +10,6 @@ test.describe('API Endpoints', () => {
 
   // API-001: Health check
   test('GET /health returns ok', async ({ app }) => {
-    await app.waitForAppReady();
-
     // The health check is handled by our mock and returns ok
     const response = await app.page.evaluate(async () => {
       const res = await fetch('/health');
@@ -22,8 +20,6 @@ test.describe('API Endpoints', () => {
 
   // API-002: Startup info
   test('GET /api/startup returns config and data', async ({ app }) => {
-    await app.waitForAppReady();
-
     const response = await app.page.evaluate(async () => {
       const res = await fetch('/api/startup');
       return res.json();
@@ -42,8 +38,6 @@ test.describe('API Endpoints', () => {
 
   // API-003: Model capabilities
   test('GET /api/model-capabilities returns supported features', async ({ app }) => {
-    await app.waitForAppReady();
-
     const response = await app.page.evaluate(async () => {
       const res = await fetch('/api/model-capabilities');
       return res.json();
@@ -57,8 +51,6 @@ test.describe('API Endpoints', () => {
 
   // API-004: CORS headers
   test('API returns proper CORS headers', async ({ app }) => {
-    await app.waitForAppReady();
-
     // In the test environment, CORS is handled by the API mock
     // which always allows requests from the test origin
     const response = await app.page.evaluate(async () => {
@@ -74,8 +66,6 @@ test.describe('API Endpoints', () => {
 
   // API-005: JSON parsing
   test('API parses JSON bodies correctly', async ({ app }) => {
-    await app.waitForAppReady();
-
     const response = await app.page.evaluate(async () => {
       const res = await fetch('/api/conversations', {
         method: 'POST',
@@ -99,8 +89,6 @@ test.describe('API Endpoints', () => {
       });
     });
 
-    await app.waitForAppReady();
-
     const response = await app.page.evaluate(async () => {
       const res = await fetch('/api/nonexistent');
       return { status: res.status, body: await res.json() };
@@ -112,8 +100,6 @@ test.describe('API Endpoints', () => {
 
   // API-008: 404 handling
   test('unknown routes return 404', async ({ app }) => {
-    await app.waitForAppReady();
-
     const response = await app.page.evaluate(async () => {
       const res = await fetch('/api/completely-unknown-route');
       return { status: res.status };

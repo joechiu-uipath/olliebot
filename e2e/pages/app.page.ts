@@ -11,6 +11,7 @@ import { ChatPage } from './chat.page.js';
 import { SidebarPage } from './sidebar.page.js';
 import { WebSocketMock } from '../utils/ws-helper.js';
 import { ApiMock, type StartupData } from '../utils/api-mock.js';
+import { Mode } from '../constants/index.js';
 
 export class OllieBotApp {
   readonly page: Page;
@@ -80,11 +81,15 @@ export class OllieBotApp {
     await expect(this.page.locator('.mode-btn.active')).toContainText('Eval');
   }
 
-  /** Get the currently active mode. */
-  async getActiveMode(): Promise<string> {
-    const activeBtn = this.page.locator('.mode-btn.active');
-    const text = await activeBtn.textContent();
-    return text?.trim().toLowerCase() || '';
+  /** Get the currently active mode button. */
+  get activeModeButton(): Locator {
+    return this.page.locator('.mode-btn.active');
+  }
+
+  /** Get the currently active mode name as string. */
+  async getActiveModeName(): Promise<string> {
+    const text = await this.activeModeButton.textContent();
+    return text?.trim() || '';
   }
 
   // --- App Width ---
@@ -119,6 +124,14 @@ export class OllieBotApp {
   /** Get the scroll-to-bottom button. */
   get scrollToBottomButton(): Locator {
     return this.page.locator('.scroll-to-bottom');
+  }
+
+  // --- Page Actions ---
+
+  /** Reload the page and wait for app to be ready. */
+  async reload(): Promise<void> {
+    await this.page.reload();
+    await this.waitForAppReady();
   }
 
   // --- Helpers ---

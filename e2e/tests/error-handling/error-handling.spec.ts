@@ -6,6 +6,7 @@
 
 import { test, expect } from '../../utils/test-base.js';
 import { createConversation } from '../../fixtures/index.js';
+import { ToolName } from '../../constants/index.js';
 
 test.describe('Error Handling & Recovery', () => {
 
@@ -13,8 +14,7 @@ test.describe('Error Handling & Recovery', () => {
   test('gracefully handles LLM errors', async ({ app }) => {
     const conv = createConversation({ id: 'conv-err', title: 'Error Test' });
     app.api.addConversation(conv);
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
     await app.sidebar.selectConversation('Error Test');
 
     await app.chat.sendMessage('Trigger an LLM error');
@@ -32,8 +32,7 @@ test.describe('Error Handling & Recovery', () => {
   test('failed tools do not crash the UI', async ({ app }) => {
     const conv = createConversation({ id: 'conv-tool-err', title: 'Tool Error' });
     app.api.addConversation(conv);
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
     await app.sidebar.selectConversation('Tool Error');
 
     await app.chat.sendMessage('Use a failing tool');
@@ -42,7 +41,7 @@ test.describe('Error Handling & Recovery', () => {
       conversationId: 'conv-tool-err',
       turnId: 'turn-err',
       requestId: 'req-err',
-      toolName: 'web_search',
+      toolName: ToolName.WEB_SEARCH,
       parameters: { query: 'test' },
       result: 'Error: Network timeout. Could not reach search API.',
       success: false,
@@ -72,8 +71,6 @@ test.describe('Error Handling & Recovery', () => {
 
   // ERR-005: Invalid input
   test('bad API input returns error', async ({ app }) => {
-    await app.waitForAppReady();
-
     // Send a request with invalid JSON and verify the mock handles it
     const response = await app.page.evaluate(async () => {
       const res = await fetch('/api/conversations', {
@@ -92,8 +89,7 @@ test.describe('Error Handling & Recovery', () => {
   test('long operations show feedback', async ({ app }) => {
     const conv = createConversation({ id: 'conv-timeout', title: 'Timeout Test' });
     app.api.addConversation(conv);
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
     await app.sidebar.selectConversation('Timeout Test');
 
     await app.chat.sendMessage('Do something slow');
@@ -104,7 +100,7 @@ test.describe('Error Handling & Recovery', () => {
       conversationId: 'conv-timeout',
       turnId: 'turn-slow',
       requestId: 'req-slow',
-      toolName: 'website_crawler',
+      toolName: ToolName.WEBSITE_CRAWLER,
       source: 'native',
       parameters: { url: 'https://large-site.com' },
     });
@@ -119,7 +115,7 @@ test.describe('Error Handling & Recovery', () => {
       message: 'Crawling... 1 of 10 pages',
     });
 
-    await expect(app.chat.toolByName('website_crawler')).toBeVisible({ timeout: 5000 });
+    await expect(app.chat.toolByName(ToolName.WEBSITE_CRAWLER)).toBeVisible();
   });
 
   // ERR-007: MCP server failure
@@ -159,7 +155,7 @@ test.describe('Error Handling & Recovery', () => {
     });
 
     // App should remain functional (connection status is visible)
-    await expect(app.connectionStatus).toContainText('Connected', { timeout: 5000 });
+    await expect(app.connectionStatus).toContainText('Connected', );
   });
 
   // ERR-009: Desktop session crash
@@ -182,6 +178,6 @@ test.describe('Error Handling & Recovery', () => {
     });
 
     // App should remain functional
-    await expect(app.connectionStatus).toContainText('Connected', { timeout: 5000 });
+    await expect(app.connectionStatus).toContainText('Connected', );
   });
 });

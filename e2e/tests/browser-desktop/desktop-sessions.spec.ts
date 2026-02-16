@@ -10,12 +10,13 @@
  */
 
 import { test, expect } from '../../utils/test-base.js';
+import { ToolName, SessionStatus } from '../../constants/index.js';
 
 function makeDesktopSession(id: string, overrides: Record<string, unknown> = {}) {
   return {
     id,
     name: `Desktop ${id}`,
-    status: 'active',
+    status: SessionStatus.ACTIVE,
     sandbox: { type: 'windows-sandbox' },
     viewport: { width: 1920, height: 1080 },
     ...overrides,
@@ -40,8 +41,8 @@ test.describe('Desktop Automation UI', () => {
     });
 
     // Session should appear in the auto-expanded accordion
-    const sessionItem = app.page.locator('.browser-session-item', { hasText: 'Win Desktop' });
-    await expect(sessionItem).toBeVisible({ timeout: 5000 });
+    const sessionItem = app.sidebar.sessionByName('Win Desktop');
+    await expect(sessionItem).toBeVisible();
   });
 
   // DESKTOP-012: Session status badge
@@ -51,9 +52,8 @@ test.describe('Desktop Automation UI', () => {
       session: makeDesktopSession('desktop-status', { name: 'Status Desktop', status: 'provisioning' }),
     });
 
-    const sessionItem = app.page.locator('.browser-session-item', { hasText: 'Status Desktop' });
-    await expect(sessionItem).toBeVisible({ timeout: 5000 });
-    await expect(sessionItem.locator('.browser-session-status-badge')).toBeVisible();
+    await expect(app.sidebar.sessionByName('Status Desktop')).toBeVisible();
+    await expect(app.sidebar.sessionStatusBadge('Status Desktop')).toBeVisible();
   });
 
   // DESKTOP-013: Preview modal
@@ -70,8 +70,8 @@ test.describe('Desktop Automation UI', () => {
     });
 
     // Click the session item to select it (which triggers the preview)
-    const sessionItem = app.page.locator('.browser-session-item', { hasText: 'Preview Desktop' });
-    await expect(sessionItem).toBeVisible({ timeout: 5000 });
+    const sessionItem = app.sidebar.sessionByName('Preview Desktop');
+    await expect(sessionItem).toBeVisible();
     await sessionItem.click();
 
     // Selected state should be applied
@@ -89,9 +89,8 @@ test.describe('Desktop Automation UI', () => {
     });
 
     // Session item shows viewport info in the URL field
-    const sessionItem = app.page.locator('.browser-session-item', { hasText: 'Viewport Desktop' });
-    await expect(sessionItem).toBeVisible({ timeout: 5000 });
-    await expect(sessionItem.locator('.browser-session-url')).toContainText('1920');
+    await expect(app.sidebar.sessionByName('Viewport Desktop')).toBeVisible();
+    await expect(app.sidebar.sessionUrl('Viewport Desktop')).toContainText('1920');
   });
 
   // DESKTOP-015: Platform icon
@@ -105,8 +104,7 @@ test.describe('Desktop Automation UI', () => {
     });
 
     // Session should show the WinSandbox strategy label
-    const sessionItem = app.page.locator('.browser-session-item', { hasText: 'Platform Desktop' });
-    await expect(sessionItem).toBeVisible({ timeout: 5000 });
-    await expect(sessionItem.locator('.browser-session-strategy')).toContainText('WinSandbox');
+    await expect(app.sidebar.sessionByName('Platform Desktop')).toBeVisible();
+    await expect(app.sidebar.sessionStrategy('Platform Desktop')).toContainText('WinSandbox');
   });
 });

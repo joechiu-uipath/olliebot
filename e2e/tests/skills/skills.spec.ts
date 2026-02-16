@@ -6,6 +6,7 @@
 
 import { test, expect } from '../../utils/test-base.js';
 import { createSkill, createConversation } from '../../fixtures/index.js';
+import { ToolName } from '../../constants/index.js';
 
 test.describe('Skills', () => {
 
@@ -15,51 +16,48 @@ test.describe('Skills', () => {
       createSkill({ id: 'skill-1', name: 'Frontend Modifier', description: 'Modifies frontend code' }),
       createSkill({ id: 'skill-2', name: 'Data Analyzer', description: 'Analyzes data' }),
     ]);
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
 
     await app.sidebar.toggleAccordion('Skills');
-    await expect(app.sidebar.accordion('Skills').locator('.accordion-content')).toBeVisible({ timeout: 3000 });
+    await expect(app.sidebar.accordionContent('Skills')).toBeVisible();
   });
 
   // SKILL-002: Read skill
   test('reads skill content via read_agent_skill tool', async ({ app }) => {
     const conv = createConversation({ id: 'conv-skill', title: 'Skill Test' });
     app.api.addConversation(conv);
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
     await app.sidebar.selectConversation('Skill Test');
 
     app.ws.simulateToolExecution({
       conversationId: 'conv-skill',
       turnId: 'turn-sk-read',
       requestId: 'req-sk-read',
-      toolName: 'read_agent_skill',
+      toolName: ToolName.READ_AGENT_SKILL,
       parameters: { skillId: 'frontend-modifier' },
       result: '# Frontend Modifier\n\nA skill for modifying frontend code.\n\n## Steps\n1. Read current code\n2. Plan changes\n3. Apply modifications',
     });
 
-    await expect(app.chat.toolByName('read_agent_skill')).toBeVisible({ timeout: 5000 });
+    await expect(app.chat.toolByName(ToolName.READ_AGENT_SKILL)).toBeVisible();
   });
 
   // SKILL-003: Run skill script
   test('executes skill script via run_agent_skill_script', async ({ app }) => {
     const conv = createConversation({ id: 'conv-skill-run', title: 'Skill Run' });
     app.api.addConversation(conv);
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
     await app.sidebar.selectConversation('Skill Run');
 
     app.ws.simulateToolExecution({
       conversationId: 'conv-skill-run',
       turnId: 'turn-sk-run',
       requestId: 'req-sk-run',
-      toolName: 'run_agent_skill_script',
+      toolName: ToolName.RUN_AGENT_SKILL_SCRIPT,
       parameters: { skillId: 'frontend-modifier', script: 'analyze-component' },
       result: 'Analysis complete: Component has 3 props, 2 state variables.',
     });
 
-    await expect(app.chat.toolByName('run_agent_skill_script')).toBeVisible({ timeout: 5000 });
+    await expect(app.chat.toolByName(ToolName.RUN_AGENT_SKILL_SCRIPT)).toBeVisible();
   });
 
   // SKILL-005: Built-in skills
@@ -67,8 +65,7 @@ test.describe('Skills', () => {
     app.api.setSkills([
       createSkill({ id: 'frontend-modifier', name: 'Frontend Modifier', description: 'Built-in skill for code modification' }),
     ]);
-    await app.page.reload();
-    await app.waitForAppReady();
+    await app.reload();
 
     await app.sidebar.toggleAccordion('Skills');
     await expect(app.sidebar.accordion('Skills')).toContainText('Frontend Modifier');
