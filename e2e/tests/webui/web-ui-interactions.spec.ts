@@ -28,7 +28,6 @@ test.describe('Web UI Interactions', () => {
 
     // Switch to Trace mode
     await app.switchToLogs();
-    await expect(app.page.locator('.mode-btn.active')).toContainText('Trace');
   });
 
   // WEBUI-003: Sidebar accordions

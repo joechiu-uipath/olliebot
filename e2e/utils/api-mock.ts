@@ -399,13 +399,63 @@ export class ApiMock {
       };
     }
 
-    // Traces endpoints
-    if (method === 'GET' && /^\/api\/traces/.test(path)) {
+    // Traces list endpoint - returns array
+    if (method === 'GET' && /^\/api\/traces\/traces(\?|$)/.test(path)) {
       return async (route) => {
         await route.fulfill({
           status: 200,
           contentType: 'application/json',
-          body: JSON.stringify({ items: [], stats: { totalTraces: 0, totalTokens: 0 } }),
+          body: JSON.stringify([]),
+        });
+      };
+    }
+
+    // LLM calls list endpoint - returns array
+    if (method === 'GET' && /^\/api\/traces\/llm-calls(\?|$)/.test(path)) {
+      return async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify([]),
+        });
+      };
+    }
+
+    // Traces stats endpoint - returns stats object
+    if (method === 'GET' && path === '/api/traces/stats') {
+      return async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            totalTraces: 0,
+            totalLlmCalls: 0,
+            totalToolCalls: 0,
+            totalInputTokens: 0,
+            totalOutputTokens: 0,
+          }),
+        });
+      };
+    }
+
+    // Single trace detail endpoint
+    if (method === 'GET' && /^\/api\/traces\/traces\/[^/]+$/.test(path)) {
+      return async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ trace: {}, spans: [], llmCalls: [], toolCalls: [] }),
+        });
+      };
+    }
+
+    // Single LLM call detail endpoint
+    if (method === 'GET' && /^\/api\/traces\/llm-calls\/[^/]+$/.test(path)) {
+      return async (route) => {
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({}),
         });
       };
     }

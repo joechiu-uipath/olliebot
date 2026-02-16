@@ -46,22 +46,38 @@ export class OllieBotApp {
 
   /** Switch to Chat mode. */
   async switchToChat(): Promise<void> {
-    await this.modeButton('chat').click();
+    const btn = this.modeButton('chat');
+    await btn.waitFor({ state: 'visible' });
+    await btn.click();
+    await this.page.waitForURL(/\/chat/);
+    await expect(this.page.locator('.mode-btn.active')).toContainText('Chat');
   }
 
   /** Switch to Logs/Traces mode. */
   async switchToLogs(): Promise<void> {
-    await this.modeButton('traces').click();
+    const btn = this.modeButton('traces');
+    await btn.waitFor({ state: 'visible' });
+    await btn.click();
+    await this.page.waitForURL(/\/traces/);
+    await expect(this.page.locator('.mode-btn.active')).toContainText('Trace');
   }
 
   /** Switch to Mission mode. */
   async switchToMission(): Promise<void> {
-    await this.modeButton('mission').click();
+    const btn = this.modeButton('mission');
+    await btn.waitFor({ state: 'visible' });
+    await btn.click();
+    await this.page.waitForURL(/\/mission/);
+    await expect(this.page.locator('.mode-btn.active')).toContainText('Mission');
   }
 
   /** Switch to Eval mode. */
   async switchToEval(): Promise<void> {
-    await this.modeButton('eval').click();
+    const btn = this.modeButton('eval');
+    await btn.waitFor({ state: 'visible' });
+    await btn.click();
+    await this.page.waitForURL(/\/eval/);
+    await expect(this.page.locator('.mode-btn.active')).toContainText('Eval');
   }
 
   /** Get the currently active mode. */
