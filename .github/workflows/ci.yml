@@ -53,3 +53,47 @@ jobs:
           test -d web/dist || (echo "Web build output missing" && exit 1)
           test -f tui/dist/index.js || (echo "TUI build output missing" && exit 1)
           echo "All build outputs verified successfully"
+
+  e2e:
+    # Only run e2e tests on push to main (post-merge)
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Playwright browsers
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Run e2e tests (shard ${{ matrix.shard }}/6)
+        run: pnpm test:e2e --shard=${{ matrix.shard }}/6
+
+      - name: Upload test artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-shard-${{ matrix.shard }}
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
