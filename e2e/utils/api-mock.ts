@@ -15,6 +15,7 @@ export interface StartupData {
     supportsExtendedThinking: boolean;
     supportsReasoningEffort: boolean;
     supportsVision: boolean;
+    reasoningEfforts?: string[];
   };
   conversations: Array<{
     id: string;
@@ -50,6 +51,7 @@ export function createDefaultStartupData(overrides?: Partial<StartupData>): Star
       supportsExtendedThinking: true,
       supportsReasoningEffort: true,
       supportsVision: true,
+      reasoningEfforts: ['high', 'xhigh'],
     },
     conversations: [
       {
@@ -155,9 +157,17 @@ export class ApiMock {
 
   /**
    * Add messages for a conversation.
+   * For the 'feed' conversation, also updates startupData.feedMessages.
    */
   setConversationMessages(conversationId: string, messages: Array<Record<string, unknown>>): void {
     this.conversationMessages.set(conversationId, messages);
+    // Also update feedMessages in startup data for Feed conversation
+    if (conversationId === 'feed') {
+      this.startupData.feedMessages = {
+        items: messages,
+        pagination: { hasOlder: false, hasNewer: false },
+      };
+    }
   }
 
   /**

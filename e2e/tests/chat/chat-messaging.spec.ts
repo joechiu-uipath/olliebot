@@ -43,30 +43,29 @@ test.describe('Chat Messaging', () => {
 
     await app.chat.sendMessage('Tell me a story');
 
-    // Start streaming
+    // Start streaming (frontend expects 'id' field to identify the stream)
+    const streamId = 'stream-1';
     app.ws.send({
       type: 'stream_start',
       conversationId: 'conv-stream',
-      turnId: 'turn-1',
-      messageId: 'msg-1',
+      id: streamId,
     });
 
     // Verify streaming state
     await expect(app.page.locator('.message.streaming')).toBeVisible({ timeout: 3000 });
 
-    // Send chunks
-    app.ws.send({ type: 'stream_chunk', conversationId: 'conv-stream', turnId: 'turn-1', content: 'Once upon ' });
-    app.ws.send({ type: 'stream_chunk', conversationId: 'conv-stream', turnId: 'turn-1', content: 'a time...' });
+    // Send chunks (frontend expects 'streamId' and 'chunk' fields)
+    app.ws.send({ type: 'stream_chunk', conversationId: 'conv-stream', streamId, chunk: 'Once upon ' });
+    app.ws.send({ type: 'stream_chunk', conversationId: 'conv-stream', streamId, chunk: 'a time...' });
 
     // Verify partial content
     await app.chat.waitForMessageContaining('Once upon');
 
-    // End stream
+    // End stream (frontend expects 'streamId' field)
     app.ws.send({
       type: 'stream_end',
       conversationId: 'conv-stream',
-      turnId: 'turn-1',
-      messageId: 'msg-1',
+      streamId,
       usage: { inputTokens: 30, outputTokens: 10 },
     });
 
@@ -161,8 +160,7 @@ test.describe('Chat Messaging', () => {
     app.ws.send({
       type: 'stream_start',
       conversationId: 'conv-cursor',
-      turnId: 'turn-c',
-      messageId: 'msg-c',
+      id: 'stream-cursor',
     });
 
     // Check that the streaming class is applied (which triggers cursor CSS)

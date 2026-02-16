@@ -85,8 +85,10 @@ test.describe('Conversation Management', () => {
 
     app.ws.send({
       type: 'conversation_updated',
-      id: 'conv-autoname',
-      title: 'Quantum Computing',
+      conversation: {
+        id: 'conv-autoname',
+        title: 'Quantum Computing',
+      },
     });
 
     // Verify the conversation title was updated

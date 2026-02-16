@@ -62,22 +62,24 @@ export class ChatPage {
 
   /** Type # to open the hashtag command menu. */
   async openHashtagMenu(): Promise<void> {
-    await this.input.fill('#');
+    await this.input.focus();
+    await this.input.clear();
+    await this.page.keyboard.type('#');
   }
 
-  /** Check if the hashtag menu is visible. */
+  /** Check if the hashtag menu is visible (handles both ChatInput and AgentChatInput variants). */
   get hashtagMenu(): Locator {
-    return this.page.locator('.hashtag-menu');
+    return this.page.locator('.hashtag-menu, .agent-chat-hashtag-menu');
   }
 
   /** Select a hashtag menu item by text. */
   async selectHashtagItem(text: string): Promise<void> {
-    await this.page.locator('.hashtag-menu-item', { hasText: text }).click();
+    await this.page.locator('.hashtag-menu-item, .agent-chat-hashtag-menu-item', { hasText: text }).click();
   }
 
   /** Get visible hashtag menu items. */
   async getHashtagMenuItems(): Promise<string[]> {
-    const items = this.page.locator('.hashtag-menu-item');
+    const items = this.page.locator('.hashtag-menu-item, .agent-chat-hashtag-menu-item');
     return items.allTextContents();
   }
 
