@@ -29,6 +29,9 @@ export default defineConfig({
         'src/db/index.ts',
         'src/db/well-known-conversations.ts',
         'src/settings/service.ts',
+        'src/missions/manager.ts',
+        'src/missions/schema.ts',
+        'src/evaluation/manager.ts',
       ],
       exclude: [
         '**/*.test.ts',
