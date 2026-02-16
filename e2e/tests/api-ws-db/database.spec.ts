@@ -75,11 +75,9 @@ test.describe('Database Persistence', () => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({
-          items: [
-            { id: 'trace-persist', agentType: 'supervisor', status: 'completed', inputTokens: 100, outputTokens: 50 },
-          ],
-        }),
+        body: JSON.stringify([
+          { id: 'trace-persist', agentType: 'supervisor', status: 'completed', inputTokens: 100, outputTokens: 50 },
+        ]),
       });
     });
 
@@ -92,11 +90,9 @@ test.describe('Database Persistence', () => {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({
-          items: [
-            { id: 'llm-persist', model: 'claude-sonnet-4-20250514', inputTokens: 200, outputTokens: 100 },
-          ],
-        }),
+        body: JSON.stringify([
+          { id: 'llm-persist', model: 'claude-sonnet-4-20250514', inputTokens: 200, outputTokens: 100 },
+        ]),
       });
     });
 
