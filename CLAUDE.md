@@ -142,7 +142,7 @@ npx playwright test e2e/tests/rag/  # Run specific e2e directory
 
 Unit tests use Vitest. Mock external services and LLM calls.
 
-### E2E Tests (Playwright) — Container Workaround
+### E2E Tests (Playwright) — Claude Code Web Container Workaround
 
 The e2e tests use Playwright with Chromium. In containerized environments (Claude Code sessions, Docker, CI without browser pre-installed), the browser binaries require setup. Here is the full workaround:
 
