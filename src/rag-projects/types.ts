@@ -4,6 +4,8 @@
  */
 
 import { RAG_DEFAULT_CHUNK_SIZE, RAG_DEFAULT_CHUNK_OVERLAP } from '../constants.js';
+import type { StrategyConfig, FusionMethod } from './strategies/types.js';
+import type { RerankerMethod } from './reranker.js';
 
 /**
  * Status of a document in the indexing pipeline.
@@ -48,6 +50,26 @@ export interface ProjectSettings {
   embeddingModel: string;
   /** Whether to extract and index images from PDFs */
   indexImages: boolean;
+  /**
+   * Retrieval strategies for multi-strategy RAG.
+   * Each strategy indexes the same chunks differently (e.g., direct embedding,
+   * keyword extraction, summary embedding). Results are fused at query time.
+   * If undefined or empty, falls back to single direct embedding (legacy behavior).
+   */
+  strategies?: StrategyConfig[];
+  /**
+   * Fusion method for combining results from multiple strategies.
+   * - 'rrf': Reciprocal Rank Fusion (recommended, rank-based, robust)
+   * - 'weighted_score': Weighted score averaging (simpler, score-based)
+   * Only used when multiple strategies are enabled.
+   */
+  fusionMethod?: FusionMethod;
+  /**
+   * Post-fusion re-ranking method. Applied after fusion as a final pass.
+   * - 'none': No re-ranking (default)
+   * - 'llm': LLM judges relevance of each chunk to the query directly
+   */
+  reranker?: RerankerMethod;
 }
 
 /**
@@ -198,16 +220,26 @@ export interface QueryRequest {
   minScore?: number;
   /** Filter by content type */
   contentType?: 'text' | 'image' | 'all';
+  /** Override the fusion method for this query (defaults to project setting) */
+  fusionMethod?: FusionMethod;
+  /** Override the re-ranker for this query (defaults to project setting) */
+  reranker?: RerankerMethod;
 }
 
 /**
  * Query response from the RAG project.
  */
 export interface QueryResponse {
-  /** Search results */
+  /** Search results (fused if multi-strategy, re-ranked if reranker enabled) */
   results: SearchResult[];
   /** Query execution time in ms */
   queryTimeMs: number;
+  /** Which strategies contributed to the results */
+  strategiesUsed?: string[];
+  /** Fusion method used (only set for multi-strategy queries) */
+  fusionMethod?: FusionMethod;
+  /** Re-ranker method used (only set when re-ranking was applied) */
+  reranker?: RerankerMethod;
 }
 
 /**

@@ -133,12 +133,66 @@ Two strategies in `src/browser/strategies/`:
 ## Testing
 
 ```bash
-pnpm test                    # Run all tests
+pnpm test                    # Run all unit tests (Vitest)
 pnpm test src/agents         # Run specific directory
 pnpm test:watch              # Watch mode
+npx playwright test          # Run all e2e tests
+npx playwright test e2e/tests/rag/  # Run specific e2e directory
 ```
 
-Tests use Vitest. Mock external services and LLM calls.
+Unit tests use Vitest. Mock external services and LLM calls.
+
+### E2E Tests (Playwright) — Claude Code Web Container Workaround
+
+The e2e tests use Playwright with Chromium. In containerized environments (Claude Code sessions, Docker, CI without browser pre-installed), the browser binaries require setup. Here is the full workaround:
+
+**1. Playwright expects chromium revision 1208 (for Playwright 1.58.x) at:**
+```
+~/.cache/ms-playwright/chromium_headless_shell-1208/chrome-headless-shell-linux64/chrome-headless-shell
+```
+
+**2. The environment may only have chromium revision 1194 (Playwright 1.56.x) at:**
+```
+~/.cache/ms-playwright/chromium_headless_shell-1194/chrome-linux/headless_shell
+```
+
+**3. To bridge the gap, copy (do NOT symlink) and rename:**
+```bash
+# Copy the entire v1194 directory to v1208
+cp -a ~/.cache/ms-playwright/chromium_headless_shell-1194 ~/.cache/ms-playwright/chromium_headless_shell-1208
+
+# Rename directory to match expected layout (chrome-linux -> chrome-headless-shell-linux64)
+cd ~/.cache/ms-playwright/chromium_headless_shell-1208
+mv chrome-linux chrome-headless-shell-linux64
+
+# Create expected binary name (headless_shell -> chrome-headless-shell)
+ln -sf headless_shell chrome-headless-shell-linux64/chrome-headless-shell
+
+# Fix permissions (critical — symlinks from other users will fail with Permission denied)
+chmod -R a+rx ~/.cache/ms-playwright/chromium_headless_shell-1208/
+```
+
+**Why copy instead of symlink?** Symlinks to files owned by another user cause `Permission denied` when Chromium child processes try to load shared libraries (e.g., `libGLESv2.so`). Copying ensures the files are owned by the current user.
+
+**4. The `playwright.config.ts` must include these launch args for containers:**
+```typescript
+launchOptions: {
+  args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu'],
+}
+```
+These are already configured in the project's `playwright.config.ts`.
+
+**5. Verify it works:**
+```bash
+npx playwright test e2e/tests/rag/   # Should pass all 7 RAG tests
+npx playwright test                   # Full suite: 218 tests
+```
+
+**Common failure modes:**
+- `Executable doesn't exist at ...chromium_headless_shell-1208` → Step 3 not done
+- `Target crashed` after page navigation → Permission issue on `.so` files (use `cp -a`, not `ln -s`)
+- `Creating shared memory failed: Permission denied` → Need `--no-sandbox` flag or `chmod 1777 /tmp`
+- `page.waitForSelector('.sidebar') timeout` → Browser crashing silently; check the above fixes
 
 ## Common Gotchas
 

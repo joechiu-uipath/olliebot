@@ -2,6 +2,10 @@
  * RAG Project Service
  * Main orchestration service for RAG projects.
  * Scans folders, manages indexing, and handles queries.
+ *
+ * Supports multi-strategy indexing: each project can configure multiple
+ * retrieval strategies that index the same chunks differently and fuse
+ * results at query time.
  */
 
 import { EventEmitter } from 'events';
@@ -18,12 +22,22 @@ import {
   type IndexingProgress,
   type QueryRequest,
   type QueryResponse,
+  type SearchResult,
   type EmbeddingProvider,
   type VectorRecord,
   type SummarizationProvider,
+  type DocumentChunk,
   DEFAULT_PROJECT_SETTINGS,
 } from './types.js';
 import { RAG_DEFAULT_TOP_K } from '../constants.js';
+import {
+  createStrategiesFromConfig,
+  ChunkPreprocessor,
+  type RetrievalStrategy,
+  type StrategyConfig,
+} from './strategies/index.js';
+import { fuseResults, type StrategySearchResult } from './fusion.js';
+import { createReranker, type RerankerMethod } from './reranker.js';
 
 const DOCUMENTS_FOLDER = 'documents';
 const OLLIEBOT_FOLDER = '.olliebot';
@@ -196,9 +210,83 @@ export class RAGProjectService extends EventEmitter {
     };
   }
 
+  // ─── Multi-Strategy Helpers ──────────────────────────────────────
+
+  /**
+   * Determine if a project uses multi-strategy indexing.
+   */
+  private isMultiStrategy(settings: { strategies?: StrategyConfig[] }): boolean {
+    return Array.isArray(settings.strategies) && settings.strategies.filter((s) => s.enabled).length > 0;
+  }
+
+  /**
+   * Get the enabled strategies for a project's settings.
+   * Returns null if the project uses legacy single-strategy mode.
+   */
+  private getEnabledStrategies(settings: { strategies?: StrategyConfig[] }): RetrievalStrategy[] | null {
+    if (!this.isMultiStrategy(settings)) {
+      return null;
+    }
+
+    return createStrategiesFromConfig(settings.strategies!, {
+      summarizationProvider: this.summarizationProvider,
+    });
+  }
+
+  /**
+   * Index a single chunk across all enabled strategies.
+   *
+   * The ChunkPreprocessor (if provided) collects prompt directives from
+   * strategies that implement getPreprocessingDirective(), makes one shared
+   * LLM call, then lets each strategy extract its own result. Strategies
+   * that don't participate in preprocessing (like DirectEmbedding) simply
+   * ignore the preprocessed map.
+   */
+  private async indexChunkMultiStrategy(
+    chunk: DocumentChunk,
+    strategies: RetrievalStrategy[],
+    projectId: string,
+    relativePath: string,
+    store: LanceStore,
+    preprocessor: ChunkPreprocessor | null
+  ): Promise<void> {
+    // One shared LLM call; strategies extract their own results
+    const preprocessed = preprocessor
+      ? await preprocessor.process(chunk.text)
+      : undefined;
+
+    for (const strategy of strategies) {
+      // Strategy uses preprocessed data if available, otherwise falls back to its own LLM call
+      const preparedText = await strategy.prepareChunkText(chunk, preprocessed);
+
+      // Embed the transformed text
+      const embedding = await this.embeddingProvider.embed(preparedText);
+
+      // Create vector record (text field stores the ORIGINAL chunk text for display)
+      const record: VectorRecord = {
+        id: `${projectId}:${relativePath}:${chunk.chunkIndex}`,
+        documentPath: chunk.documentPath,
+        text: chunk.text,
+        vector: embedding,
+        chunkIndex: chunk.chunkIndex,
+        contentType: chunk.contentType,
+        metadata: chunk.metadata,
+      };
+
+      await store.addVectorsToTable([record], strategy.id);
+    }
+  }
+
+  // ─── Indexing ────────────────────────────────────────────────────
+
   /**
    * Index a project's documents with incremental support.
    * Only re-indexes new or changed files; skips unchanged files.
+   *
+   * If the project has strategies configured, indexes chunks across all
+   * enabled strategies (multi-strategy mode). Otherwise falls back to
+   * legacy single-table indexing.
+   *
    * @param projectId - The project to index
    * @param force - If true, clears all vectors and re-indexes everything
    */
@@ -227,10 +315,24 @@ export class RAGProjectService extends EventEmitter {
         this.stores.set(projectId, store);
       }
 
+      // Determine if this is multi-strategy
+      const strategies = this.getEnabledStrategies(manifest.settings);
+      const useMultiStrategy = strategies !== null && strategies.length > 0;
+
+      if (useMultiStrategy) {
+        console.log(
+          `[RAGProjects] Multi-strategy mode: ${strategies.map((s) => s.id).join(', ')}`
+        );
+      }
+
       // Force re-index: clear everything and treat all files as new
       if (force) {
         console.log(`[RAGProjects] Force re-index: clearing all vectors for ${projectId}`);
-        await store.clear();
+        if (useMultiStrategy) {
+          await store.clearAllTables();
+        } else {
+          await store.clear();
+        }
         store = await createLanceStore(projectPath, this.embeddingProvider);
         this.stores.set(projectId, store);
         manifest.documents = {};
@@ -289,7 +391,13 @@ export class RAGProjectService extends EventEmitter {
 
       // Remove vectors for deleted files
       for (const removedPath of removedFiles) {
-        await store.deleteByDocument(removedPath);
+        if (useMultiStrategy) {
+          for (const strategy of strategies) {
+            await store.deleteByDocumentFromTable(removedPath, strategy.id);
+          }
+        } else {
+          await store.deleteByDocument(removedPath);
+        }
         delete manifest.documents[removedPath];
         processedCount++;
       }
@@ -297,7 +405,13 @@ export class RAGProjectService extends EventEmitter {
       // Remove vectors for changed files (before re-indexing)
       for (const { relativePath, isNew } of filesToIndex) {
         if (!isNew) {
-          await store.deleteByDocument(relativePath);
+          if (useMultiStrategy) {
+            for (const strategy of strategies) {
+              await store.deleteByDocumentFromTable(relativePath, strategy.id);
+            }
+          } else {
+            await store.deleteByDocument(relativePath);
+          }
         }
       }
 
@@ -336,24 +450,44 @@ export class RAGProjectService extends EventEmitter {
             }
           }
 
-          // Generate embeddings
-          const vectors: VectorRecord[] = [];
-          for (const chunk of chunks) {
-            const embedding = await this.embeddingProvider.embed(chunk.text);
-            vectors.push({
-              id: `${projectId}:${relativePath}:${chunk.chunkIndex}`,
-              documentPath: chunk.documentPath,
-              text: chunk.text,
-              vector: embedding,
-              chunkIndex: chunk.chunkIndex,
-              contentType: chunk.contentType,
-              metadata: chunk.metadata,
-            });
-          }
+          if (useMultiStrategy) {
+            // Create preprocessor — it asks strategies for directives and only
+            // makes a shared LLM call if any strategy opted in.
+            const preprocessor = this.summarizationProvider
+              ? new ChunkPreprocessor(this.summarizationProvider, strategies)
+              : null;
 
-          // Add to store
-          if (vectors.length > 0) {
-            await store.addVectors(vectors);
+            // Multi-strategy: index each chunk across all strategies
+            for (const chunk of chunks) {
+              await this.indexChunkMultiStrategy(
+                chunk,
+                strategies,
+                projectId,
+                relativePath,
+                store,
+                preprocessor?.hasContributors() ? preprocessor : null
+              );
+            }
+          } else {
+            // Legacy: single direct embedding
+            const vectors: VectorRecord[] = [];
+            for (const chunk of chunks) {
+              const embedding = await this.embeddingProvider.embed(chunk.text);
+              vectors.push({
+                id: `${projectId}:${relativePath}:${chunk.chunkIndex}`,
+                documentPath: chunk.documentPath,
+                text: chunk.text,
+                vector: embedding,
+                chunkIndex: chunk.chunkIndex,
+                contentType: chunk.contentType,
+                metadata: chunk.metadata,
+              });
+            }
+
+            // Add to store
+            if (vectors.length > 0) {
+              await store.addVectors(vectors);
+            }
           }
 
           // Update manifest
@@ -408,7 +542,11 @@ export class RAGProjectService extends EventEmitter {
       }
 
       // Update manifest with final stats (get actual count from store)
-      manifest.vectorCount = await store.getVectorCount();
+      if (useMultiStrategy) {
+        manifest.vectorCount = await store.getTotalVectorCount();
+      } else {
+        manifest.vectorCount = await store.getVectorCount();
+      }
       manifest.lastIndexedAt = new Date().toISOString();
       manifest.updatedAt = new Date().toISOString();
       await this.saveManifest(projectPath, manifest);
@@ -437,8 +575,13 @@ export class RAGProjectService extends EventEmitter {
     }
   }
 
+  // ─── Querying ────────────────────────────────────────────────────
+
   /**
    * Query a project's vectors.
+   *
+   * If the project uses multi-strategy indexing, queries all enabled strategies
+   * in parallel and fuses the results. Otherwise falls back to legacy single-table search.
    */
   async queryProject(projectId: string, request: QueryRequest): Promise<QueryResponse> {
     const projectPath = join(this.ragDir, projectId);
@@ -455,7 +598,24 @@ export class RAGProjectService extends EventEmitter {
       this.stores.set(projectId, store);
     }
 
-    // Execute search
+    // Load manifest to check strategy configuration
+    const manifest = await this.loadOrCreateManifest(projectId, projectPath);
+    const strategies = this.getEnabledStrategies(manifest.settings);
+    const useMultiStrategy = strategies !== null && strategies.length > 0;
+
+    if (useMultiStrategy) {
+      return this.queryMultiStrategy(
+        store,
+        request,
+        strategies,
+        manifest.settings.strategies!,
+        manifest.settings.fusionMethod || 'rrf',
+        request.reranker || manifest.settings.reranker || 'none',
+        startTime
+      );
+    }
+
+    // Legacy single-strategy search
     const results = await store.search(
       request.query,
       request.topK || RAG_DEFAULT_TOP_K,
@@ -466,6 +626,91 @@ export class RAGProjectService extends EventEmitter {
     return {
       results,
       queryTimeMs: Date.now() - startTime,
+    };
+  }
+
+  /**
+   * Execute the multi-strategy query pipeline:
+   *   1. Query each strategy's index in parallel
+   *   2. Fuse the N ranked lists into one
+   *   3. (Optional) LLM re-rank the fused results
+   */
+  private async queryMultiStrategy(
+    store: LanceStore,
+    request: QueryRequest,
+    strategies: RetrievalStrategy[],
+    strategyConfigs: StrategyConfig[],
+    defaultFusionMethod: string,
+    rerankerMethod: RerankerMethod,
+    startTime: number
+  ): Promise<QueryResponse> {
+    const topK = request.topK || RAG_DEFAULT_TOP_K;
+    const minScore = request.minScore || 0;
+    const contentType = request.contentType || 'all';
+    const fusionMethod = request.fusionMethod || defaultFusionMethod;
+
+    // ── Step 1: Query each strategy in parallel ──────────────────
+    const strategyResultPromises = strategies.map(async (strategy): Promise<StrategySearchResult> => {
+      const preparedQuery = await strategy.prepareQueryText(request.query);
+      const queryVector = await this.embeddingProvider.embed(preparedQuery);
+
+      // Request more results than topK so fusion has a good pool
+      const results = await store.searchByVector(
+        queryVector,
+        strategy.id,
+        topK * 2,
+        minScore,
+        contentType
+      );
+
+      return {
+        strategyId: strategy.id,
+        results,
+      };
+    });
+
+    const strategyResults = await Promise.all(strategyResultPromises);
+
+    // ── Step 2: Fuse results from all strategies ─────────────────
+    const fusedResults = fuseResults(
+      strategyResults,
+      strategyConfigs,
+      fusionMethod as 'rrf' | 'weighted_score',
+      // Give reranker more candidates to work with if it's enabled
+      rerankerMethod !== 'none' ? topK * 2 : topK
+    );
+
+    // Map fused results to SearchResult format
+    let results: SearchResult[] = fusedResults.map((fused) => ({
+      id: fused.id,
+      documentPath: fused.documentPath,
+      text: fused.text,
+      score: fused.fusedScore,
+      chunkIndex: fused.chunkIndex,
+      contentType: fused.contentType,
+      metadata: {
+        ...fused.metadata,
+        fusedScore: fused.fusedScore,
+        strategyScores: fused.strategyScores,
+      },
+    }));
+
+    // ── Step 3: Optional LLM re-ranking ──────────────────────────
+    let appliedReranker: RerankerMethod | undefined;
+    if (rerankerMethod !== 'none') {
+      const reranker = createReranker(rerankerMethod, this.summarizationProvider);
+      if (reranker) {
+        results = await reranker.rerank(request.query, results, topK);
+        appliedReranker = rerankerMethod;
+      }
+    }
+
+    return {
+      results,
+      queryTimeMs: Date.now() - startTime,
+      strategiesUsed: strategies.map((s) => s.id),
+      fusionMethod: fusionMethod as 'rrf' | 'weighted_score',
+      ...(appliedReranker && { reranker: appliedReranker }),
     };
   }
 
