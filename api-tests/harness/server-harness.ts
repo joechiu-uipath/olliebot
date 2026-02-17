@@ -336,11 +336,12 @@ export class FullServerHarness extends ServerHarness {
     this._traceStore = new TraceStore();
     this._traceStore.init();
 
-    // 5. LLM provider backed by simulator
+    // 5. LLM provider backed by simulator (with traceStore for call tracing)
     const provider = new SimulatorLLMProvider(this.simulatorUrl);
     this._llmService = new LLMService({
       main: provider,
       fast: provider,
+      traceStore: this._traceStore!,
     });
 
     // 6. Tool runner (no tools registered — routes return empty)

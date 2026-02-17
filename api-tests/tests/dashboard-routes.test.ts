@@ -350,6 +350,67 @@ describe('Dashboard Routes', () => {
       expect(status).toBe(404);
       expect(body.error).toContain('not found');
     });
+
+    it('renders a custom snapshot via LLM and returns HTML', async () => {
+      // 1. Create a snapshot via API
+      const api = harness.api();
+      const { status: createStatus, body: created } = await api.postJson<{
+        id: string;
+        status: string;
+      }>(
+        '/api/dashboards/snapshots',
+        {
+          title: 'LLM Render Test',
+          snapshotType: 'custom',
+          metricsJson: { totalUsers: 100, revenue: 5000 },
+        },
+      );
+      expect(createStatus).toBe(201);
+      expect(created.status).toBe('pending');
+
+      // 2. Trigger rendering — this calls llmService.generate() via RenderEngine
+      const { status: renderStatus, body: rendered } = await api.postJson<{
+        id: string;
+        status: string;
+        renderModel: string;
+        html: string;
+      }>(`/api/dashboards/snapshots/${created.id}/render`);
+
+      expect(renderStatus).toBe(200);
+      expect(rendered.id).toBe(created.id);
+      expect(rendered.status).toBe('rendered');
+      expect(rendered.renderModel).toBeTruthy();
+      expect(rendered.html).toBeTruthy();
+      // The wrapped HTML should contain CDN library tags
+      expect(rendered.html).toContain('echarts');
+
+      // 3. Verify the LLM call was traced — check trace stats
+      const { body: stats } = await api.getJson<{
+        totalLlmCalls: number;
+      }>('/api/traces/stats');
+      expect(stats.totalLlmCalls).toBeGreaterThanOrEqual(1);
+
+      // 4. Verify the snapshot is now marked as rendered in the store
+      const { body: detail } = await api.getJson<{
+        status: string;
+        renderedHtml: string;
+      }>(`/api/dashboards/snapshots/${created.id}`);
+      expect(detail.status).toBe('rendered');
+      expect(detail.renderedHtml).toBeTruthy();
+    });
+
+    it('returns 409 when snapshot is already being rendered', async () => {
+      // Seed a snapshot with 'rendering' status
+      seedSnapshot({ id: 'snap-rendering', title: 'Rendering', status: 'rendering' });
+
+      const api = harness.api();
+      const { status, body } = await api.postJson<{ error: string }>(
+        '/api/dashboards/snapshots/snap-rendering/render',
+      );
+
+      expect(status).toBe(409);
+      expect(body.error).toContain('already being rendered');
+    });
   });
 
   describe('POST /api/dashboards/snapshots/:id/rerender', () => {
