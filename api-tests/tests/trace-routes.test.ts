@@ -16,6 +16,7 @@
 
 import { describe, it, expect, beforeAll, afterEach, afterAll } from 'vitest';
 import { ServerHarness } from '../harness/index.js';
+import { HTTP_STATUS, TIMEOUTS, waitFor } from '../harness/index.js';
 import { getDb } from '../../src/db/index.js';
 
 const harness = new ServerHarness();
@@ -148,7 +149,7 @@ describe('Trace Routes', () => {
       const api = harness.api();
       const { status, body } = await api.getJson<unknown[]>('/api/traces/traces');
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(body).toEqual([]);
     });
 
@@ -159,7 +160,7 @@ describe('Trace Routes', () => {
       const api = harness.api();
       const { status, body } = await api.getJson<Array<{ id: string; triggerType: string }>>('/api/traces/traces');
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(body).toHaveLength(2);
       // Most recent first
       const ids = body.map(t => t.id);
@@ -174,7 +175,7 @@ describe('Trace Routes', () => {
       const api = harness.api();
       const { status, body } = await api.getJson<Array<{ id: string }>>('/api/traces/traces?conversationId=conv-1');
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(body).toHaveLength(1);
       expect(body[0].id).toBe('trace-a');
     });
@@ -186,7 +187,7 @@ describe('Trace Routes', () => {
       const api = harness.api();
       const { status, body } = await api.getJson<Array<{ id: string }>>('/api/traces/traces?status=error');
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(body).toHaveLength(1);
       expect(body[0].id).toBe('trace-err');
     });
@@ -199,7 +200,7 @@ describe('Trace Routes', () => {
       const api = harness.api();
       const { status, body } = await api.getJson<unknown[]>('/api/traces/traces?limit=2');
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(body).toHaveLength(2);
     });
   });
@@ -219,7 +220,7 @@ describe('Trace Routes', () => {
         toolCalls: Array<{ id: string }>;
       }>('/api/traces/traces/trace-full');
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(body.trace.id).toBe('trace-full');
       expect(body.spans).toHaveLength(1);
       expect(body.spans[0].id).toBe('span-1');
@@ -232,7 +233,7 @@ describe('Trace Routes', () => {
     it('returns 404 for unknown trace', async () => {
       const api = harness.api();
       const { status } = await api.getJson('/api/traces/traces/nonexistent');
-      expect(status).toBe(404);
+      expect(status).toBe(HTTP_STATUS.NOT_FOUND);
     });
   });
 
@@ -241,7 +242,7 @@ describe('Trace Routes', () => {
       const api = harness.api();
       const { status, body } = await api.getJson<unknown[]>('/api/traces/llm-calls');
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(body).toEqual([]);
     });
 
@@ -252,7 +253,7 @@ describe('Trace Routes', () => {
       const api = harness.api();
       const { status, body } = await api.getJson<Array<{ id: string; provider: string }>>('/api/traces/llm-calls');
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(body).toHaveLength(2);
     });
 
@@ -263,7 +264,7 @@ describe('Trace Routes', () => {
       const api = harness.api();
       const { status, body } = await api.getJson<Array<{ id: string }>>('/api/traces/llm-calls?workload=fast');
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(body).toHaveLength(1);
       expect(body[0].id).toBe('llm-fast');
     });
@@ -275,7 +276,7 @@ describe('Trace Routes', () => {
       const api = harness.api();
       const { status, body } = await api.getJson<Array<{ id: string }>>('/api/traces/llm-calls?provider=openai');
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(body).toHaveLength(1);
       expect(body[0].id).toBe('llm-oai');
     });
@@ -288,7 +289,7 @@ describe('Trace Routes', () => {
       const api = harness.api();
       const { status, body } = await api.getJson<Array<{ id: string }>>('/api/traces/llm-calls?traceId=trace-x');
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(body).toHaveLength(1);
       expect(body[0].id).toBe('llm-x1');
     });
@@ -301,7 +302,7 @@ describe('Trace Routes', () => {
       const api = harness.api();
       const { status, body } = await api.getJson<{ id: string; provider: string; model: string; inputTokens: number }>('/api/traces/llm-calls/llm-detail');
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(body.id).toBe('llm-detail');
       expect(body.provider).toBe('anthropic');
       expect(body.model).toBe('claude-3-haiku');
@@ -311,7 +312,7 @@ describe('Trace Routes', () => {
     it('returns 404 for unknown LLM call', async () => {
       const api = harness.api();
       const { status } = await api.getJson('/api/traces/llm-calls/nonexistent');
-      expect(status).toBe(404);
+      expect(status).toBe(HTTP_STATUS.NOT_FOUND);
     });
   });
 
@@ -320,7 +321,7 @@ describe('Trace Routes', () => {
       const api = harness.api();
       const { status, body } = await api.getJson<unknown[]>('/api/traces/tool-calls');
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(body).toEqual([]);
     });
 
@@ -331,7 +332,7 @@ describe('Trace Routes', () => {
       const api = harness.api();
       const { status, body } = await api.getJson<Array<{ id: string; toolName: string }>>('/api/traces/tool-calls');
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(body).toHaveLength(2);
     });
 
@@ -343,7 +344,7 @@ describe('Trace Routes', () => {
       const api = harness.api();
       const { status, body } = await api.getJson<Array<{ id: string }>>('/api/traces/tool-calls?traceId=trace-tc');
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(body).toHaveLength(1);
       expect(body[0].id).toBe('tc-linked');
     });
@@ -356,7 +357,7 @@ describe('Trace Routes', () => {
       const api = harness.api();
       const { status, body } = await api.getJson<Array<{ id: string }>>('/api/traces/tool-calls?llmCallId=llm-for-tc');
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(body).toHaveLength(1);
       expect(body[0].id).toBe('tc-from-llm');
     });
@@ -374,7 +375,7 @@ describe('Trace Routes', () => {
         tokenReductionEnabled: boolean;
       }>('/api/traces/stats');
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(body.totalTraces).toBe(0);
       expect(body.totalLlmCalls).toBe(0);
       expect(body.totalToolCalls).toBe(0);
@@ -400,7 +401,7 @@ describe('Trace Routes', () => {
         totalOutputTokens: number;
       }>('/api/traces/stats');
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(body.totalTraces).toBe(2);
       expect(body.totalLlmCalls).toBe(3);
       expect(body.totalToolCalls).toBe(1);

@@ -12,3 +12,14 @@ export { SimulatorLLMProvider } from './simulator-llm-provider.js';
 
 // Re-export simulator server for tests that need direct simulator access
 export { SimulatorServer } from '../../e2e/simulators/server.js';
+
+// Test utilities and constants
+export { HTTP_STATUS, TIMEOUTS, LIMITS, TEST_SIZES } from './test-constants.js';
+export {
+  seedConversation,
+  seedMessage,
+  seedConversationWithMessages,
+  expectValidResponse,
+  waitFor,
+} from './test-utils.js';
+export type { SeedConversationOptions, SeedMessageOptions } from './test-utils.js';

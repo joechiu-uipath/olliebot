@@ -9,7 +9,8 @@
  */
 
 import { describe, it, expect, beforeAll, afterEach, afterAll } from 'vitest';
-import { ServerHarness } from '../harness/server-harness.js';
+import { ServerHarness } from '../harness/index.js';
+import { HTTP_STATUS, TIMEOUTS, waitFor } from '../harness/index.js';
 
 const harness = new ServerHarness();
 
@@ -23,7 +24,7 @@ describe('Agent State & System', () => {
     const api = harness.api();
     const { status, body } = await api.getJson<{ status: string }>('/api/state');
 
-    expect(status).toBe(200);
+    expect(status).toBe(HTTP_STATUS.OK);
     expect(body.status).toBe('idle');
   });
 
@@ -34,7 +35,7 @@ describe('Agent State & System', () => {
       '/api/agents',
     );
 
-    expect(status).toBe(200);
+    expect(status).toBe(HTTP_STATUS.OK);
     expect(Array.isArray(body)).toBe(true);
     expect(body.length).toBeGreaterThanOrEqual(1);
     // Real supervisor — check role rather than hardcoded stub id
@@ -48,7 +49,7 @@ describe('Agent State & System', () => {
 
     // No WS clients connected
     const { status, body } = await api.getJson<{ count: number }>('/api/clients');
-    expect(status).toBe(200);
+    expect(status).toBe(HTTP_STATUS.OK);
     expect(body.count).toBe(0);
 
     // Connect a WS client

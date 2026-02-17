@@ -19,6 +19,7 @@
 
 import { describe, it, expect, beforeAll, afterEach, afterAll } from 'vitest';
 import { ServerHarness } from '../harness/index.js';
+import { HTTP_STATUS, TIMEOUTS, waitFor } from '../harness/index.js';
 import { getDb } from '../../src/db/index.js';
 import type { NativeTool, NativeToolResult } from '../../src/tools/native/types.js';
 
@@ -61,7 +62,7 @@ describe('Tool Runner via API', () => {
         mcp: Record<string, unknown>;
       }>('/api/tools');
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(Array.isArray(body.builtin)).toBe(true);
       expect(Array.isArray(body.user)).toBe(true);
       expect(typeof body.mcp).toBe('object');
@@ -258,7 +259,7 @@ describe('MessageEventService via API', () => {
         success: number;
       }>>('/api/traces/tool-calls');
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(body.length).toBeGreaterThanOrEqual(1);
       expect(body.some(tc => tc.toolName === 'remember')).toBe(true);
     });

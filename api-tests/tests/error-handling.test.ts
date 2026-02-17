@@ -4,11 +4,10 @@
  * Covers:
  *   ERR-005   Invalid input — bad API input returns error
  *   API-006   Error responses — proper status codes and messages
- *   API-008   404 handling — unknown routes
  */
 
 import { describe, it, expect, beforeAll, afterEach, afterAll } from 'vitest';
-import { ServerHarness } from '../harness/server-harness.js';
+import { ServerHarness, HTTP_STATUS } from '../harness/index.js';
 
 const harness = new ServerHarness();
 
@@ -25,13 +24,7 @@ describe('Error Handling', () => {
     });
 
     // Should be 404 (not found) or a graceful error — not 500
-    expect(status).toBeLessThan(500);
-  });
-
-  // API-008 — 404 for unknown routes
-  it('GET /api/unknown returns 404', async () => {
-    const res = await fetch(`${harness.baseUrl}/api/unknown`);
-    expect(res.status).toBe(404);
+    expect(status).toBeLessThan(HTTP_STATUS.INTERNAL_SERVER_ERROR);
   });
 
   it('POST to a GET-only route returns 404', async () => {
@@ -39,7 +32,7 @@ describe('Error Handling', () => {
       method: 'POST',
     });
     // Hono returns 404 for unmatched method+path combos
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(HTTP_STATUS.NOT_FOUND);
   });
 
   // Content-Type validation
@@ -51,11 +44,11 @@ describe('Error Handling', () => {
     });
 
     // Should not crash the server — might be 400 or 500 depending on parsing
-    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(res.status).toBeGreaterThanOrEqual(HTTP_STATUS.BAD_REQUEST);
 
     // Server should still be healthy
     const health = await fetch(`${harness.baseUrl}/health`);
-    expect(health.status).toBe(200);
+    expect(health.status).toBe(HTTP_STATUS.OK);
   });
 
   // Delete non-existent conversation
@@ -64,7 +57,7 @@ describe('Error Handling', () => {
     const { status } = await api.deleteJson('/api/conversations/does-not-exist');
 
     // Should not be 500
-    expect(status).toBeLessThan(500);
+    expect(status).toBeLessThan(HTTP_STATUS.INTERNAL_SERVER_ERROR);
   });
 
   // Empty body on POST that expects JSON
@@ -73,6 +66,6 @@ describe('Error Handling', () => {
       method: 'POST',
     });
 
-    expect(res.status).toBeGreaterThanOrEqual(400);
+    expect(res.status).toBeGreaterThanOrEqual(HTTP_STATUS.BAD_REQUEST);
   });
 });

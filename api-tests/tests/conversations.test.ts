@@ -16,7 +16,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterEach, afterAll } from 'vitest';
-import { ServerHarness } from '../harness/server-harness.js';
+import { ServerHarness, HTTP_STATUS, LIMITS, TEST_SIZES } from '../harness/index.js';
 
 const harness = new ServerHarness();
 
@@ -37,7 +37,7 @@ describe('Conversations', () => {
       { title: 'My Chat' },
     );
 
-    expect(status).toBe(200);
+    expect(status).toBe(HTTP_STATUS.OK);
     expect(body.id).toBeTruthy();
     expect(body.title).toBe('My Chat');
   });
@@ -54,7 +54,7 @@ describe('Conversations', () => {
       '/api/conversations',
     );
 
-    expect(status).toBe(200);
+    expect(status).toBe(HTTP_STATUS.OK);
     expect(Array.isArray(body)).toBe(true);
 
     // Should include the two we created + the well-known 'feed'
@@ -94,7 +94,7 @@ describe('Conversations', () => {
       { title: 'New Name' },
     );
 
-    expect(status).toBe(200);
+    expect(status).toBe(HTTP_STATUS.OK);
     expect(body.success).toBe(true);
     expect(body.conversation.title).toBe('New Name');
   });
@@ -108,7 +108,7 @@ describe('Conversations', () => {
     );
 
     const { status } = await api.deleteJson(`/api/conversations/${created.id}`);
-    expect(status).toBe(200);
+    expect(status).toBe(HTTP_STATUS.OK);
 
     // Should no longer appear in the list
     const { body: list } = await api.getJson<Array<{ id: string }>>(
@@ -119,18 +119,24 @@ describe('Conversations', () => {
   });
 
   // AGSYS-007 — Well-known conversations cannot be deleted
-  it('DELETE /api/conversations/feed is rejected (well-known)', async () => {
+  it('DELETE /api/conversations/feed returns 403 (well-known protection)', async () => {
     const api = harness.api();
-    const { status } = await api.deleteJson('/api/conversations/feed');
-    // Server should reject with 400 or 403
-    expect(status).toBeGreaterThanOrEqual(400);
+    const { status, body } = await api.deleteJson<{ error: string }>(
+      '/api/conversations/feed',
+    );
+    expect(status).toBe(HTTP_STATUS.FORBIDDEN);
+    expect(body.error).toContain('Well-known');
   });
 
   // Well-known conversations cannot be renamed
-  it('PATCH /api/conversations/feed is rejected (well-known)', async () => {
+  it('PATCH /api/conversations/feed returns 403 (well-known protection)', async () => {
     const api = harness.api();
-    const { status } = await api.patchJson('/api/conversations/feed', { title: 'Hacked' });
-    expect(status).toBeGreaterThanOrEqual(400);
+    const { status, body } = await api.patchJson<{ error: string }>(
+      '/api/conversations/feed',
+      { title: 'Renamed Feed' },
+    );
+    expect(status).toBe(HTTP_STATUS.FORBIDDEN);
+    expect(body.error).toContain('Well-known');
   });
 
   // CHAT-010
@@ -161,7 +167,7 @@ describe('Conversations', () => {
 
     // Clear messages
     const { status } = await api.deleteJson(`/api/conversations/${conv.id}/messages`);
-    expect(status).toBe(200);
+    expect(status).toBe(HTTP_STATUS.OK);
 
     // Verify messages are gone
     const { body: after } = await api.getJson<{ items: unknown[] }>(
@@ -266,7 +272,7 @@ describe('Conversations', () => {
       { title: '' },
     );
 
-    expect(status).toBe(400);
+    expect(status).toBe(HTTP_STATUS.BAD_REQUEST);
   });
 
   it('rename with missing title field returns 400', async () => {
@@ -281,23 +287,23 @@ describe('Conversations', () => {
       { notTitle: 'something' },
     );
 
-    expect(status).toBe(400);
+    expect(status).toBe(HTTP_STATUS.BAD_REQUEST);
   });
 
-  it('rename truncates title to 100 characters', async () => {
+  it('rename truncates title to max length', async () => {
     const api = harness.api();
     const { body: created } = await api.postJson<{ id: string }>(
       '/api/conversations',
       { title: 'Short' },
     );
 
-    const longTitle = 'A'.repeat(150);
+    const longTitle = 'A'.repeat(TEST_SIZES.LONG_TITLE);
     const { body } = await api.patchJson<{ conversation: { title: string } }>(
       `/api/conversations/${created.id}`,
       { title: longTitle },
     );
 
-    expect(body.conversation.title.length).toBe(100);
+    expect(body.conversation.title.length).toBe(LIMITS.CONVERSATION_TITLE_MAX);
   });
 
   it('rename sets manuallyNamed flag', async () => {
@@ -316,31 +322,6 @@ describe('Conversations', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Well-known protection (exact status codes)
-  // ---------------------------------------------------------------------------
-
-  it('DELETE /api/conversations/feed returns exactly 403', async () => {
-    const api = harness.api();
-    const { status, body } = await api.deleteJson<{ error: string }>(
-      '/api/conversations/feed',
-    );
-
-    expect(status).toBe(403);
-    expect(body.error).toContain('Well-known');
-  });
-
-  it('PATCH /api/conversations/feed returns exactly 403', async () => {
-    const api = harness.api();
-    const { status, body } = await api.patchJson<{ error: string }>(
-      '/api/conversations/feed',
-      { title: 'Renamed Feed' },
-    );
-
-    expect(status).toBe(403);
-    expect(body.error).toContain('Well-known');
-  });
-
-  // ---------------------------------------------------------------------------
   // Delete edge cases
   // ---------------------------------------------------------------------------
 
@@ -350,23 +331,6 @@ describe('Conversations', () => {
       '/api/conversations/does-not-exist/messages',
     );
 
-    expect(status).toBe(404);
-  });
-
-  it('soft-deleted conversations do not appear in list', async () => {
-    const api = harness.api();
-
-    const { body: created } = await api.postJson<{ id: string }>(
-      '/api/conversations',
-      { title: 'Will Delete' },
-    );
-
-    await api.delete(`/api/conversations/${created.id}`);
-
-    const { body: list } = await api.getJson<Array<{ id: string }>>(
-      '/api/conversations',
-    );
-    const found = list.find(c => c.id === created.id);
-    expect(found).toBeUndefined();
+    expect(status).toBe(HTTP_STATUS.NOT_FOUND);
   });
 });

@@ -17,6 +17,7 @@
 
 import { describe, it, expect, beforeAll, afterEach, afterAll } from 'vitest';
 import { ServerHarness } from '../harness/index.js';
+import { HTTP_STATUS, TIMEOUTS, waitFor } from '../harness/index.js';
 import { unlinkSync, existsSync } from 'fs';
 import { join } from 'path';
 
@@ -43,7 +44,7 @@ describe('Evaluation Routes', () => {
         '/api/eval/list',
       );
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(Array.isArray(body.evaluations)).toBe(true);
       // Each evaluation should have expected shape
       if (body.evaluations.length > 0) {
@@ -59,7 +60,7 @@ describe('Evaluation Routes', () => {
         '/api/eval/list?target=supervisor',
       );
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(Array.isArray(body.evaluations)).toBe(true);
       // All returned evals should match the target filter
       for (const ev of body.evaluations) {
@@ -73,7 +74,7 @@ describe('Evaluation Routes', () => {
         '/api/eval/list?tags=web-search',
       );
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(Array.isArray(body.evaluations)).toBe(true);
       // All returned evals should include the filtered tag
       for (const ev of body.evaluations) {
@@ -87,7 +88,7 @@ describe('Evaluation Routes', () => {
         '/api/eval/suites',
       );
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(Array.isArray(body.suites)).toBe(true);
       if (body.suites.length > 0) {
         expect(body.suites[0]).toHaveProperty('id');
@@ -103,7 +104,7 @@ describe('Evaluation Routes', () => {
         '/api/eval/jobs',
       );
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(body.jobs).toEqual([]);
     });
 
@@ -114,7 +115,7 @@ describe('Evaluation Routes', () => {
         {},
       );
 
-      expect(status).toBe(400);
+      expect(status).toBe(HTTP_STATUS.BAD_REQUEST);
       expect(body.error).toContain('evaluationPath');
     });
 
@@ -125,7 +126,7 @@ describe('Evaluation Routes', () => {
         { evaluationPath: 'nonexistent-eval.json', runs: 1 },
       );
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(body.jobId).toBeTruthy();
       expect(body.status).toBe('started');
     });
@@ -149,7 +150,7 @@ describe('Evaluation Routes', () => {
         startedAt: string;
       }>(`/api/eval/results/${submitted.jobId}`);
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(body.jobId).toBe(submitted.jobId);
       // Job may have already failed (no eval file exists) or still be running
       expect(['running', 'completed', 'failed']).toContain(body.status);
@@ -159,7 +160,7 @@ describe('Evaluation Routes', () => {
     it('GET /api/eval/results/:jobId returns 404 for unknown job', async () => {
       const api = harness.api();
       const { status } = await api.getJson('/api/eval/results/unknown-job-id');
-      expect(status).toBe(404);
+      expect(status).toBe(HTTP_STATUS.NOT_FOUND);
     });
 
     it('POST /api/eval/suite/run without suitePath returns 400', async () => {
@@ -169,7 +170,7 @@ describe('Evaluation Routes', () => {
         {},
       );
 
-      expect(status).toBe(400);
+      expect(status).toBe(HTTP_STATUS.BAD_REQUEST);
       expect(body.error).toContain('suitePath');
     });
 
@@ -180,7 +181,7 @@ describe('Evaluation Routes', () => {
         { suitePath: 'nonexistent-suite.json' },
       );
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(body.jobId).toBeTruthy();
       expect(body.status).toBe('started');
     });
@@ -193,7 +194,7 @@ describe('Evaluation Routes', () => {
         '/api/eval/results',
       );
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(body.results).toEqual([]);
     });
 
@@ -203,7 +204,7 @@ describe('Evaluation Routes', () => {
         '/api/eval/results?limit=5',
       );
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(body.results).toEqual([]);
     });
 
@@ -213,7 +214,7 @@ describe('Evaluation Routes', () => {
         '/api/eval/history/unknown-eval',
       );
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(body.results).toEqual([]);
     });
   });
@@ -222,7 +223,7 @@ describe('Evaluation Routes', () => {
     it('GET /api/eval/:path returns 404 for nonexistent eval', async () => {
       const api = harness.api();
       const { status } = await api.getJson('/api/eval/nonexistent-eval.json');
-      expect(status).toBe(404);
+      expect(status).toBe(HTTP_STATUS.NOT_FOUND);
     });
 
     it('PUT /api/eval/:path validates required fields', async () => {
@@ -287,7 +288,7 @@ describe('Evaluation Routes', () => {
         evaluation: { metadata: { id: string; name: string } };
       }>('/api/eval/test-eval-save.eval.json');
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(body.evaluation.metadata.id).toBe('test-eval-001');
       expect(body.evaluation.metadata.name).toBe('Test Evaluation');
     });
@@ -300,7 +301,7 @@ describe('Evaluation Routes', () => {
         '/api/eval/cleanup',
       );
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(typeof body.cleaned).toBe('number');
       expect(typeof body.remaining).toBe('number');
     });
@@ -314,7 +315,7 @@ describe('Evaluation Routes', () => {
         {},
       );
 
-      expect(status).toBe(400);
+      expect(status).toBe(HTTP_STATUS.BAD_REQUEST);
       expect(body.error).toContain('results');
     });
 
@@ -345,7 +346,7 @@ describe('Evaluation Routes', () => {
         },
       );
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(typeof body.report).toBe('string');
       expect(body.report).toContain('# Evaluation Report');
       expect(body.format).toBe('markdown');

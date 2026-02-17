@@ -14,7 +14,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterEach, afterAll } from 'vitest';
-import { ServerHarness } from '../harness/server-harness.js';
+import { ServerHarness } from '../harness/index.js';
 import { getDb } from '../../src/db/index.js';
 
 const harness = new ServerHarness();
