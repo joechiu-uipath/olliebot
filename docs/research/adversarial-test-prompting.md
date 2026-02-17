@@ -978,9 +978,11 @@ import { parse } from '@babel/parser';
 private validateTestCode(code: string): boolean {
   try {
     // Parse without executing - safe syntax validation
+    // Note: Only use built-in parser plugins (typescript, jsx).
+    // Never load user-provided plugins as they may execute code.
     parse(code, {
       sourceType: 'module',
-      plugins: ['typescript']
+      plugins: ['typescript'] // Safe built-in plugin
     });
     return true;
   } catch (error) {
