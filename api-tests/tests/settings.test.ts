@@ -8,7 +8,8 @@
  */
 
 import { describe, it, expect, beforeAll, afterEach, afterAll } from 'vitest';
-import { ServerHarness } from '../harness/server-harness.js';
+import { ServerHarness } from '../harness/index.js';
+import { HTTP_STATUS, TIMEOUTS, waitFor } from '../harness/index.js';
 
 const harness = new ServerHarness();
 
@@ -28,7 +29,7 @@ describe('Settings', () => {
       '/api/settings',
     );
 
-    expect(status).toBe(200);
+    expect(status).toBe(HTTP_STATUS.OK);
     expect(body).toHaveProperty('disabled_mcps');
     expect(body).toHaveProperty('disabled_tasks');
     expect(Array.isArray(body.disabled_mcps)).toBe(true);
@@ -43,7 +44,7 @@ describe('Settings', () => {
       { disabled_mcps: ['server-a', 'server-b'] },
     );
 
-    expect(status).toBe(200);
+    expect(status).toBe(HTTP_STATUS.OK);
     expect(body.disabled_mcps).toEqual(['server-a', 'server-b']);
   });
 
@@ -122,7 +123,7 @@ describe('Settings', () => {
     const api = harness.api();
     const { status, body } = await api.getJson<Record<string, unknown>>('/api/settings');
 
-    expect(status).toBe(200);
+    expect(status).toBe(HTTP_STATUS.OK);
     // Must always have these arrays, even if empty
     expect(Array.isArray(body.disabled_mcps)).toBe(true);
     expect(Array.isArray(body.disabled_tasks)).toBe(true);

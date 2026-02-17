@@ -17,6 +17,7 @@
 
 import { describe, it, expect, beforeAll, afterEach, afterAll } from 'vitest';
 import { ServerHarness } from '../harness/index.js';
+import { HTTP_STATUS, TIMEOUTS, waitFor } from '../harness/index.js';
 import { getDb } from '../../src/db/index.js';
 
 const harness = new ServerHarness();
@@ -74,7 +75,7 @@ describe('Dashboard Routes', () => {
         { snapshotType: 'custom' },
       );
 
-      expect(status).toBe(400);
+      expect(status).toBe(HTTP_STATUS.BAD_REQUEST);
       expect(body.error).toContain('title');
     });
 
@@ -85,7 +86,7 @@ describe('Dashboard Routes', () => {
         { title: 'My Dashboard' },
       );
 
-      expect(status).toBe(400);
+      expect(status).toBe(HTTP_STATUS.BAD_REQUEST);
       expect(body.error).toContain('snapshotType');
     });
 
@@ -96,7 +97,7 @@ describe('Dashboard Routes', () => {
         { title: 'Test', snapshotType: 'invalid_type' },
       );
 
-      expect(status).toBe(400);
+      expect(status).toBe(HTTP_STATUS.BAD_REQUEST);
       expect(body.error).toContain('snapshotType must be one of');
     });
 
@@ -158,7 +159,7 @@ describe('Dashboard Routes', () => {
         { title: 'Mission Report', snapshotType: 'mission_report' },
       );
 
-      expect(status).toBe(400);
+      expect(status).toBe(HTTP_STATUS.BAD_REQUEST);
       expect(body.error).toContain('conversationId');
     });
 
@@ -183,7 +184,7 @@ describe('Dashboard Routes', () => {
       const api = harness.api();
       const { status, body } = await api.getJson<unknown[]>('/api/dashboards/snapshots');
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(body).toEqual([]);
     });
 
@@ -194,7 +195,7 @@ describe('Dashboard Routes', () => {
       const api = harness.api();
       const { status, body } = await api.getJson<Array<{ id: string; title: string; renderedHtml?: string; metricsJson?: string }>>('/api/dashboards/snapshots');
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(body).toHaveLength(2);
       // Summaries should not include heavy fields
       for (const snap of body) {
@@ -210,7 +211,7 @@ describe('Dashboard Routes', () => {
       const api = harness.api();
       const { status, body } = await api.getJson<Array<{ id: string }>>('/api/dashboards/snapshots?snapshotType=system_health');
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(body).toHaveLength(1);
       expect(body[0].id).toBe('snap-health');
     });
@@ -222,7 +223,7 @@ describe('Dashboard Routes', () => {
       const api = harness.api();
       const { status, body } = await api.getJson<Array<{ id: string }>>('/api/dashboards/snapshots?missionId=mission-1');
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(body).toHaveLength(1);
       expect(body[0].id).toBe('snap-m1');
     });
@@ -234,7 +235,7 @@ describe('Dashboard Routes', () => {
       const api = harness.api();
       const { status, body } = await api.getJson<Array<{ id: string }>>('/api/dashboards/snapshots?status=rendered');
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(body).toHaveLength(1);
       expect(body[0].id).toBe('snap-rendered');
     });
@@ -247,7 +248,7 @@ describe('Dashboard Routes', () => {
       const api = harness.api();
       const { status, body } = await api.getJson<unknown[]>('/api/dashboards/snapshots?limit=2');
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(body).toHaveLength(2);
     });
   });
@@ -270,7 +271,7 @@ describe('Dashboard Routes', () => {
         renderedHtml: string;
       }>('/api/dashboards/snapshots/snap-detail');
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(body.id).toBe('snap-detail');
       expect(body.title).toBe('Detail Test');
       expect(body.metricsJson).toBe('{"key":"value"}');
@@ -281,7 +282,7 @@ describe('Dashboard Routes', () => {
       const api = harness.api();
       const { status, body } = await api.getJson<{ error: string }>('/api/dashboards/snapshots/nonexistent');
 
-      expect(status).toBe(404);
+      expect(status).toBe(HTTP_STATUS.NOT_FOUND);
       expect(body.error).toContain('not found');
     });
   });
@@ -294,14 +295,14 @@ describe('Dashboard Routes', () => {
         method: 'DELETE',
       });
 
-      expect(res.status).toBe(200);
+      expect(res.status).toBe(HTTP_STATUS.OK);
       const body = await res.json();
       expect(body.success).toBe(true);
 
       // Verify it's gone
       const api = harness.api();
       const { status } = await api.getJson('/api/dashboards/snapshots/snap-del');
-      expect(status).toBe(404);
+      expect(status).toBe(HTTP_STATUS.NOT_FOUND);
     });
 
     it('returns 404 when deleting unknown snapshot', async () => {
@@ -323,7 +324,7 @@ describe('Dashboard Routes', () => {
       const api = harness.api();
       const { status, body } = await api.getJson<Array<{ id: string; version: number }>>(`/api/dashboards/lineage/${lineageId}`);
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(body).toHaveLength(3);
       // Should be ordered by version DESC
       expect(body[0].version).toBe(3);
@@ -335,7 +336,7 @@ describe('Dashboard Routes', () => {
       const api = harness.api();
       const { status, body } = await api.getJson<unknown[]>('/api/dashboards/lineage/nonexistent');
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(body).toEqual([]);
     });
   });
@@ -347,7 +348,7 @@ describe('Dashboard Routes', () => {
         '/api/dashboards/snapshots/nonexistent/render',
       );
 
-      expect(status).toBe(404);
+      expect(status).toBe(HTTP_STATUS.NOT_FOUND);
       expect(body.error).toContain('not found');
     });
 
@@ -423,7 +424,7 @@ describe('Dashboard Routes', () => {
         {},
       );
 
-      expect(status).toBe(400);
+      expect(status).toBe(HTTP_STATUS.BAD_REQUEST);
       expect(body.error).toContain('specText');
     });
 
@@ -434,7 +435,7 @@ describe('Dashboard Routes', () => {
         { specText: 'New spec' },
       );
 
-      expect(status).toBe(404);
+      expect(status).toBe(HTTP_STATUS.NOT_FOUND);
       expect(body.error).toContain('not found');
     });
   });
@@ -443,7 +444,7 @@ describe('Dashboard Routes', () => {
     it('returns 404 for unknown snapshot', async () => {
       const api = harness.api();
       const { status } = await api.getJson('/api/dashboards/snapshots/nonexistent/html');
-      expect(status).toBe(404);
+      expect(status).toBe(HTTP_STATUS.NOT_FOUND);
     });
 
     it('returns 404 when snapshot has no rendered HTML', async () => {
@@ -451,7 +452,7 @@ describe('Dashboard Routes', () => {
 
       const api = harness.api();
       const { status, body } = await api.getJson<{ error: string }>('/api/dashboards/snapshots/snap-no-html/html');
-      expect(status).toBe(404);
+      expect(status).toBe(HTTP_STATUS.NOT_FOUND);
       expect(body.error).toContain('not been rendered');
     });
 
@@ -464,7 +465,7 @@ describe('Dashboard Routes', () => {
       });
 
       const res = await fetch(`${harness.baseUrl}/api/dashboards/snapshots/snap-html/html`);
-      expect(res.status).toBe(200);
+      expect(res.status).toBe(HTTP_STATUS.OK);
 
       const contentType = res.headers.get('content-type');
       expect(contentType).toContain('text/html');

@@ -21,6 +21,7 @@
 
 import { describe, it, expect, beforeAll, afterEach, afterAll } from 'vitest';
 import { ServerHarness } from '../harness/index.js';
+import { HTTP_STATUS, TIMEOUTS, waitFor } from '../harness/index.js';
 
 const harness = new ServerHarness();
 
@@ -45,7 +46,7 @@ describe('Server Core Routes', () => {
         commandTriggers: unknown[];
       }>('/api/startup');
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
 
       // Model capabilities should be present (may be undefined providers in test)
       expect(body).toHaveProperty('modelCapabilities');
@@ -95,7 +96,7 @@ describe('Server Core Routes', () => {
         reasoningEfforts: string[];
       }>('/api/model-capabilities');
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(body).toHaveProperty('supportsReasoningEffort');
       expect(body).toHaveProperty('reasoningEfforts');
     });
@@ -109,7 +110,7 @@ describe('Server Core Routes', () => {
         lastActivity: string;
       }>('/api/state');
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(body.status).toBe('idle');
     });
   });
@@ -119,7 +120,7 @@ describe('Server Core Routes', () => {
       const api = harness.api();
       const { status, body } = await api.getJson<Array<{ id: string; name: string; role: string }>>('/api/agents');
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(Array.isArray(body)).toBe(true);
       // At least the supervisor should be present
       expect(body.length).toBeGreaterThanOrEqual(1);
@@ -136,7 +137,7 @@ describe('Server Core Routes', () => {
         mcp: Record<string, unknown>;
       }>('/api/tools');
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(Array.isArray(body.builtin)).toBe(true);
       expect(Array.isArray(body.user)).toBe(true);
       expect(typeof body.mcp).toBe('object');
@@ -155,7 +156,7 @@ describe('Server Core Routes', () => {
       const api = harness.api();
       const { status, body } = await api.getJson<unknown[]>('/api/skills');
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(Array.isArray(body)).toBe(true);
     });
   });
@@ -165,7 +166,7 @@ describe('Server Core Routes', () => {
       const api = harness.api();
       const { status, body } = await api.getJson<unknown[]>('/api/mcps');
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(body).toEqual([]);
     });
   });
@@ -189,7 +190,7 @@ describe('Server Core Routes', () => {
       const api = harness.api();
       const { status, body } = await api.getJson<unknown[]>('/api/tasks');
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(body).toEqual([]);
     });
   });
@@ -211,7 +212,7 @@ describe('Server Core Routes', () => {
       const api = harness.api();
       const { status, body } = await api.getJson<{ count: number }>('/api/clients');
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(typeof body.count).toBe('number');
       // No WS connections in REST-only test
       expect(body.count).toBe(0);
@@ -250,7 +251,7 @@ describe('Server Core Routes', () => {
         {},
       );
 
-      expect(status).toBe(400);
+      expect(status).toBe(HTTP_STATUS.BAD_REQUEST);
       expect(body.error).toContain('Content is required');
     });
 
@@ -261,7 +262,7 @@ describe('Server Core Routes', () => {
         { content: 'Hello from API test' },
       );
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(body.success).toBe(true);
       expect(body.messageId).toBeTruthy();
     });

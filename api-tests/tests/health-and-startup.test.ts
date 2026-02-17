@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterEach, afterAll } from 'vitest';
-import { ServerHarness } from '../harness/server-harness.js';
+import { ServerHarness, HTTP_STATUS } from '../harness/index.js';
 
 const harness = new ServerHarness();
 
@@ -25,7 +25,7 @@ describe('Health & Startup', () => {
     const api = harness.api();
     const { status, body } = await api.getJson<{ status: string; timestamp: string }>('/health');
 
-    expect(status).toBe(200);
+    expect(status).toBe(HTTP_STATUS.OK);
     expect(body.status).toBe('ok');
     expect(body.timestamp).toBeTruthy();
   });
@@ -35,7 +35,7 @@ describe('Health & Startup', () => {
     const api = harness.api();
     const { status, body } = await api.getJson<Record<string, unknown>>('/api/startup');
 
-    expect(status).toBe(200);
+    expect(status).toBe(HTTP_STATUS.OK);
     // Core keys present
     expect(body).toHaveProperty('modelCapabilities');
     expect(body).toHaveProperty('conversations');
@@ -57,7 +57,7 @@ describe('Health & Startup', () => {
     const api = harness.api();
     const { status, body } = await api.getJson<Record<string, unknown>>('/api/model-capabilities');
 
-    expect(status).toBe(200);
+    expect(status).toBe(HTTP_STATUS.OK);
     // Without a configured provider, capability flags are still present
     expect(body).toHaveProperty('supportsReasoningEffort');
     expect(body).toHaveProperty('reasoningEfforts');
@@ -89,13 +89,13 @@ describe('Health & Startup', () => {
       { title: 'JSON Parse Test' },
     );
 
-    expect(status).toBe(200);
+    expect(status).toBe(HTTP_STATUS.OK);
     expect(body.title).toBe('JSON Parse Test');
   });
 
   // API-008
   it('unknown routes return 404', async () => {
     const res = await fetch(`${harness.baseUrl}/api/does-not-exist`);
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(HTTP_STATUS.NOT_FOUND);
   });
 });

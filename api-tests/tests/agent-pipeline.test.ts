@@ -15,6 +15,7 @@
 
 import { describe, it, expect, beforeAll, afterEach, afterAll } from 'vitest';
 import { ServerHarness } from '../harness/index.js';
+import { HTTP_STATUS, TIMEOUTS, waitFor } from '../harness/index.js';
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -34,7 +35,7 @@ describe('Agent Pipeline', () => {
 
       try {
         // Wait for connected event
-        await ws.waitForEvent('connected', 3_000);
+        await ws.waitForEvent('connected', TIMEOUTS.WS_CONNECT);
 
         // Send a user message
         ws.send({
@@ -44,7 +45,7 @@ describe('Agent Pipeline', () => {
 
         // Wait for stream_end — this means the supervisor called the LLM
         // and streamed the full response back
-        const endEvent = await ws.waitForEvent('stream_end', 15_000);
+        const endEvent = await ws.waitForEvent('stream_end', TIMEOUTS.LLM_STREAM);
         expect(endEvent).toBeTruthy();
 
         // Verify we got stream chunks
@@ -60,20 +61,20 @@ describe('Agent Pipeline', () => {
       await ws.connect();
 
       try {
-        await ws.waitForEvent('connected', 3_000);
+        await ws.waitForEvent('connected', TIMEOUTS.WS_CONNECT);
 
         ws.send({
           type: 'message',
           content: 'Tell me about TypeScript',
         });
 
-        await ws.waitForEvent('stream_end', 15_000);
+        await ws.waitForEvent('stream_end', TIMEOUTS.LLM_STREAM);
       } finally {
         await ws.close();
       }
 
       // Give a moment for trace to be finalized
-      await new Promise(resolve => setTimeout(resolve, 200));
+      await new Promise(resolve => waitFor(TIMEOUTS.SHORT).then(resolve));
 
       // Verify a trace was created
       const api = harness.api();
@@ -84,7 +85,7 @@ describe('Agent Pipeline', () => {
         llmCallCount: number;
       }>>('/api/traces/traces');
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(body.length).toBeGreaterThanOrEqual(1);
 
       const trace = body[0];
@@ -97,19 +98,19 @@ describe('Agent Pipeline', () => {
       await ws.connect();
 
       try {
-        await ws.waitForEvent('connected', 3_000);
+        await ws.waitForEvent('connected', TIMEOUTS.WS_CONNECT);
 
         ws.send({
           type: 'message',
           content: 'Hello, world!',
         });
 
-        await ws.waitForEvent('stream_end', 15_000);
+        await ws.waitForEvent('stream_end', TIMEOUTS.LLM_STREAM);
       } finally {
         await ws.close();
       }
 
-      await new Promise(resolve => setTimeout(resolve, 200));
+      await new Promise(resolve => waitFor(TIMEOUTS.SHORT).then(resolve));
 
       // Check LLM calls were recorded
       const api = harness.api();
@@ -122,7 +123,7 @@ describe('Agent Pipeline', () => {
         outputTokens: number;
       }>>('/api/traces/llm-calls');
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(body.length).toBeGreaterThanOrEqual(1);
 
       const call = body[0];
@@ -137,19 +138,19 @@ describe('Agent Pipeline', () => {
       await ws.connect();
 
       try {
-        await ws.waitForEvent('connected', 3_000);
+        await ws.waitForEvent('connected', TIMEOUTS.WS_CONNECT);
 
         ws.send({
           type: 'message',
           content: 'Save this to history',
         });
 
-        await ws.waitForEvent('stream_end', 15_000);
+        await ws.waitForEvent('stream_end', TIMEOUTS.LLM_STREAM);
       } finally {
         await ws.close();
       }
 
-      await new Promise(resolve => setTimeout(resolve, 500));
+      await new Promise(resolve => waitFor(TIMEOUTS.STANDARD).then(resolve));
 
       // Find all conversations — the supervisor creates or reuses one
       const api = harness.api();
@@ -189,7 +190,7 @@ describe('Agent Pipeline', () => {
         messageId: string;
       }>('/api/messages', { content: 'Quick question via REST' });
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(body.success).toBe(true);
       expect(body.messageId).toBeTruthy();
     });
@@ -203,7 +204,7 @@ describe('Agent Pipeline', () => {
         lastActivity: string;
       }>('/api/state');
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(body.status).toBe('idle');
     });
 
@@ -215,7 +216,7 @@ describe('Agent Pipeline', () => {
         role: string;
       }>>('/api/agents');
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(body.length).toBeGreaterThanOrEqual(1);
       expect(body[0].role).toBe('supervisor');
       // Real supervisor should have its configured identity
@@ -245,19 +246,19 @@ describe('Agent Pipeline', () => {
       await ws.connect();
 
       try {
-        await ws.waitForEvent('connected', 3_000);
+        await ws.waitForEvent('connected', TIMEOUTS.WS_CONNECT);
 
         ws.send({
           type: 'message',
           content: 'Trace test message',
         });
 
-        await ws.waitForEvent('stream_end', 15_000);
+        await ws.waitForEvent('stream_end', TIMEOUTS.LLM_STREAM);
       } finally {
         await ws.close();
       }
 
-      await new Promise(resolve => setTimeout(resolve, 200));
+      await new Promise(resolve => waitFor(TIMEOUTS.SHORT).then(resolve));
 
       // Get the trace
       const api = harness.api();
@@ -272,7 +273,7 @@ describe('Agent Pipeline', () => {
         toolCalls: unknown[];
       }>(`/api/traces/traces/${traces[0].id}`);
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
 
       // Trace should be completed
       expect(body.trace.status).toBe('completed');

@@ -11,7 +11,8 @@
  */
 
 import { describe, it, expect, beforeAll, afterEach, afterAll } from 'vitest';
-import { ServerHarness } from '../harness/server-harness.js';
+import { ServerHarness } from '../harness/index.js';
+import { HTTP_STATUS, TIMEOUTS, waitFor } from '../harness/index.js';
 
 const harness = new ServerHarness();
 
@@ -30,7 +31,7 @@ describe('WebSocket Communication', () => {
     await ws.connect();
 
     // The server sends a 'connected' event on connection
-    const event = await ws.waitForEvent('connected', 3000);
+    const event = await ws.waitForEvent('connected', TIMEOUTS.WS_CONNECT);
     expect(event.type).toBe('connected');
 
     await ws.close();
@@ -41,7 +42,7 @@ describe('WebSocket Communication', () => {
     const ws = harness.ws();
     await ws.connect();
 
-    const event = await ws.waitForEvent('connected', 3000);
+    const event = await ws.waitForEvent('connected', TIMEOUTS.WS_CONNECT);
     expect(event.type).toBe('connected');
     // The connected event should include a clientId
     expect(event.clientId).toBeTruthy();
@@ -54,7 +55,7 @@ describe('WebSocket Communication', () => {
     const api = harness.api();
     const ws = harness.ws();
     await ws.connect();
-    await ws.waitForEvent('connected', 3000);
+    await ws.waitForEvent('connected', TIMEOUTS.WS_CONNECT);
 
     // Create a conversation to send the message to
     const { body: conv } = await api.postJson<{ id: string }>(
@@ -72,16 +73,16 @@ describe('WebSocket Communication', () => {
     });
 
     // The real supervisor streams back the LLM response
-    const start = await ws.waitForEvent('stream_start', 15_000);
+    const start = await ws.waitForEvent('stream_start', TIMEOUTS.LLM_STREAM);
     expect(start.type).toBe('stream_start');
 
-    const chunk = await ws.waitForEvent('stream_chunk', 15_000);
+    const chunk = await ws.waitForEvent('stream_chunk', TIMEOUTS.LLM_STREAM);
     expect(chunk.type).toBe('stream_chunk');
     // Real supervisor streams actual content from the LLM simulator
     expect(typeof chunk.chunk).toBe('string');
     expect((chunk.chunk as string).length).toBeGreaterThan(0);
 
-    const end = await ws.waitForEvent('stream_end', 15_000);
+    const end = await ws.waitForEvent('stream_end', TIMEOUTS.LLM_STREAM);
     expect(end.type).toBe('stream_end');
 
     await ws.close();
@@ -95,8 +96,8 @@ describe('WebSocket Communication', () => {
 
     await ws1.connect();
     await ws2.connect();
-    await ws1.waitForEvent('connected', 3000);
-    await ws2.waitForEvent('connected', 3000);
+    await ws1.waitForEvent('connected', TIMEOUTS.WS_CONNECT);
+    await ws2.waitForEvent('connected', TIMEOUTS.WS_CONNECT);
 
     // Create a conversation
     const { body: conv } = await api.postJson<{ id: string }>(
@@ -125,13 +126,13 @@ describe('WebSocket Communication', () => {
   it('handles client disconnect without errors', async () => {
     const ws = harness.ws();
     await ws.connect();
-    await ws.waitForEvent('connected', 3000);
+    await ws.waitForEvent('connected', TIMEOUTS.WS_CONNECT);
     await ws.close();
 
     // Server should still be healthy after client disconnects
     const api = harness.api();
     const { status } = await api.getJson('/health');
-    expect(status).toBe(200);
+    expect(status).toBe(HTTP_STATUS.OK);
   });
 
   // ---------------------------------------------------------------------------
@@ -141,7 +142,7 @@ describe('WebSocket Communication', () => {
   it('get-active-stream returns active:false when no stream is running', async () => {
     const ws = harness.ws();
     await ws.connect();
-    await ws.waitForEvent('connected', 3000);
+    await ws.waitForEvent('connected', TIMEOUTS.WS_CONNECT);
 
     // Ask for active stream on a conversation with no activity
     ws.send({
@@ -161,7 +162,7 @@ describe('WebSocket Communication', () => {
     const api = harness.api();
     const ws = harness.ws();
     await ws.connect();
-    await ws.waitForEvent('connected', 3000);
+    await ws.waitForEvent('connected', TIMEOUTS.WS_CONNECT);
 
     // Create a conversation
     const { body: conv } = await api.postJson<{ id: string }>(
@@ -202,8 +203,8 @@ describe('WebSocket Communication', () => {
     const ws2 = harness.ws();
     await ws1.connect();
     await ws2.connect();
-    await ws1.waitForEvent('connected', 3000);
-    await ws2.waitForEvent('connected', 3000);
+    await ws1.waitForEvent('connected', TIMEOUTS.WS_CONNECT);
+    await ws2.waitForEvent('connected', TIMEOUTS.WS_CONNECT);
 
     const { body: during } = await api.getJson<{ count: number }>('/api/clients');
     expect(during.count).toBe(2);
@@ -212,7 +213,7 @@ describe('WebSocket Communication', () => {
     await ws1.close();
 
     // Allow the server a moment to process the disconnect
-    await new Promise(resolve => setTimeout(resolve, 100));
+    await new Promise(resolve => setTimeout(resolve, TIMEOUTS.BRIEF));
 
     const { body: after } = await api.getJson<{ count: number }>('/api/clients');
     expect(after.count).toBe(1);
@@ -226,8 +227,8 @@ describe('WebSocket Communication', () => {
     await ws1.connect();
     await ws2.connect();
 
-    const event1 = await ws1.waitForEvent('connected', 3000);
-    const event2 = await ws2.waitForEvent('connected', 3000);
+    const event1 = await ws1.waitForEvent('connected', TIMEOUTS.WS_CONNECT);
+    const event2 = await ws2.waitForEvent('connected', TIMEOUTS.WS_CONNECT);
 
     expect(event1.clientId).toBeTruthy();
     expect(event2.clientId).toBeTruthy();
@@ -244,16 +245,16 @@ describe('WebSocket Communication', () => {
   it('message without content is ignored (no crash)', async () => {
     const ws = harness.ws();
     await ws.connect();
-    await ws.waitForEvent('connected', 3000);
+    await ws.waitForEvent('connected', TIMEOUTS.WS_CONNECT);
 
     // Send message with no content — should be silently ignored
     ws.send({ type: 'message' });
 
     // Server should still be healthy
-    await new Promise(resolve => setTimeout(resolve, 200));
+    await new Promise(resolve => setTimeout(resolve, TIMEOUTS.SHORT));
     const api = harness.api();
     const { status } = await api.getJson('/health');
-    expect(status).toBe(200);
+    expect(status).toBe(HTTP_STATUS.OK);
 
     await ws.close();
   });
@@ -261,16 +262,16 @@ describe('WebSocket Communication', () => {
   it('unknown message type is silently ignored', async () => {
     const ws = harness.ws();
     await ws.connect();
-    await ws.waitForEvent('connected', 3000);
+    await ws.waitForEvent('connected', TIMEOUTS.WS_CONNECT);
 
     // Send unknown message type
     ws.send({ type: 'totally-unknown-type', data: 'test' });
 
     // Server should still be healthy
-    await new Promise(resolve => setTimeout(resolve, 200));
+    await new Promise(resolve => setTimeout(resolve, TIMEOUTS.SHORT));
     const api = harness.api();
     const { status } = await api.getJson('/health');
-    expect(status).toBe(200);
+    expect(status).toBe(HTTP_STATUS.OK);
 
     await ws.close();
   });

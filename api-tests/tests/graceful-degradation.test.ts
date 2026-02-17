@@ -15,7 +15,8 @@
  */
 
 import { describe, it, expect, beforeAll, afterEach, afterAll } from 'vitest';
-import { ServerHarness } from '../harness/server-harness.js';
+import { ServerHarness } from '../harness/index.js';
+import { HTTP_STATUS, TIMEOUTS, waitFor } from '../harness/index.js';
 
 const harness = new ServerHarness();
 
@@ -28,7 +29,7 @@ describe('Graceful Degradation (empty data directories)', () => {
     const api = harness.api();
     const { status, body } = await api.getJson<unknown[]>('/api/skills');
 
-    expect(status).toBe(200);
+    expect(status).toBe(HTTP_STATUS.OK);
     expect(Array.isArray(body)).toBe(true);
   });
 
@@ -40,7 +41,7 @@ describe('Graceful Degradation (empty data directories)', () => {
       mcp: Record<string, unknown>;
     }>('/api/tools');
 
-    expect(status).toBe(200);
+    expect(status).toBe(HTTP_STATUS.OK);
     // Real native tools are registered
     expect(body.builtin.length).toBeGreaterThan(0);
     // No user tools in empty temp dir
@@ -53,7 +54,7 @@ describe('Graceful Degradation (empty data directories)', () => {
     const api = harness.api();
     const { status, body } = await api.getJson<unknown[]>('/api/tasks');
 
-    expect(status).toBe(200);
+    expect(status).toBe(HTTP_STATUS.OK);
     expect(body).toEqual([]);
   });
 
@@ -64,7 +65,7 @@ describe('Graceful Degradation (empty data directories)', () => {
       { enabled: false },
     );
 
-    expect(status).toBe(404);
+    expect(status).toBe(HTTP_STATUS.NOT_FOUND);
   });
 
   it('PATCH /api/tasks/:id validates enabled is boolean', async () => {
@@ -75,7 +76,7 @@ describe('Graceful Degradation (empty data directories)', () => {
     );
 
     // enabled validation returns 400
-    expect(status).toBe(400);
+    expect(status).toBe(HTTP_STATUS.BAD_REQUEST);
   });
 
   describe('startup endpoint aggregation', () => {
@@ -85,7 +86,7 @@ describe('Graceful Degradation (empty data directories)', () => {
         '/api/startup',
       );
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
 
       // All top-level keys should be present
       expect(body).toHaveProperty('modelCapabilities');

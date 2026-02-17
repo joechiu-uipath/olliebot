@@ -14,6 +14,7 @@
 
 import { describe, it, expect, beforeAll, afterEach, afterAll } from 'vitest';
 import { ServerHarness, seedMission, seedPillar, seedMetric, seedTodo } from '../harness/index.js';
+import { HTTP_STATUS, TIMEOUTS, waitFor } from '../harness/index.js';
 import { getDb } from '../../src/db/index.js';
 
 const harness = new ServerHarness();
@@ -28,7 +29,7 @@ describe('Mission Routes', () => {
       const api = harness.api();
       const { status, body } = await api.getJson<unknown[]>('/api/missions');
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(body).toEqual([]);
     });
 
@@ -42,7 +43,7 @@ describe('Mission Routes', () => {
         '/api/missions',
       );
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(body.length).toBe(1);
       expect(body[0].slug).toBe('test-mission');
       expect(body[0].name).toBe('Test Mission');
@@ -65,7 +66,7 @@ describe('Mission Routes', () => {
         }>;
       }>('/api/missions/detail-test');
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(body.slug).toBe('detail-test');
       expect(body.pillars.length).toBe(1);
       expect(body.pillars[0].slug).toBe('p1');
@@ -75,7 +76,7 @@ describe('Mission Routes', () => {
     it('GET /api/missions/:slug returns 404 for unknown slug', async () => {
       const api = harness.api();
       const { status } = await api.getJson('/api/missions/nonexistent');
-      expect(status).toBe(404);
+      expect(status).toBe(HTTP_STATUS.NOT_FOUND);
     });
 
     it('PUT /api/missions/:slug updates mission fields', async () => {
@@ -89,7 +90,7 @@ describe('Mission Routes', () => {
       });
       const updated = await res.json();
 
-      expect(res.status).toBe(200);
+      expect(res.status).toBe(HTTP_STATUS.OK);
       expect(updated.name).toBe('Updated Name');
       expect(updated.description).toBe('New description');
     });
@@ -100,7 +101,7 @@ describe('Mission Routes', () => {
       const api = harness.api();
       const res = await api.postJson<{ status: string }>('/api/missions/pausable/pause');
 
-      expect(res.status).toBe(200);
+      expect(res.status).toBe(HTTP_STATUS.OK);
       expect(res.body.status).toBe('paused');
     });
 
@@ -110,7 +111,7 @@ describe('Mission Routes', () => {
       const api = harness.api();
       const res = await api.postJson<{ status: string }>('/api/missions/resumable/resume');
 
-      expect(res.status).toBe(200);
+      expect(res.status).toBe(HTTP_STATUS.OK);
       expect(res.body.status).toBe('active');
     });
 
@@ -122,7 +123,7 @@ describe('Mission Routes', () => {
         '/api/missions/cyclable/cycle',
       );
 
-      expect(res.status).toBe(200);
+      expect(res.status).toBe(HTTP_STATUS.OK);
       expect(res.body.success).toBe(true);
       expect(res.body.message).toBe('Cycle triggered');
     });
@@ -139,7 +140,7 @@ describe('Mission Routes', () => {
         '/api/missions/with-pillars/pillars',
       );
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(body.length).toBe(2);
     });
 
@@ -156,7 +157,7 @@ describe('Mission Routes', () => {
         todosByStatus: Record<string, number>;
       }>('/api/missions/pillar-detail/pillars/pd1');
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(body.slug).toBe('pd1');
       expect(body.metrics.length).toBe(1);
       expect(body.metrics[0].current).toBe(150);
@@ -168,7 +169,7 @@ describe('Mission Routes', () => {
 
       const api = harness.api();
       const { status } = await api.getJson('/api/missions/exists/pillars/ghost');
-      expect(status).toBe(404);
+      expect(status).toBe(HTTP_STATUS.NOT_FOUND);
     });
 
     it('GET pillar metrics returns metrics with history', async () => {
@@ -192,7 +193,7 @@ describe('Mission Routes', () => {
         history: Array<{ value: number }>;
       }>>('/api/missions/met-test/pillars/mp/metrics');
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(body.length).toBe(1);
       expect(body[0].name).toBe('Uptime');
       expect(body[0].history.length).toBe(3);
@@ -215,7 +216,7 @@ describe('Mission Routes', () => {
         '/api/missions/strat-test/pillars/sp/strategies',
       );
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(body.length).toBe(1);
       expect(body[0].description).toBe('Optimize caching');
       expect(body[0].status).toBe('active');
@@ -234,7 +235,7 @@ describe('Mission Routes', () => {
         '/api/missions/todo-list/pillars/tp/todos',
       );
 
-      expect(status).toBe(200);
+      expect(status).toBe(HTTP_STATUS.OK);
       expect(body.length).toBe(2);
     });
 
@@ -283,7 +284,7 @@ describe('Mission Routes', () => {
         },
       );
 
-      expect(res.status).toBe(200);
+      expect(res.status).toBe(HTTP_STATUS.OK);
       const body = await res.json();
       expect(body.status).toBe('in_progress');
     });
@@ -311,7 +312,7 @@ describe('Mission Routes', () => {
 
       const api = harness.api();
       const { status } = await api.getJson('/api/missions/no-dash/dashboard');
-      expect(status).toBe(404);
+      expect(status).toBe(HTTP_STATUS.NOT_FOUND);
     });
 
     it('GET pillar dashboard returns 404 when no dashboard exists', async () => {
@@ -320,7 +321,7 @@ describe('Mission Routes', () => {
 
       const api = harness.api();
       const { status } = await api.getJson('/api/missions/no-pdash/pillars/nodp/dashboard');
-      expect(status).toBe(404);
+      expect(status).toBe(HTTP_STATUS.NOT_FOUND);
     });
   });
 });

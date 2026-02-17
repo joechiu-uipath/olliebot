@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect, beforeAll, afterEach, afterAll } from 'vitest';
-import { ServerHarness } from '../harness/server-harness.js';
+import { ServerHarness } from '../harness/index.js';
 
 const harness = new ServerHarness();
 

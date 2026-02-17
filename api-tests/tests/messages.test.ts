@@ -10,7 +10,16 @@
  */
 
 import { describe, it, expect, beforeAll, afterEach, afterAll } from 'vitest';
-import { ServerHarness } from '../harness/server-harness.js';
+import {
+  ServerHarness,
+  HTTP_STATUS,
+  TIMEOUTS,
+  LIMITS,
+  TEST_SIZES,
+  seedConversationWithMessages,
+  seedMessage,
+  waitFor,
+} from '../harness/index.js';
 import { getDb } from '../../src/db/index.js';
 
 const harness = new ServerHarness();
@@ -18,30 +27,6 @@ const harness = new ServerHarness();
 beforeAll(() => harness.start());
 afterEach(() => harness.reset());
 afterAll(() => harness.stop());
-
-/** Seed a conversation + N messages directly in the DB. */
-function seedMessages(conversationId: string, count: number) {
-  const db = getDb();
-  db.conversations.create({
-    id: conversationId,
-    title: `Seeded ${conversationId}`,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-    deletedAt: null,
-  });
-
-  for (let i = 0; i < count; i++) {
-    const ts = new Date(Date.now() + i * 1000).toISOString();
-    db.messages.create({
-      id: `msg-${conversationId}-${i}`,
-      conversationId,
-      role: i % 2 === 0 ? 'user' : 'assistant',
-      content: `Message ${i}`,
-      metadata: {},
-      createdAt: ts,
-    });
-  }
-}
 
 describe('Messages', () => {
   // ---------------------------------------------------------------------------
@@ -63,10 +48,10 @@ describe('Messages', () => {
       conversationId: conv.id,
     });
 
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(HTTP_STATUS.OK);
 
     // Wait for the real supervisor to process the message
-    await new Promise(resolve => setTimeout(resolve, 500));
+    await new Promise(resolve => waitFor(TIMEOUTS.STANDARD).then(resolve));
 
     // Verify the message was persisted in the database
     const { body } = await api.getJson<{
@@ -79,18 +64,18 @@ describe('Messages', () => {
   // DB-001 + DB-002 — Messages persisted via DB, queryable via API
   it('GET /api/conversations/:id/messages returns seeded messages', async () => {
     const convId = 'conv-db-test';
-    seedMessages(convId, 5);
+    seedConversationWithMessages(convId, TEST_SIZES.SMALL);
 
     const api = harness.api();
     const { status, body } = await api.getJson<{ items: Array<{ id: string; content: string }>; pagination: Record<string, unknown> }>(
       `/api/conversations/${convId}/messages`,
     );
 
-    expect(status).toBe(200);
-    expect(body.items.length).toBe(5);
+    expect(status).toBe(HTTP_STATUS.OK);
+    expect(body.items.length).toBe(TEST_SIZES.SMALL);
     // Returned in chronological order (oldest first)
     expect(body.items[0].content).toBe('Message 0');
-    expect(body.items[4].content).toBe('Message 4');
+    expect(body.items[TEST_SIZES.SMALL - 1].content).toBe(`Message ${TEST_SIZES.SMALL - 1}`);
   });
 
   // Edge case: messages for non-existent conversation
@@ -100,7 +85,7 @@ describe('Messages', () => {
       '/api/conversations/nonexistent/messages',
     );
 
-    expect(status).toBe(200);
+    expect(status).toBe(HTTP_STATUS.OK);
     expect(body.items.length).toBe(0);
   });
 
@@ -111,7 +96,7 @@ describe('Messages', () => {
   // CHAT-011 + API-007
   it('pagination: limit restricts returned count', async () => {
     const convId = 'conv-pagination';
-    seedMessages(convId, 10);
+    seedConversationWithMessages(convId, 10);
 
     const api = harness.api();
     const { body } = await api.getJson<{ items: unknown[]; pagination: { hasOlder: boolean; hasNewer: boolean } }>(
@@ -126,7 +111,7 @@ describe('Messages', () => {
 
   it('pagination: before cursor fetches older messages', async () => {
     const convId = 'conv-cursor';
-    seedMessages(convId, 10);
+    seedConversationWithMessages(convId, 10);
 
     const api = harness.api();
 
@@ -134,7 +119,7 @@ describe('Messages', () => {
     const { body: page1 } = await api.getJson<{
       items: Array<{ content: string }>;
       pagination: { oldestCursor: string; hasOlder: boolean };
-    }>(`/api/conversations/${convId}/messages?limit=5`);
+    }>(`/api/conversations/${convId}/messages?limit=${LIMITS.DEFAULT_PAGE_SIZE}`);
 
     expect(page1.items.length).toBe(5);
     expect(page1.pagination.hasOlder).toBe(true);
@@ -144,7 +129,7 @@ describe('Messages', () => {
     const { body: page2 } = await api.getJson<{
       items: Array<{ content: string }>;
       pagination: { hasOlder: boolean };
-    }>(`/api/conversations/${convId}/messages?limit=5&before=${cursor}`);
+    }>(`/api/conversations/${convId}/messages?limit=${LIMITS.DEFAULT_PAGE_SIZE}&before=${cursor}`);
 
     expect(page2.items.length).toBe(5);
     // These should be the older messages (Message 0–4)
@@ -153,7 +138,7 @@ describe('Messages', () => {
 
   it('pagination: includeTotal returns total count', async () => {
     const convId = 'conv-total';
-    seedMessages(convId, 7);
+    seedConversationWithMessages(convId, 7);
 
     const api = harness.api();
     const { body } = await api.getJson<{ pagination: { totalCount: number } }>(
@@ -165,7 +150,7 @@ describe('Messages', () => {
 
   it('after cursor fetches newer messages', async () => {
     const convId = 'conv-after-cursor';
-    seedMessages(convId, 10);
+    seedConversationWithMessages(convId, 10);
 
     const api = harness.api();
 
@@ -173,7 +158,7 @@ describe('Messages', () => {
     const { body: page1 } = await api.getJson<{
       items: Array<{ content: string }>;
       pagination: { newestCursor: string; oldestCursor: string; hasNewer: boolean };
-    }>(`/api/conversations/${convId}/messages?limit=5`);
+    }>(`/api/conversations/${convId}/messages?limit=${LIMITS.DEFAULT_PAGE_SIZE}`);
 
     expect(page1.items.length).toBe(5);
 
@@ -181,7 +166,7 @@ describe('Messages', () => {
     const { body: olderPage } = await api.getJson<{
       items: Array<{ content: string }>;
       pagination: { newestCursor: string; hasNewer: boolean };
-    }>(`/api/conversations/${convId}/messages?limit=5&before=${page1.pagination.oldestCursor}`);
+    }>(`/api/conversations/${convId}/messages?limit=${LIMITS.DEFAULT_PAGE_SIZE}&before=${page1.pagination.oldestCursor}`);
 
     expect(olderPage.items.length).toBe(5);
     expect(olderPage.items[0].content).toBe('Message 0');
@@ -191,7 +176,7 @@ describe('Messages', () => {
     const { body: forwardPage } = await api.getJson<{
       items: Array<{ content: string }>;
       pagination: { hasOlder: boolean };
-    }>(`/api/conversations/${convId}/messages?limit=5&after=${olderPage.pagination.newestCursor}`);
+    }>(`/api/conversations/${convId}/messages?limit=${LIMITS.DEFAULT_PAGE_SIZE}&after=${olderPage.pagination.newestCursor}`);
 
     expect(forwardPage.items.length).toBe(5);
     expect(forwardPage.items[0].content).toBe('Message 5');
@@ -203,13 +188,13 @@ describe('Messages', () => {
 
   it('limit=1 returns exactly one message', async () => {
     const convId = 'conv-limit-1';
-    seedMessages(convId, 5);
+    seedConversationWithMessages(convId, TEST_SIZES.SMALL);
 
     const api = harness.api();
     const { body } = await api.getJson<{
       items: Array<{ content: string }>;
       pagination: { hasOlder: boolean };
-    }>(`/api/conversations/${convId}/messages?limit=1`);
+    }>(`/api/conversations/${convId}/messages?limit=${LIMITS.MESSAGE_PAGE_MIN}`);
 
     expect(body.items.length).toBe(1);
     // Should be the newest message
@@ -236,7 +221,7 @@ describe('Messages', () => {
 
   it('single message has same oldest and newest cursor', async () => {
     const convId = 'conv-single-msg';
-    seedMessages(convId, 1);
+    seedConversationWithMessages(convId, 1);
 
     const api = harness.api();
     const { body } = await api.getJson<{
@@ -252,14 +237,14 @@ describe('Messages', () => {
 
   it('includeTotal works with cursor-based pagination', async () => {
     const convId = 'conv-total-cursor';
-    seedMessages(convId, 15);
+    seedConversationWithMessages(convId, 15);
 
     const api = harness.api();
     // Get first page
     const { body: page1 } = await api.getJson<{
       items: unknown[];
       pagination: { oldestCursor: string; totalCount: number };
-    }>(`/api/conversations/${convId}/messages?limit=5&includeTotal=true`);
+    }>(`/api/conversations/${convId}/messages?limit=${LIMITS.DEFAULT_PAGE_SIZE}&includeTotal=true`);
 
     expect(page1.pagination.totalCount).toBe(15);
 
@@ -267,14 +252,14 @@ describe('Messages', () => {
     const { body: page2 } = await api.getJson<{
       items: unknown[];
       pagination: { totalCount: number };
-    }>(`/api/conversations/${convId}/messages?limit=5&before=${page1.pagination.oldestCursor}&includeTotal=true`);
+    }>(`/api/conversations/${convId}/messages?limit=${LIMITS.DEFAULT_PAGE_SIZE}&before=${page1.pagination.oldestCursor}&includeTotal=true`);
 
     expect(page2.pagination.totalCount).toBe(15);
   });
 
   it('limit is clamped between 1 and 100', async () => {
     const convId = 'conv-limit-clamp';
-    seedMessages(convId, 5);
+    seedConversationWithMessages(convId, TEST_SIZES.SMALL);
 
     const api = harness.api();
 
@@ -282,13 +267,13 @@ describe('Messages', () => {
     const { body: min } = await api.getJson<{ items: unknown[] }>(
       `/api/conversations/${convId}/messages?limit=0`,
     );
-    expect(min.items.length).toBe(1);
+    expect(min.items.length).toBe(LIMITS.MESSAGE_PAGE_MIN);
 
     // limit=999 should be clamped to 100 (but we only have 5 msgs)
     const { body: max } = await api.getJson<{ items: unknown[] }>(
-      `/api/conversations/${convId}/messages?limit=999`,
+      `/api/conversations/${convId}/messages?limit=${LIMITS.LARGE_PAGE_SIZE}`,
     );
-    expect(max.items.length).toBe(5);
+    expect(max.items.length).toBe(TEST_SIZES.SMALL);
   });
 
   // ---------------------------------------------------------------------------
@@ -405,7 +390,7 @@ describe('Messages', () => {
       '/api/messages',
     );
 
-    expect(status).toBe(200);
+    expect(status).toBe(HTTP_STATUS.OK);
     expect(Array.isArray(body)).toBe(true);
     // Should find the message from the most recent conversation
     const found = body.find(m => m.content === 'Legacy message');
@@ -417,7 +402,7 @@ describe('Messages', () => {
     const api = harness.api();
     const { status, body } = await api.getJson<unknown[]>('/api/messages');
 
-    expect(status).toBe(200);
+    expect(status).toBe(HTTP_STATUS.OK);
     expect(Array.isArray(body)).toBe(true);
   });
 });
