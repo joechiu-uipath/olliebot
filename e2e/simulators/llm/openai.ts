@@ -161,6 +161,13 @@ export class OpenAISimulator extends BaseSimulator {
       choices: [{ index: 0, delta: {}, finish_reason: fixture.finishReason || 'stop' }],
     })}\n`);
 
+    // usage chunk (sent when stream_options.include_usage is true)
+    events.push(`data: ${JSON.stringify({
+      id, object: 'chat.completion.chunk', model: 'gpt-4.1',
+      choices: [],
+      usage: fixture.usage || { prompt_tokens: 50, completion_tokens: 25, total_tokens: 75 },
+    })}\n`);
+
     events.push('data: [DONE]\n');
 
     return {

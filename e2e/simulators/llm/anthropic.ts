@@ -84,7 +84,7 @@ export class AnthropicSimulator extends BaseSimulator {
     const contentBlocks: Array<Record<string, unknown>> = [];
 
     if (fixture.thinking) {
-      contentBlocks.push({ type: 'thinking', thinking: fixture.thinking });
+      contentBlocks.push({ type: 'thinking', text: fixture.thinking });
     }
 
     if (fixture.content) {
@@ -140,12 +140,12 @@ export class AnthropicSimulator extends BaseSimulator {
       events.push(this.sseEvent('content_block_start', {
         type: 'content_block_start',
         index: blockIndex,
-        content_block: { type: 'thinking', thinking: '' },
+        content_block: { type: 'thinking', text: '' },
       }));
       events.push(this.sseEvent('content_block_delta', {
         type: 'content_block_delta',
         index: blockIndex,
-        delta: { type: 'thinking_delta', thinking: fixture.thinking },
+        delta: { type: 'thinking_delta', text: fixture.thinking },
       }));
       events.push(this.sseEvent('content_block_stop', {
         type: 'content_block_stop',

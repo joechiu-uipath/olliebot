@@ -30,6 +30,8 @@ export class TavilySimulator extends BaseSimulator {
     },
   ];
 
+  private answer: string | null = null;
+
   constructor() {
     super();
     this.route('POST', '/search', (req) => this.handleSearch(req));
@@ -39,13 +41,28 @@ export class TavilySimulator extends BaseSimulator {
     this.results = results;
   }
 
+  /**
+   * Set the AI-generated answer to include in responses.
+   * Tavily provides this for "advanced" search depth.
+   */
+  setAnswer(answer: string | null): void {
+    this.answer = answer;
+  }
+
   private handleSearch(_req: SimulatorRequest): SimulatorResponse {
+    const body: Record<string, unknown> = {
+      results: this.results,
+      query: (_req.body as Record<string, unknown>)?.query || 'test',
+    };
+
+    // Include answer if set (Tavily returns this for advanced search depth)
+    if (this.answer) {
+      body.answer = this.answer;
+    }
+
     return {
       status: 200,
-      body: {
-        results: this.results,
-        query: (_req.body as Record<string, unknown>)?.query || 'test',
-      },
+      body,
     };
   }
 }
