@@ -970,14 +970,21 @@ curl -X POST http://localhost:3000/api/eval/adversarial/run \
 
 **Symptom**: Tests fail to execute due to JavaScript syntax errors
 
-**Solution**: Add a validation step before execution:
+**Solution**: Add a validation step before execution using a static parser:
 
 ```typescript
+import { parse } from '@babel/parser';
+
 private validateTestCode(code: string): boolean {
   try {
-    new Function(code); // Check if parseable
+    // Parse without executing - safe syntax validation
+    parse(code, {
+      sourceType: 'module',
+      plugins: ['typescript']
+    });
     return true;
   } catch (error) {
+    console.error('Invalid syntax:', error);
     return false;
   }
 }
