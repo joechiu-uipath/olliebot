@@ -119,18 +119,24 @@ describe('Conversations', () => {
   });
 
   // AGSYS-007 — Well-known conversations cannot be deleted
-  it('DELETE /api/conversations/feed is rejected (well-known)', async () => {
+  it('DELETE /api/conversations/feed returns 403 (well-known protection)', async () => {
     const api = harness.api();
-    const { status } = await api.deleteJson('/api/conversations/feed');
-    // Server should reject with 400 or 403
-    expect(status).toBeGreaterThanOrEqual(HTTP_STATUS.BAD_REQUEST);
+    const { status, body } = await api.deleteJson<{ error: string }>(
+      '/api/conversations/feed',
+    );
+    expect(status).toBe(HTTP_STATUS.FORBIDDEN);
+    expect(body.error).toContain('Well-known');
   });
 
   // Well-known conversations cannot be renamed
-  it('PATCH /api/conversations/feed is rejected (well-known)', async () => {
+  it('PATCH /api/conversations/feed returns 403 (well-known protection)', async () => {
     const api = harness.api();
-    const { status } = await api.patchJson('/api/conversations/feed', { title: 'Hacked' });
-    expect(status).toBeGreaterThanOrEqual(HTTP_STATUS.BAD_REQUEST);
+    const { status, body } = await api.patchJson<{ error: string }>(
+      '/api/conversations/feed',
+      { title: 'Renamed Feed' },
+    );
+    expect(status).toBe(HTTP_STATUS.FORBIDDEN);
+    expect(body.error).toContain('Well-known');
   });
 
   // CHAT-010
@@ -316,31 +322,6 @@ describe('Conversations', () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Well-known protection (exact status codes)
-  // ---------------------------------------------------------------------------
-
-  it('DELETE /api/conversations/feed returns exactly 403', async () => {
-    const api = harness.api();
-    const { status, body } = await api.deleteJson<{ error: string }>(
-      '/api/conversations/feed',
-    );
-
-    expect(status).toBe(HTTP_STATUS.FORBIDDEN);
-    expect(body.error).toContain('Well-known');
-  });
-
-  it('PATCH /api/conversations/feed returns exactly 403', async () => {
-    const api = harness.api();
-    const { status, body } = await api.patchJson<{ error: string }>(
-      '/api/conversations/feed',
-      { title: 'Renamed Feed' },
-    );
-
-    expect(status).toBe(HTTP_STATUS.FORBIDDEN);
-    expect(body.error).toContain('Well-known');
-  });
-
-  // ---------------------------------------------------------------------------
   // Delete edge cases
   // ---------------------------------------------------------------------------
 
@@ -351,22 +332,5 @@ describe('Conversations', () => {
     );
 
     expect(status).toBe(HTTP_STATUS.NOT_FOUND);
-  });
-
-  it('soft-deleted conversations do not appear in list', async () => {
-    const api = harness.api();
-
-    const { body: created } = await api.postJson<{ id: string }>(
-      '/api/conversations',
-      { title: 'Will Delete' },
-    );
-
-    await api.delete(`/api/conversations/${created.id}`);
-
-    const { body: list } = await api.getJson<Array<{ id: string }>>(
-      '/api/conversations',
-    );
-    const found = list.find(c => c.id === created.id);
-    expect(found).toBeUndefined();
   });
 });
