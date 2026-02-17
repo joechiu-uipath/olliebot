@@ -56,10 +56,6 @@ export default defineConfig({
         branches: 0,
         statements: 0,
       },
-      // 'text' = terminal summary table (always on)
-      // 'html' = interactive line-by-line report at coverage/index.html
-      reporter: ['text', 'html'],
-      reportsDirectory: './coverage',
     },
   },
 });
