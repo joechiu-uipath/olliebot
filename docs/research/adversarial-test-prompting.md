@@ -203,12 +203,40 @@ Add adversarial test generation as a first-class evaluation type in `src/evaluat
 
 ```typescript
 // New file: src/evaluation/adversarial-runner.ts
+
+/**
+ * Configuration for adversarial test generation.
+ */
 export interface AdversarialTestConfig {
-  targetEndpoints: string[];        // e.g., ['/api/missions/*', '/api/eval/*']
-  focusAreas: string[];             // e.g., ['auth', 'concurrency', 'injection']
+  /** 
+   * Target API endpoints to test (glob patterns supported).
+   * Example: ['/api/missions/*', '/api/eval/*']
+   */
+  targetEndpoints: string[];
+  
+  /**
+   * Security/bug categories to focus on.
+   * Valid values: 'auth', 'validation', 'concurrency', 'injection', 'dos', 'errorHandling'
+   */
+  focusAreas: string[];
+  
+  /**
+   * Minimum severity level to report.
+   * 'all': Report all findings, 'medium': Skip low severity, etc.
+   */
   severityThreshold: 'all' | 'medium' | 'high' | 'critical';
+  
+  /**
+   * Maximum number of test cases to generate per endpoint.
+   */
   maxTestsPerEndpoint: number;
-  includePositiveTests: boolean;    // Phase 1 confirmatory tests
+  
+  /**
+   * Whether to include Phase 1 confirmatory tests (happy path verification)
+   * before running Phase 2 adversarial tests (bug discovery).
+   * Confirmatory tests establish baseline behavior.
+   */
+  includePositiveTests: boolean;
 }
 
 export class AdversarialTestRunner {
@@ -693,12 +721,26 @@ export interface AdversarialTestResult {
   executionTimeMs: number;
 }
 
+/**
+ * Parsed adversarial test extracted from LLM response.
+ */
 interface ParsedAdversarialTest {
+  /** Unique test identifier */
   id: string;
+  
+  /** Technical description of what vulnerability/bug is being tested */
   attackVector: string;
+  
+  /** Explanation of why this might be a security issue or bug */
   hypothesis: string;
+  
+  /** Executable test code (JavaScript/TypeScript) */
   code: string;
+  
+  /** What SHOULD happen if system is secure/correct */
   expected: string;
+  
+  /** Severity classification */
   severity: 'critical' | 'high' | 'medium' | 'low';
 }
 
@@ -1006,11 +1048,26 @@ private validateTestCode(code: string): boolean {
 ```typescript
 import { VM } from 'vm2';
 
-private async executeSandboxed(code: string): Promise<any> {
+interface SandboxExecutionResult {
+  success: boolean;
+  output?: any;
+  error?: string;
+}
+
+private async executeSandboxed(code: string): Promise<SandboxExecutionResult> {
+  // Restrict fetch to only target server to prevent SSRF
+  const safeFetch = (url: string, options?: RequestInit) => {
+    const targetUrl = new URL(url, this.serverUrl);
+    if (targetUrl.origin !== new URL(this.serverUrl).origin) {
+      throw new Error(`Fetch restricted to ${this.serverUrl} only`);
+    }
+    return fetch(url, options);
+  };
+  
   const vm = new VM({
     timeout: 5000,           // 5 second timeout
     sandbox: {
-      fetch,                 // Allow HTTP requests
+      fetch: safeFetch,      // Restricted fetch (prevents SSRF)
       console: {             // Allow logging
         log: (...args) => console.log('[Sandbox]', ...args),
         error: (...args) => console.error('[Sandbox]', ...args)
@@ -1021,7 +1078,12 @@ private async executeSandboxed(code: string): Promise<any> {
     fixAsync: true           // Fix async/await issues
   });
   
-  return vm.run(code);
+  try {
+    const result = await vm.run(code);
+    return { success: true, output: result };
+  } catch (error) {
+    return { success: false, error: String(error) };
+  }
 }
 ```
 
