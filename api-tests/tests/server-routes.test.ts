@@ -2,7 +2,7 @@
  * API Tests — Server Core Routes
  *
  * Covers server endpoints that are not covered by other specialized test files.
- * Uses FullServerHarness to ensure tools, model capabilities, and startup
+ * Uses ServerHarness to ensure tools, model capabilities, and startup
  * aggregation work end-to-end.
  *
  * Tests exercise:
@@ -20,9 +20,9 @@
  */
 
 import { describe, it, expect, beforeAll, afterEach, afterAll } from 'vitest';
-import { FullServerHarness } from '../harness/index.js';
+import { ServerHarness } from '../harness/index.js';
 
-const harness = new FullServerHarness();
+const harness = new ServerHarness();
 
 beforeAll(() => harness.start());
 afterEach(() => harness.reset());
@@ -59,7 +59,7 @@ describe('Server Core Routes', () => {
       expect(body.feedMessages).toHaveProperty('pagination');
       expect(Array.isArray(body.feedMessages.items)).toBe(true);
 
-      // Tools tree structure (toolRunner is present in FullServerHarness)
+      // Tools tree structure (toolRunner is present in ServerHarness)
       expect(body.tools).toHaveProperty('builtin');
       expect(body.tools).toHaveProperty('user');
       expect(body.tools).toHaveProperty('mcp');
@@ -71,16 +71,16 @@ describe('Server Core Routes', () => {
       // Command triggers
       expect(Array.isArray(body.commandTriggers)).toBe(true);
 
-      // Tasks (taskManager not set in harness, should be empty)
+      // Tasks (real taskManager with empty tasks dir)
       expect(body.tasks).toEqual([]);
 
-      // Skills (skillManager not set, should be empty)
-      expect(body.skills).toEqual([]);
+      // Skills (real skillManager — may include builtin skills)
+      expect(Array.isArray(body.skills)).toBe(true);
 
-      // MCPs (mcpClient not set, should be empty)
+      // MCPs (no mcpClient passed to server config)
       expect(body.mcps).toEqual([]);
 
-      // RAG projects (ragProjectService not set, should be empty)
+      // RAG projects (real ragProjectService with empty dir)
       expect(body.ragProjects).toEqual([]);
     });
   });
@@ -121,7 +121,7 @@ describe('Server Core Routes', () => {
 
       expect(status).toBe(200);
       expect(Array.isArray(body)).toBe(true);
-      // At least the supervisor stub should be present
+      // At least the supervisor should be present
       expect(body.length).toBeGreaterThanOrEqual(1);
       expect(body[0]).toHaveProperty('id');
     });
@@ -151,12 +151,12 @@ describe('Server Core Routes', () => {
   });
 
   describe('GET /api/skills', () => {
-    it('returns empty array when skillManager is not configured', async () => {
+    it('returns skills array from real skill manager', async () => {
       const api = harness.api();
       const { status, body } = await api.getJson<unknown[]>('/api/skills');
 
       expect(status).toBe(200);
-      expect(body).toEqual([]);
+      expect(Array.isArray(body)).toBe(true);
     });
   });
 
@@ -185,7 +185,7 @@ describe('Server Core Routes', () => {
   });
 
   describe('GET /api/tasks', () => {
-    it('returns empty array when taskManager is not configured', async () => {
+    it('returns empty array when no tasks are defined', async () => {
       const api = harness.api();
       const { status, body } = await api.getJson<unknown[]>('/api/tasks');
 
@@ -195,16 +195,14 @@ describe('Server Core Routes', () => {
   });
 
   describe('PATCH /api/tasks/:id', () => {
-    it('returns 500 when taskManager is not configured', async () => {
+    it('returns 404 for nonexistent task', async () => {
       const res = await fetch(`${harness.baseUrl}/api/tasks/some-task`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ enabled: false }),
       });
 
-      expect(res.status).toBe(500);
-      const body = await res.json();
-      expect(body.error).toContain('Task manager');
+      expect(res.status).toBe(404);
     });
   });
 

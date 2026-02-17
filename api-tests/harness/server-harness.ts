@@ -1,11 +1,17 @@
 /**
  * API Test Server Harness
  *
- * Boots a real AssistantServer with:
+ * Boots a real AssistantServer with all production components:
  *   - In-memory SQLite database (no disk I/O, fast reset)
  *   - Dynamic port allocation (port 0 → OS picks a free port)
  *   - Dependency simulator from e2e/simulators (no outbound network calls)
- *   - Stub supervisor (no LLM calls, but messages flow through the real server)
+ *   - Real SupervisorAgentImpl backed by SimulatorLLMProvider
+ *   - Real ToolRunner with all native tools registered
+ *   - Real MemoryService, SkillManager, TaskManager, MissionManager, UserToolManager
+ *   - Real RAGProjectService with simulator-backed embedding provider
+ *
+ * Only external network services are stubbed (LLM APIs, search APIs, etc.)
+ * via the SimulatorServer. Everything that runs within Node is real.
  *
  * Usage in tests:
  *   const harness = new ServerHarness();
@@ -18,16 +24,52 @@ import { initDb, getDb, closeDb } from '../../src/db/index.js';
 import { ensureWellKnownConversations } from '../../src/db/well-known-conversations.js';
 import { AssistantServer } from '../../src/server/index.js';
 import type { ServerConfig } from '../../src/server/index.js';
-import type { SupervisorAgent } from '../../src/agents/types.js';
-import type { Channel, Message } from '../../src/channels/types.js';
 import { endpoints } from '../../src/config/endpoint-manager.js';
 import { SimulatorServer } from '../../e2e/simulators/server.js';
 import { LLMService } from '../../src/llm/service.js';
-import { ToolRunner } from '../../src/tools/runner.js';
+import {
+  ToolRunner,
+  WebSearchTool,
+  WebScrapeTool,
+  WikipediaSearchTool,
+  TakeScreenshotTool,
+  CreateImageTool,
+  RememberTool,
+  ReadAgentSkillTool,
+  RunAgentSkillScriptTool,
+  HttpClientTool,
+  DelegateTool,
+  QueryRAGProjectTool,
+  SpeakTool,
+  GeneratePythonTool,
+  RunPythonTool,
+  WebsiteCrawlerTool,
+  MissionTodoCreateTool,
+  MissionTodoUpdateTool,
+  MissionTodoCompleteTool,
+  MissionMetricRecordTool,
+} from '../../src/tools/index.js';
+import {
+  ReadFrontendCodeTool,
+  ModifyFrontendCodeTool,
+  CheckFrontendCodeTool,
+} from '../../src/self-coding/index.js';
 import { MissionManager } from '../../src/missions/manager.js';
 import { initMissionSchema } from '../../src/missions/schema.js';
 import { getDashboardStore } from '../../src/dashboard/index.js';
 import { TraceStore } from '../../src/tracing/trace-store.js';
+import { MemoryService } from '../../src/memory/index.js';
+import { SkillManager } from '../../src/skills/index.js';
+import { TaskManager } from '../../src/tasks/index.js';
+import { UserToolManager } from '../../src/tools/user/index.js';
+import {
+  RAGProjectService,
+  OpenAIEmbeddingProvider,
+  RagDataManager,
+} from '../../src/rag-projects/index.js';
+import { MCPClient } from '../../src/mcp/index.js';
+import { SupervisorAgentImpl } from '../../src/agents/supervisor.js';
+import { AgentRegistry } from '../../src/agents/registry.js';
 import { SimulatorLLMProvider } from './simulator-llm-provider.js';
 import { ApiClient } from './api-client.js';
 import { WsClient } from './ws-client.js';
@@ -35,118 +77,6 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
-
-// ---------------------------------------------------------------------------
-// Stub Supervisor
-// ---------------------------------------------------------------------------
-
-/**
- * Minimal supervisor that satisfies the SupervisorAgent interface
- * without making any LLM calls. Captures messages for assertion.
- */
-export function createStubSupervisor(): SupervisorAgent & { receivedMessages: Message[] } {
-  const receivedMessages: Message[] = [];
-  let channel: Channel | null = null;
-
-  const identity = {
-    id: 'supervisor-stub',
-    name: 'Supervisor',
-    emoji: '🤖',
-    role: 'supervisor' as const,
-    description: 'Stub supervisor for API tests',
-  };
-
-  const state = {
-    status: 'idle' as const,
-    lastActivity: new Date(),
-    context: {},
-  };
-
-  const capabilities = {
-    canSpawnAgents: true,
-    canAccessTools: [],
-    canUseChannels: ['web'],
-    maxConcurrentTasks: 1,
-  };
-
-  const config = {
-    identity,
-    capabilities,
-    systemPrompt: 'You are a test stub.',
-  };
-
-  return {
-    receivedMessages,
-    identity,
-    state,
-    capabilities,
-    config,
-
-    // Lifecycle
-    async init() {},
-    async shutdown() {},
-
-    // Communication — capture messages instead of calling LLM
-    async handleMessage(message: Message) {
-      receivedMessages.push(message);
-
-      // Echo back a simple response so WS tests can observe server-side streaming
-      if (channel) {
-        const streamId = `stream-${Date.now()}`;
-        const conversationId = (message.metadata?.conversationId as string) ?? undefined;
-        channel.startStream(streamId, { conversationId });
-        channel.sendStreamChunk(streamId, 'stub-response', conversationId);
-        channel.endStream(streamId, { conversationId });
-      }
-    },
-    async sendMessage() {},
-    async sendError() {},
-
-    // Inter-agent communication (no-op)
-    async receiveFromAgent() {},
-    async sendToAgent() {},
-
-    // State
-    getState() { return state; },
-    updateState(updates) { Object.assign(state, updates); },
-
-    // Sub-agent management
-    async spawnAgent() { return 'stub-agent-1'; },
-    async terminateAgent() {},
-    getSubAgents() { return []; },
-
-    // Task delegation
-    async delegateTask(task: string) {
-      return {
-        id: 'task-stub-1',
-        description: task,
-        assignedTo: 'stub-agent-1',
-        assignedBy: identity.id,
-        status: 'completed' as const,
-        createdAt: new Date(),
-      };
-    },
-    getTaskStatus() { return undefined; },
-
-    // Channel management
-    registerChannel(ch: Channel) {
-      channel = ch;
-      // Install ourselves as the message handler so WS messages flow through.
-      // In the real server this routing is installed by the mission-lead code path;
-      // the stub must set it up explicitly.
-      ch.onMessage(async (message) => {
-        receivedMessages.push(message);
-
-        // Echo back a simple response so WS tests can observe streaming
-        const streamId = `stream-${Date.now()}`;
-        const cid = (message.metadata?.conversationId as string) ?? undefined;
-        ch.startStream(streamId, { conversationId: cid });
-        ch.sendStreamChunk(streamId, 'stub-response', cid);
-        ch.endStream(streamId, { conversationId: cid });
-      });
-    },
-  };
-}
 
 // ---------------------------------------------------------------------------
 // Port Allocation
@@ -178,7 +108,21 @@ export class ServerHarness {
   private simulatorServer: SimulatorServer | null = null;
   private _port = 0;
   private _simulatorPort = 0;
-  private _supervisor: ReturnType<typeof createStubSupervisor> | null = null;
+
+  // Real services
+  private _llmService: LLMService | null = null;
+  private _toolRunner: ToolRunner | null = null;
+  private _missionManager: MissionManager | null = null;
+  private _traceStore: TraceStore | null = null;
+  private _memoryService: MemoryService | null = null;
+  private _skillManager: SkillManager | null = null;
+  private _taskManager: TaskManager | null = null;
+  private _userToolManager: UserToolManager | null = null;
+  private _ragProjectService: RAGProjectService | null = null;
+  private _mcpClient: MCPClient | null = null;
+
+  // Temp directory (single root for all file-based services)
+  private _tempDir: string | null = null;
 
   /** The dynamic port the server is listening on. */
   get port(): number { return this._port; }
@@ -192,11 +136,17 @@ export class ServerHarness {
   /** Simulator base URL (e.g. `http://localhost:54322`). */
   get simulatorUrl(): string { return `http://localhost:${this._simulatorPort}`; }
 
-  /** Access the stub supervisor to inspect captured messages. */
-  get supervisor() { return this._supervisor!; }
-
   /** Access the dependency simulator server for configuring responses. */
   get simulator() { return this.simulatorServer!; }
+
+  /** Access real services for direct assertions in tests. */
+  get llmService() { return this._llmService!; }
+  get toolRunner() { return this._toolRunner!; }
+  get missionManager() { return this._missionManager!; }
+  get traceStore() { return this._traceStore!; }
+  get memoryService() { return this._memoryService!; }
+  get skillManager() { return this._skillManager!; }
+  get taskManager() { return this._taskManager!; }
 
   /** Create an ApiClient bound to this harness's base URL. */
   api(): ApiClient { return new ApiClient(this.baseUrl); }
@@ -205,13 +155,10 @@ export class ServerHarness {
   ws(): WsClient { return new WsClient(this.wsUrl); }
 
   /**
-   * Boot the server:
-   *  1. Start the dependency simulator on a dynamic port
-   *  2. Route all external service endpoints through the simulator
-   *  3. Init in-memory SQLite
-   *  4. Seed well-known conversations
-   *  5. Pick a free port for the app server
-   *  6. Start AssistantServer
+   * Boot the server with all real production components.
+   *
+   * Only external network services are stubbed via the SimulatorServer.
+   * Everything that runs within Node.js is the real implementation.
    */
   async start(): Promise<void> {
     // 1. Dependency simulator (LLM, search, embedding, etc.)
@@ -222,23 +169,167 @@ export class ServerHarness {
     // 2. Route all external service calls through the simulator
     endpoints.enableTestMode(this.simulatorUrl);
 
-    // 3. In-memory database
+    // 3. In-memory database with all schemas
     await closeDb().catch(() => {});
     await initDb(':memory:');
     ensureWellKnownConversations();
+    initMissionSchema();
+    getDashboardStore().init();
 
-    // 4. Free port for the app server
+    // 4. Trace store
+    this._traceStore = new TraceStore();
+    this._traceStore.init();
+
+    // 5. LLM Service (SimulatorLLMProvider → SimulatorServer)
+    const provider = new SimulatorLLMProvider(this.simulatorUrl);
+    this._llmService = new LLMService({
+      main: provider,
+      fast: provider,
+      traceStore: this._traceStore,
+    });
+
+    // 6. Create temp directory tree for all file-based services
+    this._tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'olliebot-test-'));
+    const dirs = {
+      missions: path.join(this._tempDir, 'missions'),
+      tasks: path.join(this._tempDir, 'tasks'),
+      skills: path.join(this._tempDir, 'skills'),
+      tools: path.join(this._tempDir, 'tools'),
+      memory: path.join(this._tempDir, 'memory'),
+      rag: path.join(this._tempDir, 'rag'),
+    };
+    for (const dir of Object.values(dirs)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+
+    // 7. Memory Service (real, temp dir)
+    this._memoryService = new MemoryService(this._tempDir);
+    await this._memoryService.init();
+
+    // 8. Skill Manager (real, temp dir for user skills — builtin skills loaded from source)
+    this._skillManager = new SkillManager(dirs.skills);
+    await this._skillManager.init();
+
+    // 9. MCP Client (real, empty — no external MCP servers in tests)
+    this._mcpClient = new MCPClient();
+
+    // 10. RAG Project Service (real, with simulator-backed embedding provider)
+    const embeddingProvider = new OpenAIEmbeddingProvider(
+      'test-api-key',
+      'text-embedding-3-small',
+      `${this.simulatorUrl}/embedding/v1`,
+    );
+    this._ragProjectService = new RAGProjectService(dirs.rag, embeddingProvider);
+    await this._ragProjectService.init();
+    this._ragProjectService.setSummarizationProvider({
+      summarize: async (content: string, prompt: string): Promise<string> => {
+        const response = await this._llmService!.quickGenerate([
+          { role: 'user', content: `${prompt}\n\n${content}` },
+        ], { maxTokens: 200 }, 'RAG Indexer');
+        return response.content.trim();
+      },
+    });
+
+    // 11. Tool Runner with all native tools (mirrors src/index.ts registration)
+    this._toolRunner = new ToolRunner({
+      mcpClient: this._mcpClient,
+      traceStore: this._traceStore,
+    });
+
+    this._toolRunner.registerNativeTool(new WikipediaSearchTool());
+    this._toolRunner.registerNativeTool(new HttpClientTool());
+    this._toolRunner.registerNativeTool(new DelegateTool());
+    this._toolRunner.registerNativeTool(new WebSearchTool({
+      provider: 'serper',
+      apiKey: 'test-api-key',
+    }));
+    this._toolRunner.registerNativeTool(new WebScrapeTool({ llmService: this._llmService }));
+    this._toolRunner.registerNativeTool(new WebsiteCrawlerTool({
+      ragService: this._ragProjectService,
+      ragDir: dirs.rag,
+    }));
+    this._toolRunner.registerNativeTool(new TakeScreenshotTool());
+    this._toolRunner.registerNativeTool(new CreateImageTool({
+      apiKey: 'test-api-key',
+      provider: 'openai',
+      model: 'dall-e-3',
+    }));
+    this._toolRunner.registerNativeTool(new RememberTool(this._memoryService));
+    this._toolRunner.registerNativeTool(new GeneratePythonTool({ llmService: this._llmService }));
+    this._toolRunner.registerNativeTool(new RunPythonTool());
+    this._toolRunner.registerNativeTool(new SpeakTool({
+      apiKey: 'test-api-key',
+      provider: 'openai',
+      model: 'tts-1',
+      voice: 'alloy',
+    }));
+    this._toolRunner.registerNativeTool(new ReadAgentSkillTool(this._skillManager));
+    this._toolRunner.registerNativeTool(new RunAgentSkillScriptTool(this._skillManager));
+    this._toolRunner.registerNativeTool(new ReadFrontendCodeTool());
+    this._toolRunner.registerNativeTool(new ModifyFrontendCodeTool());
+    this._toolRunner.registerNativeTool(new CheckFrontendCodeTool());
+    this._toolRunner.registerNativeTool(new QueryRAGProjectTool(this._ragProjectService));
+
+    // 12. User Tool Manager (real, watches temp dir — starts empty)
+    this._userToolManager = new UserToolManager({
+      toolsDir: dirs.tools,
+      llmService: this._llmService,
+    });
+    await this._userToolManager.init();
+    for (const tool of this._userToolManager.getToolsForRegistration()) {
+      this._toolRunner.registerUserTool(tool);
+    }
+
+    // 13. Task Manager (real, temp dir, scheduler disabled)
+    this._taskManager = new TaskManager({
+      tasksDir: dirs.tasks,
+      llmService: this._llmService,
+      schedulerInterval: 999_999,
+    });
+    await this._taskManager.init();
+
+    // 14. Mission Manager (real, temp dir, scheduler disabled)
+    this._missionManager = new MissionManager({
+      missionsDir: dirs.missions,
+      llmService: this._llmService,
+      schedulerInterval: 999_999,
+    });
+    await this._missionManager.init();
+
+    // Register mission tools (depends on mission manager)
+    this._toolRunner.registerNativeTool(new MissionTodoCreateTool(this._missionManager));
+    this._toolRunner.registerNativeTool(new MissionTodoUpdateTool(this._missionManager));
+    this._toolRunner.registerNativeTool(new MissionTodoCompleteTool(this._missionManager));
+    this._toolRunner.registerNativeTool(new MissionMetricRecordTool(this._missionManager));
+
+    // 15. Real Supervisor Agent
+    const registry = new AgentRegistry();
+    const supervisor = new SupervisorAgentImpl(this._llmService, registry);
+    supervisor.setToolRunner(this._toolRunner);
+    supervisor.setMemoryService(this._memoryService);
+    supervisor.setSkillManager(this._skillManager);
+    supervisor.setExcludedSkillSources(['builtin']);
+
+    const ragDataManager = new RagDataManager(this._ragProjectService);
+    supervisor.setRagDataManager(ragDataManager);
+
+    registry.registerAgent(supervisor);
+    await supervisor.init();
+
+    // 16. Server with all dependencies
     this._port = await getFreePort();
-
-    // 5. Stub supervisor
-    this._supervisor = createStubSupervisor();
-
-    // 6. Server
     const config: ServerConfig = {
       port: this._port,
-      supervisor: this._supervisor,
+      supervisor,
       bindAddress: '127.0.0.1',
       allowedOrigins: ['*'],
+      llmService: this._llmService,
+      toolRunner: this._toolRunner,
+      missionManager: this._missionManager,
+      traceStore: this._traceStore,
+      skillManager: this._skillManager,
+      taskManager: this._taskManager,
+      ragProjectService: this._ragProjectService,
     };
 
     this.server = new AssistantServer(config);
@@ -251,133 +342,7 @@ export class ServerHarness {
    */
   async reset(): Promise<void> {
     const db = getDb();
-    // Clear in reverse dependency order
-    db.rawExec('DELETE FROM messages');
-    db.rawExec('DELETE FROM embeddings');
-    db.rawExec('DELETE FROM conversations');
 
-    // Re-seed well-known conversations
-    ensureWellKnownConversations();
-
-    // Clear captured messages on the stub supervisor
-    if (this._supervisor) {
-      this._supervisor.receivedMessages.length = 0;
-    }
-
-    // Reset simulator request logs
-    if (this.simulatorServer) {
-      this.simulatorServer.reset();
-    }
-  }
-
-  /**
-   * Gracefully stop the server, simulator, and close the database.
-   */
-  async stop(): Promise<void> {
-    if (this.server) {
-      await this.server.stop();
-      this.server = null;
-    }
-    if (this.simulatorServer) {
-      await this.simulatorServer.stop();
-      this.simulatorServer = null;
-    }
-    // Reset endpoint overrides so other test suites aren't affected
-    endpoints.reset();
-    await closeDb().catch(() => {});
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Full Server Harness (with LLMService, ToolRunner, MissionManager)
-// ---------------------------------------------------------------------------
-
-/**
- * Extended harness that boots the server with real LLMService, ToolRunner,
- * and MissionManager instances. The LLMService is backed by the
- * SimulatorLLMProvider so all LLM calls are absorbed by the simulator.
- *
- * This enables testing of eval-routes and mission-routes which require
- * these dependencies to be wired into the server.
- */
-export class FullServerHarness extends ServerHarness {
-  private _llmService: LLMService | null = null;
-  private _toolRunner: ToolRunner | null = null;
-  private _missionManager: MissionManager | null = null;
-  private _missionsDir: string | null = null;
-  private _traceStore: TraceStore | null = null;
-
-  get llmService() { return this._llmService!; }
-  get toolRunner() { return this._toolRunner!; }
-  get missionManager() { return this._missionManager!; }
-  get traceStore() { return this._traceStore!; }
-
-  async start(): Promise<void> {
-    // 1. Dependency simulator
-    this['_simulatorPort'] = await getFreePort();
-    this['simulatorServer'] = new SimulatorServer();
-    await this['simulatorServer'].start(this['_simulatorPort']);
-
-    // 2. Route all external service calls through the simulator
-    endpoints.enableTestMode(this.simulatorUrl);
-
-    // 3. In-memory database
-    await closeDb().catch(() => {});
-    await initDb(':memory:');
-    ensureWellKnownConversations();
-
-    // 4. Mission schema (creates missions, pillars, metrics, etc. tables)
-    initMissionSchema();
-
-    // 4b. Dashboard schema (required by mission-routes dashboard endpoints)
-    getDashboardStore().init();
-
-    // 4c. Trace store (required by trace-routes and dashboard-routes)
-    this._traceStore = new TraceStore();
-    this._traceStore.init();
-
-    // 5. LLM provider backed by simulator (with traceStore for call tracing)
-    const provider = new SimulatorLLMProvider(this.simulatorUrl);
-    this._llmService = new LLMService({
-      main: provider,
-      fast: provider,
-      traceStore: this._traceStore!,
-    });
-
-    // 6. Tool runner (no tools registered — routes return empty)
-    this._toolRunner = new ToolRunner();
-
-    // 7. Mission manager with a temporary directory
-    this._missionsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'olliebot-missions-'));
-    this._missionManager = new MissionManager({
-      missionsDir: this._missionsDir,
-      llmService: this._llmService,
-      schedulerInterval: 999_999, // Don't auto-schedule in tests
-    });
-    await this._missionManager.init();
-
-    // 8. Free port + stub supervisor
-    this['_port'] = await getFreePort();
-    this['_supervisor'] = createStubSupervisor();
-
-    // 9. Server with full dependencies
-    const config: ServerConfig = {
-      port: this['_port'],
-      supervisor: this['_supervisor']!,
-      bindAddress: '127.0.0.1',
-      allowedOrigins: ['*'],
-      llmService: this._llmService,
-      toolRunner: this._toolRunner,
-      missionManager: this._missionManager,
-      traceStore: this._traceStore!,
-    };
-
-    this['server'] = new AssistantServer(config);
-    await this['server']!.start();
-  }
-
-  async reset(): Promise<void> {
-    const db = getDb();
     // Clear mission tables (reverse dependency order)
     db.rawExec('DELETE FROM pillar_metric_history');
     db.rawExec('DELETE FROM pillar_strategies');
@@ -394,17 +359,48 @@ export class FullServerHarness extends ServerHarness {
     db.rawExec('DELETE FROM trace_spans');
     db.rawExec('DELETE FROM traces');
 
-    // Delegate to parent for standard tables
-    await super.reset();
+    // Clear core tables
+    db.rawExec('DELETE FROM messages');
+    db.rawExec('DELETE FROM embeddings');
+    db.rawExec('DELETE FROM conversations');
+
+    // Re-seed well-known conversations
+    ensureWellKnownConversations();
+
+    // Reset simulator request logs
+    if (this.simulatorServer) {
+      this.simulatorServer.reset();
+    }
   }
 
+  /**
+   * Gracefully stop the server, simulator, close managers, and clean up.
+   */
   async stop(): Promise<void> {
-    await super.stop();
+    if (this.server) {
+      await this.server.stop();
+      this.server = null;
+    }
+    if (this.simulatorServer) {
+      await this.simulatorServer.stop();
+      this.simulatorServer = null;
+    }
+
+    // Close file-watching managers
+    await this._taskManager?.close().catch(() => {});
+    await this._missionManager?.close().catch(() => {});
+    await this._userToolManager?.close().catch(() => {});
+    await this._skillManager?.close().catch(() => {});
+    await this._ragProjectService?.close().catch(() => {});
+
+    // Reset endpoint overrides
+    endpoints.reset();
+    await closeDb().catch(() => {});
 
     // Clean up temp directory
-    if (this._missionsDir) {
-      fs.rmSync(this._missionsDir, { recursive: true, force: true });
-      this._missionsDir = null;
+    if (this._tempDir) {
+      fs.rmSync(this._tempDir, { recursive: true, force: true });
+      this._tempDir = null;
     }
   }
 }

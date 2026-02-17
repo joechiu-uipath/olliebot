@@ -61,10 +61,15 @@ describe('Messages', () => {
 
     expect(res.status).toBe(200);
 
-    // Verify the stub supervisor received the message
-    const received = harness.supervisor.receivedMessages;
-    expect(received.length).toBeGreaterThanOrEqual(1);
-    expect(received[received.length - 1].content).toBe('Hello from API test');
+    // Wait for the real supervisor to process the message
+    await new Promise(resolve => setTimeout(resolve, 500));
+
+    // Verify the message was persisted in the database
+    const { body } = await api.getJson<{
+      items: Array<{ role: string; content: string }>;
+    }>(`/api/conversations/${conv.id}/messages`);
+
+    expect(body.items.some(m => m.role === 'user' && m.content === 'Hello from API test')).toBe(true);
   });
 
   // DB-001 + DB-002 — Messages persisted via DB, queryable via API

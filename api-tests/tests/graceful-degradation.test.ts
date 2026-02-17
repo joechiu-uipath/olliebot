@@ -1,17 +1,16 @@
 /**
  * API Tests — Graceful Degradation
  *
- * Covers server routes that handle missing optional dependencies.
- * The test harness boots the server without toolRunner, taskManager,
- * skillManager, mcpClient, etc. These tests verify the server returns
- * sensible defaults rather than crashing.
+ * Covers server routes returning sensible defaults when optional data
+ * directories are empty. The harness boots with real managers pointing
+ * at empty temp directories, so these tests verify empty-state behavior.
  *
  * Coverage targets:
- *   - GET /api/skills → [] when no skillManager
- *   - GET /api/tools → { builtin: [], user: [], mcp: {} } when no toolRunner
- *   - GET /api/tasks → [] when no taskManager
- *   - PATCH /api/tasks/:id → 500 when no taskManager
- *   - GET /api/startup → full response even without optional deps
+ *   - GET /api/skills → builtin skills only (user skills dir is empty)
+ *   - GET /api/tools → real native tools (no user tools or MCP tools)
+ *   - GET /api/tasks → [] when tasks dir is empty
+ *   - PATCH /api/tasks/:id → 404 for nonexistent task
+ *   - GET /api/startup → full response with real components
  *   - GET /api/startup → contains agentTemplates and commandTriggers arrays
  */
 
@@ -24,16 +23,16 @@ beforeAll(() => harness.start());
 afterEach(() => harness.reset());
 afterAll(() => harness.stop());
 
-describe('Graceful Degradation (missing dependencies)', () => {
-  it('GET /api/skills returns empty array without skillManager', async () => {
+describe('Graceful Degradation (empty data directories)', () => {
+  it('GET /api/skills returns skills array (may include builtins)', async () => {
     const api = harness.api();
     const { status, body } = await api.getJson<unknown[]>('/api/skills');
 
     expect(status).toBe(200);
-    expect(body).toEqual([]);
+    expect(Array.isArray(body)).toBe(true);
   });
 
-  it('GET /api/tools returns empty structure without toolRunner', async () => {
+  it('GET /api/tools returns real native tools', async () => {
     const api = harness.api();
     const { status, body } = await api.getJson<{
       builtin: unknown[];
@@ -42,12 +41,15 @@ describe('Graceful Degradation (missing dependencies)', () => {
     }>('/api/tools');
 
     expect(status).toBe(200);
-    expect(body.builtin).toEqual([]);
+    // Real native tools are registered
+    expect(body.builtin.length).toBeGreaterThan(0);
+    // No user tools in empty temp dir
     expect(body.user).toEqual([]);
+    // No MCP servers configured
     expect(body.mcp).toEqual({});
   });
 
-  it('GET /api/tasks returns empty array without taskManager', async () => {
+  it('GET /api/tasks returns empty array when tasks dir is empty', async () => {
     const api = harness.api();
     const { status, body } = await api.getJson<unknown[]>('/api/tasks');
 
@@ -55,28 +57,25 @@ describe('Graceful Degradation (missing dependencies)', () => {
     expect(body).toEqual([]);
   });
 
-  it('PATCH /api/tasks/:id returns 500 without taskManager', async () => {
+  it('PATCH /api/tasks/:id returns 404 for nonexistent task', async () => {
     const api = harness.api();
-    const { status, body } = await api.patchJson<{ error: string }>(
+    const { status } = await api.patchJson<{ error: string }>(
       '/api/tasks/some-task',
       { enabled: false },
     );
 
-    expect(status).toBe(500);
-    expect(body.error).toContain('Task manager');
+    expect(status).toBe(404);
   });
 
   it('PATCH /api/tasks/:id validates enabled is boolean', async () => {
     const api = harness.api();
-    const { status, body } = await api.patchJson<{ error: string }>(
+    const { status } = await api.patchJson<{ error: string }>(
       '/api/tasks/some-task',
       { enabled: 'yes' },
     );
 
-    // Even without taskManager, validation runs first — but actually
-    // the taskManager check comes first, so this returns 500.
-    // The test documents actual behavior.
-    expect(status).toBeGreaterThanOrEqual(400);
+    // enabled validation returns 400
+    expect(status).toBe(400);
   });
 
   describe('startup endpoint aggregation', () => {
@@ -88,7 +87,7 @@ describe('Graceful Degradation (missing dependencies)', () => {
 
       expect(status).toBe(200);
 
-      // All top-level keys should be present even without optional deps
+      // All top-level keys should be present
       expect(body).toHaveProperty('modelCapabilities');
       expect(body).toHaveProperty('conversations');
       expect(body).toHaveProperty('feedMessages');
@@ -101,7 +100,7 @@ describe('Graceful Degradation (missing dependencies)', () => {
       expect(body).toHaveProperty('commandTriggers');
     });
 
-    it('GET /api/startup returns empty arrays for missing dependencies', async () => {
+    it('GET /api/startup returns sensible defaults for empty data dirs', async () => {
       const api = harness.api();
       const { body } = await api.getJson<{
         tasks: unknown[];
@@ -111,12 +110,21 @@ describe('Graceful Degradation (missing dependencies)', () => {
         ragProjects: unknown[];
       }>('/api/startup');
 
+      // Empty tasks dir
       expect(body.tasks).toEqual([]);
-      expect(body.skills).toEqual([]);
+
+      // Skills may include builtins
+      expect(Array.isArray(body.skills)).toBe(true);
+
+      // No MCP servers
       expect(body.mcps).toEqual([]);
-      expect(body.tools.builtin).toEqual([]);
+
+      // Real native tools registered, no user or MCP tools
+      expect(body.tools.builtin.length).toBeGreaterThan(0);
       expect(body.tools.user).toEqual([]);
       expect(body.tools.mcp).toEqual({});
+
+      // Empty RAG dir
       expect(body.ragProjects).toEqual([]);
     });
 

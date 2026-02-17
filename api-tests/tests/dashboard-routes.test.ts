@@ -1,8 +1,8 @@
 /**
  * API Tests — Dashboard Routes
  *
- * Covers the dashboard REST API endpoints using the FullServerHarness.
- * The FullServerHarness boots with TraceStore + LLMService, which enables
+ * Covers the dashboard REST API endpoints using the ServerHarness.
+ * The ServerHarness boots with TraceStore + LLMService, which enables
  * the dashboard routes (POST/GET/DELETE snapshots, lineage queries).
  *
  * Tests exercise:
@@ -16,10 +16,10 @@
  */
 
 import { describe, it, expect, beforeAll, afterEach, afterAll } from 'vitest';
-import { FullServerHarness } from '../harness/index.js';
+import { ServerHarness } from '../harness/index.js';
 import { getDb } from '../../src/db/index.js';
 
-const harness = new FullServerHarness();
+const harness = new ServerHarness();
 
 beforeAll(() => harness.start());
 afterEach(() => harness.reset());

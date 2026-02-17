@@ -1,7 +1,7 @@
 /**
  * API Tests — Evaluation Routes
  *
- * Covers the evaluation REST API using the FullServerHarness
+ * Covers the evaluation REST API using the ServerHarness
  * (real LLMService + ToolRunner backed by simulator).
  *
  * Tests exercise:
@@ -16,11 +16,11 @@
  */
 
 import { describe, it, expect, beforeAll, afterEach, afterAll } from 'vitest';
-import { FullServerHarness } from '../harness/index.js';
+import { ServerHarness } from '../harness/index.js';
 import { unlinkSync, existsSync } from 'fs';
 import { join } from 'path';
 
-const harness = new FullServerHarness();
+const harness = new ServerHarness();
 
 // Track eval files created during tests so we can clean up
 const createdEvalFiles: string[] = [];

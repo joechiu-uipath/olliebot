@@ -1,7 +1,7 @@
 /**
  * API Tests — Mission Routes
  *
- * Covers the full mission REST API using the FullServerHarness
+ * Covers the full mission REST API using the ServerHarness
  * (real LLMService + ToolRunner + MissionManager backed by simulator).
  *
  * Tests exercise:
@@ -13,10 +13,10 @@
  */
 
 import { describe, it, expect, beforeAll, afterEach, afterAll } from 'vitest';
-import { FullServerHarness, seedMission, seedPillar, seedMetric, seedTodo } from '../harness/index.js';
+import { ServerHarness, seedMission, seedPillar, seedMetric, seedTodo } from '../harness/index.js';
 import { getDb } from '../../src/db/index.js';
 
-const harness = new FullServerHarness();
+const harness = new ServerHarness();
 
 beforeAll(() => harness.start());
 afterEach(() => harness.reset());

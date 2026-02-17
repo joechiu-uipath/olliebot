@@ -2,7 +2,7 @@
  * API Test Harness — barrel exports
  */
 
-export { ServerHarness, FullServerHarness, createStubSupervisor } from './server-harness.js';
+export { ServerHarness } from './server-harness.js';
 export { seedMission, seedPillar, seedMetric, seedTodo } from './server-harness.js';
 export type { SeedMissionData, SeedPillarData, SeedMetricData, SeedTodoData } from './server-harness.js';
 export { ApiClient } from './api-client.js';

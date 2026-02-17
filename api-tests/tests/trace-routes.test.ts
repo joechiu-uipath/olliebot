@@ -1,7 +1,7 @@
 /**
  * API Tests — Trace Routes
  *
- * Covers the tracing REST API endpoints using the FullServerHarness.
+ * Covers the tracing REST API endpoints using the ServerHarness.
  * Uses TraceStore directly to seed trace data, then queries via REST.
  *
  * Tests exercise:
@@ -15,10 +15,10 @@
  */
 
 import { describe, it, expect, beforeAll, afterEach, afterAll } from 'vitest';
-import { FullServerHarness } from '../harness/index.js';
+import { ServerHarness } from '../harness/index.js';
 import { getDb } from '../../src/db/index.js';
 
-const harness = new FullServerHarness();
+const harness = new ServerHarness();
 
 beforeAll(() => harness.start());
 afterEach(() => harness.reset());

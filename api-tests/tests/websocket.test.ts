@@ -68,15 +68,17 @@ describe('WebSocket Communication', () => {
       metadata: { conversationId: conv.id },
     });
 
-    // The stub supervisor echoes back via streaming
-    const start = await ws.waitForEvent('stream_start', 5000);
+    // The real supervisor streams back the LLM response
+    const start = await ws.waitForEvent('stream_start', 15_000);
     expect(start.type).toBe('stream_start');
 
-    const chunk = await ws.waitForEvent('stream_chunk', 5000);
+    const chunk = await ws.waitForEvent('stream_chunk', 15_000);
     expect(chunk.type).toBe('stream_chunk');
-    expect(chunk.chunk).toBe('stub-response');
+    // Real supervisor streams actual content from the LLM simulator
+    expect(typeof chunk.chunk).toBe('string');
+    expect((chunk.chunk as string).length).toBeGreaterThan(0);
 
-    const end = await ws.waitForEvent('stream_end', 5000);
+    const end = await ws.waitForEvent('stream_end', 15_000);
     expect(end.type).toBe('stream_end');
 
     await ws.close();

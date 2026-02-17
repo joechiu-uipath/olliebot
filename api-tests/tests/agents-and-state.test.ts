@@ -30,14 +30,16 @@ describe('Agent State & System', () => {
   // Agent list
   it('GET /api/agents returns supervisor identity', async () => {
     const api = harness.api();
-    const { status, body } = await api.getJson<Array<{ id: string; name: string }>>(
+    const { status, body } = await api.getJson<Array<{ id: string; name: string; role: string }>>(
       '/api/agents',
     );
 
     expect(status).toBe(200);
     expect(Array.isArray(body)).toBe(true);
     expect(body.length).toBeGreaterThanOrEqual(1);
-    expect(body[0].id).toBe('supervisor-stub');
+    // Real supervisor — check role rather than hardcoded stub id
+    expect(body[0].role).toBe('supervisor');
+    expect(body[0].name).toBeTruthy();
   });
 
   // Client count
@@ -73,9 +75,15 @@ describe('Agent State & System', () => {
       conversationId: conv.id,
     });
 
-    // Stub captures messages
-    const msgs = harness.supervisor.receivedMessages;
-    expect(msgs.some(m => m.content === 'Test message for supervisor')).toBe(true);
+    // Wait for the real supervisor to process the message
+    await new Promise(resolve => setTimeout(resolve, 500));
+
+    // Verify the message was persisted in the database
+    const { body } = await api.getJson<{
+      items: Array<{ role: string; content: string }>;
+    }>(`/api/conversations/${conv.id}/messages`);
+
+    expect(body.items.some(m => m.role === 'user' && m.content === 'Test message for supervisor')).toBe(true);
   });
 
   // API-006 — Error responses
