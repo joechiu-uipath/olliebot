@@ -27,6 +27,7 @@ import { ToolRunner } from '../../src/tools/runner.js';
 import { MissionManager } from '../../src/missions/manager.js';
 import { initMissionSchema } from '../../src/missions/schema.js';
 import { getDashboardStore } from '../../src/dashboard/index.js';
+import { TraceStore } from '../../src/tracing/trace-store.js';
 import { SimulatorLLMProvider } from './simulator-llm-provider.js';
 import { ApiClient } from './api-client.js';
 import { WsClient } from './ws-client.js';
@@ -304,10 +305,12 @@ export class FullServerHarness extends ServerHarness {
   private _toolRunner: ToolRunner | null = null;
   private _missionManager: MissionManager | null = null;
   private _missionsDir: string | null = null;
+  private _traceStore: TraceStore | null = null;
 
   get llmService() { return this._llmService!; }
   get toolRunner() { return this._toolRunner!; }
   get missionManager() { return this._missionManager!; }
+  get traceStore() { return this._traceStore!; }
 
   async start(): Promise<void> {
     // 1. Dependency simulator
@@ -328,6 +331,10 @@ export class FullServerHarness extends ServerHarness {
 
     // 4b. Dashboard schema (required by mission-routes dashboard endpoints)
     getDashboardStore().init();
+
+    // 4c. Trace store (required by trace-routes and dashboard-routes)
+    this._traceStore = new TraceStore();
+    this._traceStore.init();
 
     // 5. LLM provider backed by simulator
     const provider = new SimulatorLLMProvider(this.simulatorUrl);
@@ -361,6 +368,7 @@ export class FullServerHarness extends ServerHarness {
       llmService: this._llmService,
       toolRunner: this._toolRunner,
       missionManager: this._missionManager,
+      traceStore: this._traceStore!,
     };
 
     this['server'] = new AssistantServer(config);
@@ -377,6 +385,13 @@ export class FullServerHarness extends ServerHarness {
     db.rawExec('DELETE FROM pillars');
     db.rawExec('DELETE FROM missions');
     db.rawExec('DELETE FROM dashboard_snapshots');
+
+    // Clear trace tables (reverse dependency order)
+    db.rawExec('DELETE FROM token_reductions');
+    db.rawExec('DELETE FROM tool_calls');
+    db.rawExec('DELETE FROM llm_calls');
+    db.rawExec('DELETE FROM trace_spans');
+    db.rawExec('DELETE FROM traces');
 
     // Delegate to parent for standard tables
     await super.reset();

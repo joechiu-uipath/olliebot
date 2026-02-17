@@ -22,16 +22,9 @@ export default defineConfig({
       provider: 'v8',
       reporter: ['text', 'text-summary', 'html', 'lcov'],
       reportsDirectory: './coverage-api',
-      // Only measure the API surface — the code these tests are intended to exercise
+      // Measure everything under src/ that the API tests exercise
       include: [
-        'src/server/**/*.ts',
-        'src/channels/websocket.ts',
-        'src/db/index.ts',
-        'src/db/well-known-conversations.ts',
-        'src/settings/service.ts',
-        'src/missions/manager.ts',
-        'src/missions/schema.ts',
-        'src/evaluation/manager.ts',
+        'src/**/*.ts',
       ],
       exclude: [
         '**/*.test.ts',
