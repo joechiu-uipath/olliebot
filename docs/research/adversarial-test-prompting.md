@@ -693,6 +693,15 @@ export interface AdversarialTestResult {
   executionTimeMs: number;
 }
 
+interface ParsedAdversarialTest {
+  id: string;
+  attackVector: string;
+  hypothesis: string;
+  code: string;
+  expected: string;
+  severity: 'critical' | 'high' | 'medium' | 'low';
+}
+
 export class AdversarialTestRunner {
   constructor(
     private llmService: LLMService,
@@ -750,14 +759,14 @@ Severity threshold: ${def.adversarialConfig.severityThreshold}
     `.trim();
   }
   
-  private parseGeneratedTests(content: string): any[] {
+  private parseGeneratedTests(content: string): ParsedAdversarialTest[] {
     // Parse LLM response to extract test cases
     // Look for code blocks, test descriptions, etc.
     // Return structured test objects
     return [];
   }
   
-  private async executeTest(test: any): Promise<AdversarialTestResult> {
+  private async executeTest(test: ParsedAdversarialTest): Promise<AdversarialTestResult> {
     const startTime = Date.now();
     
     try {
@@ -992,7 +1001,31 @@ private validateTestCode(code: string): boolean {
 }
 ```
 
-**Important**: This validates syntax only. Validated code must still be executed in a sandboxed environment (e.g., `vm2`, isolated worker, or containerized runner) to prevent malicious code execution. Never directly eval() or execute untrusted code in the main process.
+**Important**: This validates syntax only. Validated code must still be executed in a sandboxed environment to prevent malicious code execution. Example using vm2:
+
+```typescript
+import { VM } from 'vm2';
+
+private async executeSandboxed(code: string): Promise<any> {
+  const vm = new VM({
+    timeout: 5000,           // 5 second timeout
+    sandbox: {
+      fetch,                 // Allow HTTP requests
+      console: {             // Allow logging
+        log: (...args) => console.log('[Sandbox]', ...args),
+        error: (...args) => console.error('[Sandbox]', ...args)
+      }
+    },
+    eval: false,             // Disable eval
+    wasm: false,             // Disable WebAssembly
+    fixAsync: true           // Fix async/await issues
+  });
+  
+  return vm.run(code);
+}
+```
+
+Never directly eval() or execute untrusted code in the main process.
 
 #### Issue 2: High false positive rate (>50%)
 
