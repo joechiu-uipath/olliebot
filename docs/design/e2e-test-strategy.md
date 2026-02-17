@@ -1,13 +1,13 @@
-# OllieBot E2E Test Strategy
+# OllieBot Test Strategy
 
-This document outlines a two-tier testing strategy for OllieBot, analyzing technology choices, trade-offs, and coverage approaches for the functional surface area defined in `e2e-test-plan.md`.
+This document outlines the three-tier testing strategy for OllieBot, analyzing technology choices, trade-offs, and coverage approaches for the functional surface area defined in `e2e-test-plan.md`.
 
 ---
 
 ## Table of Contents
 
 1. [Testing Philosophy](#testing-philosophy)
-2. [Two-Tier Test Architecture](#two-tier-test-architecture)
+2. [Three-Tier Test Architecture](#three-tier-test-architecture)
 3. [Technology Comparison](#technology-comparison)
 4. [Recommended Approach](#recommended-approach)
 5. [Test Coverage Mapping](#test-coverage-mapping)
@@ -34,7 +34,7 @@ This document outlines a two-tier testing strategy for OllieBot, analyzing techn
 
 ---
 
-## Two-Tier Test Architecture
+## Three-Tier Test Architecture
 
 ### Tier 1: Unit Tests (Vitest)
 
@@ -50,18 +50,38 @@ This document outlines a two-tier testing strategy for OllieBot, analyzing techn
 
 **Technology**: Vitest (already in place)
 
-### Tier 2: E2E Tests
+**Run command**: `pnpm test`
+
+### Tier 2: API Tests (Vitest + real server)
+
+**Purpose**: Test REST API endpoints, WebSocket lifecycle, and database persistence through the full server stack with simulated external dependencies.
+
+**Characteristics**:
+- Fast execution (~5ms per test)
+- Real Hono server, real SQLite (in-memory), real WebSocket
+- No outbound network — `SimulatorServer` absorbs all external calls
+- No mocks of service responses or DB data — everything through CRUD API
+- Parallel-safe — dynamic port allocation per test file
+- Fast reset — `DELETE FROM` + re-seed between tests (no server restart)
+
+**Current Coverage**: 20 test files, 218 tests covering server routes, agents pipeline, tools, tracing, dashboard, missions, evaluations, conversations, messages, settings, WebSocket.
+
+**Technology**: Vitest with custom test harnesses (`ServerHarness`, `FullServerHarness`, `AgentPipelineHarness`)
+
+**Run command**: `pnpm test:api` / `pnpm test:api:coverage`
+
+### Tier 3: E2E UI Tests (Playwright)
 
 **Purpose**: Test user-facing workflows through the UI with simulated backend.
 
 **Characteristics**:
 - Slower execution (~100ms-2s per test)
-- Real or simulated DOM rendering
+- Real browser (Chromium, headless)
 - Simulated network layer (no external calls)
 - Real SQLite database (test instance)
 - Focus on user workflows, UI interactions, data flow
 
-**Technology Options**: See comparison below.
+**Technology**: Playwright. See comparison below.
 
 ---
 
@@ -271,9 +291,9 @@ Included for completeness, but **not recommended** for OllieBot.
 
 ## Recommended Approach
 
-### Hybrid Strategy
+### Three-Tier Strategy
 
-Use Playwright, API integration tests, and Vitest for different test types:
+Use Vitest for unit and API tests, and Playwright for E2E UI tests:
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -281,20 +301,15 @@ Use Playwright, API integration tests, and Vitest for different test types:
 ├─────────────────────────────────────────────────────────┤
 │                                                         │
 │                      ┌─────────┐                        │
-│                      │ E2E     │  Playwright            │
+│                      │ E2E UI  │  Playwright            │
 │                      │ (~50)   │  Full user flows       │
 │                      └────┬────┘                        │
 │                           │                             │
 │               ┌───────────┴───────────┐                 │
-│               │   API Integration    │  Vitest + real   │
-│               │   (~50+)             │  server + in-mem │
+│               │    API Tests         │  Vitest + real   │
+│               │    (~200+)           │  server + in-mem │
 │               │                      │  SQLite          │
 │               └───────────┬───────────┘                 │
-│                           │                             │
-│                 ┌─────────┴─────────┐                   │
-│                 │   Integration     │  Vitest Browser   │
-│                 │   (~150)          │  Component combos │
-│                 └─────────┬─────────┘                   │
 │                           │                             │
 │        ┌──────────────────┴──────────────────┐          │
 │        │           Unit Tests                │  Vitest  │
@@ -313,28 +328,27 @@ Use Playwright, API integration tests, and Vitest for different test types:
 - Utility functions (parsing, formatting, validation)
 - Service methods (event emission, state management)
 
-#### API Integration Tests (Vitest + real server)
-- REST endpoints (health, conversations, messages, settings, agents, traces)
+#### API Tests (Vitest + real server)
+- REST endpoints (health, conversations, messages, settings, agents, traces, dashboards, tools)
 - WebSocket lifecycle (connect, stream, broadcast, disconnect)
+- Full agent pipeline (supervisor → LLM → streamed response via real SupervisorAgentImpl)
 - Database persistence through the API layer (CRUD, pagination, cursors)
 - Request validation and error responses (malformed JSON, 404s, 400s)
-- Concurrent access (parallel writes, connection management)
+- Tool registration, execution, and trace integration
+- Dashboard snapshot CRUD, LLM rendering, lineage versioning
+- Trace query endpoints (traces, LLM calls, tool calls, stats)
+- Mission/pillar management and evaluation lifecycle
 - Well-known conversation protection (delete/rename guards)
 
 See [`api-tests/`](../../api-tests/) for the implementation. Key properties:
 - **No mocks**: Real Hono server, real SQLite (in-memory), real WebSocket
 - **No outbound network**: `SimulatorServer` from `e2e/simulators/` absorbs all external calls
+- **Real agent pipeline**: `AgentPipelineHarness` uses real `SupervisorAgentImpl` backed by `SimulatorLLMProvider`
 - **Parallel-safe**: Dynamic port allocation (port 0) per test file
 - **Fast reset**: `DELETE FROM` + re-seed between tests (no server restart)
 - **Run command**: `pnpm test:api` / `pnpm test:api:coverage`
 
-#### Integration Tests (Vitest Browser Mode)
-- React components (rendering, interactions, state)
-- Context providers (WebSocket context, settings context)
-- Hooks (useConversation, useMessages, useWebSocket)
-- UI state machines (sidebar, modals, accordions)
-
-#### E2E Tests (Playwright)
+#### E2E UI Tests (Playwright)
 - Complete user workflows (send message → see response → persist)
 - Cross-component interactions (sidebar → chat → tool results)
 - WebSocket streaming (real-time updates, reconnection)
@@ -351,96 +365,97 @@ See [`api-tests/`](../../api-tests/) for the implementation. Key properties:
 
 | ID | Test Case | Tier | Notes |
 |----|-----------|------|-------|
-| CHAT-001 | Send simple message | E2E | Full flow with simulated LLM |
-| CHAT-002 | Streaming response | E2E | WebSocket streaming simulation |
-| CHAT-003 | Image attachment | E2E | File upload + display |
-| CHAT-004 | Conversation persistence | E2E | Refresh + data reload |
-| CHAT-005 | Create new conversation | Integration | Sidebar + API mock |
-| CHAT-006 | Switch conversations | E2E | Multi-component state |
-| CHAT-007 | Delete conversation | Integration | API mock + UI update |
-| CHAT-008 | Rename conversation | Integration | Inline edit component |
-| CHAT-009 | Auto-naming | E2E | LLM-triggered naming |
-| CHAT-010 | Clear messages | Integration | API mock + list clear |
-| CHAT-011 | History pagination | E2E | Scroll + API pagination |
-| CHAT-012 | Feed conversation | E2E | Task run integration |
-| CHAT-013 | Delegation display | E2E | WebSocket event rendering |
-| CHAT-014 | Tool execution display | E2E | Tool event lifecycle |
-| CHAT-015 | Error display | Integration | Error component |
-| CHAT-016 | Citations display | E2E | Citation extraction + render |
-| CHAT-017 | Think mode toggle | Integration | Input component state |
-| CHAT-018 | Think+ mode toggle | Integration | Input component state |
-| CHAT-019 | Deep Research toggle | Integration | Input component state |
-| CHAT-020 | Inline rename | Integration | Sidebar component |
-| CHAT-021 | Hashtag menu | Integration | Input + menu component |
-| CHAT-022 | Agent command chip | Integration | Input component |
-| CHAT-023 | Scroll-to-bottom | Integration | Chat area component |
-| CHAT-024 | Streaming cursor | Integration | Message component |
-| CHAT-025 | Token usage | E2E | Full response cycle |
+| CHAT-001 | Send simple message | E2E UI | Full flow with simulated LLM |
+| CHAT-002 | Streaming response | E2E UI | WebSocket streaming simulation |
+| CHAT-003 | Image attachment | E2E UI | File upload + display |
+| CHAT-004 | Conversation persistence | API | REST + DB persistence |
+| CHAT-005 | Create new conversation | API | Conversation CRUD |
+| CHAT-006 | Switch conversations | E2E UI | Multi-component state |
+| CHAT-007 | Delete conversation | API | REST API + well-known guard |
+| CHAT-008 | Rename conversation | API | REST API + validation |
+| CHAT-009 | Auto-naming | E2E UI | LLM-triggered naming |
+| CHAT-010 | Clear messages | API | REST API + list clear |
+| CHAT-011 | History pagination | API | Cursor-based pagination |
+| CHAT-012 | Feed conversation | E2E UI | Task run integration |
+| CHAT-013 | Delegation display | E2E UI | WebSocket event rendering |
+| CHAT-014 | Tool execution display | E2E UI | Tool event lifecycle |
+| CHAT-015 | Error display | E2E UI | Error component |
+| CHAT-016 | Citations display | E2E UI | Citation extraction + render |
+| CHAT-017 | Think mode toggle | E2E UI | Input component state |
+| CHAT-018 | Think+ mode toggle | E2E UI | Input component state |
+| CHAT-019 | Deep Research toggle | E2E UI | Input component state |
+| CHAT-020 | Inline rename | E2E UI | Sidebar component |
+| CHAT-021 | Hashtag menu | E2E UI | Input + menu component |
+| CHAT-022 | Agent command chip | E2E UI | Input component |
+| CHAT-023 | Scroll-to-bottom | E2E UI | Chat area component |
+| CHAT-024 | Streaming cursor | E2E UI | Message component |
+| CHAT-025 | Token usage | E2E UI | Full response cycle |
 
 #### Agent Delegation (12 tests)
 
 | ID | Test Case | Tier | Notes |
 |----|-----------|------|-------|
-| AGENT-001 to 004 | Delegate to specialist | E2E | LLM decision + worker spawn |
-| AGENT-005, 006 | Command triggers | E2E | Input parsing + delegation |
+| AGENT-001 to 004 | Delegate to specialist | API + E2E UI | Agent pipeline + UI display |
+| AGENT-005, 006 | Command triggers | API + E2E UI | Input parsing + delegation |
 | AGENT-007 | No re-delegation | Unit | Supervisor logic |
-| AGENT-008 | Delegation notification | E2E | WebSocket event + UI |
-| AGENT-009 | Response attribution | E2E | Agent metadata in response |
-| AGENT-010 | Parallel delegation | E2E | Multiple workers |
+| AGENT-008 | Delegation notification | E2E UI | WebSocket event + UI |
+| AGENT-009 | Response attribution | API | Agent metadata in response |
+| AGENT-010 | Parallel delegation | E2E UI | Multiple workers |
 | AGENT-011 | Sub-agent delegation | Unit | Worker delegation logic |
-| AGENT-012 | Delegation chain | E2E | Multi-level delegation |
+| AGENT-012 | Delegation chain | E2E UI | Multi-level delegation |
 
 #### Browser Automation (17 tests)
 
 | ID | Test Case | Tier | Notes |
 |----|-----------|------|-------|
-| BROWSER-001 | Create session | E2E | Tool call + session state |
+| BROWSER-001 | Create session | API | Tool call + session state |
 | BROWSER-002 to 006 | Browser actions | **Not testable** | Requires real Playwright |
-| BROWSER-007 | Close session | E2E | API call + cleanup |
-| BROWSER-008 | List sessions | Integration | API mock + list render |
+| BROWSER-007 | Close session | API | API call + cleanup |
+| BROWSER-008 | List sessions | API | REST endpoint |
 | BROWSER-009, 010 | Strategy selection | Unit | Strategy factory logic |
 | BROWSER-011 | Session timeout | Unit | Timer logic |
-| BROWSER-012 | Multiple sessions | E2E | Session manager state |
-| BROWSER-013 to 017 | UI preview features | Integration | Component rendering |
+| BROWSER-012 | Multiple sessions | API | Session manager state |
+| BROWSER-013 to 017 | UI preview features | E2E UI | Component rendering |
 
 #### Desktop Automation (15 tests)
 
 | ID | Test Case | Tier | Notes |
 |----|-----------|------|-------|
 | DESKTOP-001 to 010 | VNC/Sandbox operations | **Not testable** | Requires real Windows Sandbox |
-| DESKTOP-011 to 015 | UI display features | Integration | Component rendering with mock data |
+| DESKTOP-011 to 015 | UI display features | E2E UI | Component rendering with mock data |
 
 #### Tools (all suites)
 
 | Suite | Tier | Notes |
 |-------|------|-------|
-| Web & Search | Unit + E2E | Unit: parsing; E2E: tool call flow with fixtures |
+| Web & Search | Unit + API | Unit: parsing; API: tool registration + execution |
 | Code Execution | Unit | Pyodide/Monty execution with fixtures |
-| Media & Output | Unit + E2E | Unit: generation logic; E2E: display |
-| Memory | Unit + E2E | Unit: storage; E2E: retrieval in context |
-| System | E2E | Full delegation flow |
-| User-Defined | Unit | Tool generation and execution |
+| Media & Output | Unit + E2E UI | Unit: generation logic; E2E UI: display |
+| Memory | Unit + API | Unit: storage; API: retrieval in context |
+| System | API | Full delegation flow via agent pipeline |
+| User-Defined | Unit + API | Tool generation, registration, prefix handling |
 
 #### MCP Integration (9 tests)
 
 | ID | Test Case | Tier | Notes |
 |----|-----------|------|-------|
 | MCP-001 to 003 | Connection + execution | Unit | Mock MCP server responses |
-| MCP-004 to 006 | Enable/disable + reconnect | E2E | Settings + state management |
-| MCP-007 to 009 | UI features | Integration | Sidebar components |
+| MCP-004 to 006 | Enable/disable + reconnect | API + E2E UI | Settings + state management |
+| MCP-007 to 009 | UI features | E2E UI | Sidebar components |
 
 #### Missions, RAG, Skills, Deep Research, Evaluation
 
 All these suites follow similar patterns:
-- **API operations**: Unit tests with mocked DB
-- **UI display**: Integration tests with mock data
-- **Full workflows**: E2E tests with fixture responses
+- **Logic**: Unit tests with mocked dependencies
+- **API operations**: API tests with real server + in-memory DB
+- **UI display**: E2E UI tests with simulated backend
+- **Full workflows**: E2E UI tests with fixture responses
 
 #### TUI (29 tests)
 
 | Tier | Notes |
 |------|-------|
-| Integration | Use Ink testing utilities for terminal rendering |
+| Unit | Use Ink testing utilities for terminal rendering |
 | Separate test environment | Not browser-based; use `ink-testing-library` |
 
 ---
@@ -480,67 +495,68 @@ All these suites follow similar patterns:
 
 ## Implementation Roadmap
 
-### Phase 1: Foundation (Week 1-2)
+### Phase 1: Foundation (Week 1-2) ✅
 
-1. **Configure Playwright for E2E**
+1. **Configure Playwright for E2E UI**
    ```bash
    pnpm add -D @playwright/test
    npx playwright install
    ```
 
 2. **Create test infrastructure**
-   - `tests/e2e/` directory for Playwright tests
-   - `tests/fixtures/` for LLM response fixtures
-   - `tests/utils/` for shared test utilities
+   - `e2e/` directory for Playwright E2E UI tests + simulators
+   - `api-tests/` directory for API tests with harnesses + clients
+   - Simulator server for absorbing all outbound network calls
 
-3. **Implement core mocks**
-   - WebSocket simulator
-   - LLM response fixtures
-   - API route handlers
+3. **Implement core test harnesses**
+   - `ServerHarness` — basic Hono server with in-memory SQLite
+   - `FullServerHarness` — adds LLMService, ToolRunner, MissionManager, TraceStore
+   - `AgentPipelineHarness` — real SupervisorAgentImpl with SimulatorLLMProvider
+   - `SimulatorLLMProvider` — test-only LLM provider routing to simulator
 
 4. **Database isolation**
-   - Per-suite test database
-   - Seed data utilities
-   - Cleanup hooks
+   - In-memory SQLite (`:memory:`) per test harness
+   - Seed data utilities (`seedMission`, `seedPillar`, `seedMetric`, `seedTodo`, `seedSnapshot`, etc.)
+   - Fast reset via `DELETE FROM` between tests (no server restart)
 
-### Phase 2: Core Flows (Week 3-4)
+### Phase 2: Core API Tests (Week 3-4) ✅
+
+1. **Server route tests** (50+ tests)
+   - Conversations, messages, settings CRUD
+   - Health, startup, model capabilities
+   - WebSocket lifecycle and streaming
+
+2. **Agent pipeline tests** (10+ tests)
+   - Real supervisor message handling
+   - LLM call tracing and recording
+   - Conversation persistence through agent pipeline
+
+3. **Domain route tests** (50+ tests)
+   - Dashboard snapshots (CRUD, render, lineage)
+   - Trace queries (traces, LLM calls, tool calls, stats)
+   - Mission/pillar management, evaluation lifecycle
+   - Tool registration, execution, event emission
+
+### Phase 3: E2E UI Tests (Week 5-6)
 
 1. **Chat flow tests** (10 tests)
-   - Send message, receive response
-   - Streaming display
-   - Conversation management
+   - Send message, see streaming response
+   - Conversation switching and management
+   - Tool execution display
 
-2. **Tool execution tests** (10 tests)
-   - Tool call display
-   - Result rendering
-   - Error handling
-
-3. **Agent delegation tests** (5 tests)
-   - Delegation notification
+2. **Agent delegation tests** (5 tests)
+   - Delegation notification in UI
    - Worker response attribution
 
-### Phase 3: Integration Tests (Week 5-6)
-
-1. **Configure Vitest Browser Mode**
-   ```bash
-   pnpm add -D @vitest/browser @testing-library/react
-   ```
-
-2. **Component tests** (50 tests)
-   - Chat input component
-   - Message list component
-   - Sidebar components
-   - Modal components
-
-### Phase 4: Expand Coverage (Week 7-8)
-
-1. **Remaining E2E tests** (30 tests)
+3. **Remaining E2E UI tests** (30 tests)
    - Missions mode
    - Evaluation mode
    - Logs mode
    - RAG projects
 
-2. **TUI tests** (20 tests)
+### Phase 4: Expand Coverage (Week 7-8)
+
+1. **TUI tests** (20 tests)
    - Separate test setup for Ink
    - Focus navigation
    - Slash commands
@@ -549,12 +565,12 @@ All these suites follow similar patterns:
 
 1. **GitHub Actions workflow**
    - Unit tests (fast, every PR)
-   - Integration tests (medium, every PR)
-   - E2E tests (slower, daily or pre-release)
+   - API tests (fast, every PR)
+   - E2E UI tests (slower, daily or pre-release)
 
 2. **Test reporting**
-   - Coverage reports
-   - Failure screenshots
+   - Coverage reports (`pnpm test:api:coverage`)
+   - Failure screenshots (Playwright)
    - Trace artifacts
 
 ---
@@ -565,50 +581,49 @@ Based on current OllieBot setup:
 
 | Technology | Version | Purpose |
 |------------|---------|---------|
-| Vitest | 4.0.18 | Unit + Integration tests |
-| Playwright | 1.58.1 | E2E tests (installed, needs config) |
+| Vitest | 4.0.18 | Unit + API tests |
+| Playwright | 1.58.1 | E2E UI tests |
 | React | 18.x | Frontend framework |
 | Vite | 5.x | Build tool |
-| MSW | 2.x | API mocking (to add) |
-| Testing Library | 14.x | Component testing (to add) |
 
 ---
 
-## Appendix: Sample Test File Structure
+## Appendix: Test File Structure
 
 ```
 olliebot/
 ├── src/
-│   └── **/*.test.ts          # Unit tests (existing)
-├── tests/
-│   ├── e2e/
-│   │   ├── chat.spec.ts      # Playwright E2E
-│   │   ├── delegation.spec.ts
-│   │   ├── tasks.spec.ts
+│   └── **/*.test.ts             # Unit tests (colocated with source)
+├── api-tests/
+│   ├── harness/
+│   │   ├── server-harness.ts    # ServerHarness, FullServerHarness
+│   │   ├── api-client.ts        # REST helper (getJson, postJson, etc.)
+│   │   ├── ws-client.ts         # WebSocket test client
+│   │   ├── simulator-llm-provider.ts  # Test-only LLM provider
+│   │   └── index.ts             # Barrel exports
+│   ├── tests/
+│   │   ├── health-and-startup.test.ts
+│   │   ├── conversations.test.ts
+│   │   ├── messages.test.ts
+│   │   ├── settings.test.ts
+│   │   ├── websocket.test.ts
+│   │   ├── trace-routes.test.ts
+│   │   ├── dashboard-routes.test.ts
+│   │   ├── mission-routes.test.ts
+│   │   ├── eval-routes.test.ts
+│   │   ├── server-routes.test.ts
+│   │   ├── agent-pipeline.test.ts
+│   │   ├── tools-and-services.test.ts
 │   │   └── ...
-│   ├── integration/
-│   │   ├── components/
-│   │   │   ├── ChatInput.test.tsx
-│   │   │   ├── MessageList.test.tsx
-│   │   │   └── ...
-│   │   └── hooks/
-│   │       ├── useWebSocket.test.ts
-│   │       └── ...
-│   ├── fixtures/
-│   │   ├── llm-responses/
-│   │   │   ├── simple-greeting.json
-│   │   │   ├── tool-call-web-search.json
-│   │   │   └── ...
-│   │   └── api-responses/
-│   │       ├── conversations.json
-│   │       └── ...
-│   └── utils/
-│       ├── websocket-simulator.ts
-│       ├── test-database.ts
-│       └── mock-handlers.ts
-├── playwright.config.ts
-├── vitest.config.ts          # Updated for browser mode
-└── vitest.workspace.ts       # Workspace config for multiple projects
+│   └── vitest.config.ts         # API test Vitest config
+├── e2e/
+│   ├── simulators/
+│   │   └── server.ts            # SimulatorServer (absorbs outbound calls)
+│   ├── tests/
+│   │   ├── chat.spec.ts         # Playwright E2E UI
+│   │   └── ...
+│   └── playwright.config.ts
+└── vitest.config.ts             # Root Vitest config (unit tests)
 ```
 
 ---
@@ -618,27 +633,29 @@ olliebot/
 | Tier | Technology | Test Count | Speed | Coverage Focus |
 |------|------------|------------|-------|----------------|
 | Unit | Vitest (Node.js) | ~500 | ~10ms/test | Logic, transformations |
-| **API Integration** | **Vitest + real server** | **~50+** | **~5ms/test** | **REST API, WebSocket, DB persistence** |
-| Integration | Vitest Browser | ~150 | ~200ms/test | Components, hooks |
-| E2E | Playwright | ~50 | ~1s/test | User workflows |
+| **API** | **Vitest + real server** | **~218** | **~5ms/test** | **REST API, WebSocket, agents, tools, DB** |
+| E2E UI | Playwright | ~50 | ~1s/test | User workflows |
 
-**Total estimated tests**: ~750+
+**Total estimated tests**: ~770+
 **Total estimated runtime**: ~5 minutes (parallel)
 
-### API Integration Test Coverage Target
+### API Test Coverage
 
-The API integration tests specifically measure coverage of the server-side API surface:
+The API tests measure coverage across the full `src/` directory. Current results (218 tests):
 
-| File | Description | Coverage Target |
-|------|-------------|-----------------|
-| `src/server/index.ts` | Main REST routes + WebSocket setup | Primary |
-| `src/server/eval-routes.ts` | Evaluation REST API | Future |
-| `src/server/mission-routes.ts` | Mission/pillar REST API | Future |
-| `src/server/voice-proxy.ts` | Voice WebSocket proxy | Out of scope (needs voice provider) |
-| `src/channels/websocket.ts` | WebSocket channel implementation | Primary |
-| `src/db/index.ts` | Database layer (repositories, pagination) | Primary |
-| `src/db/well-known-conversations.ts` | Well-known conversation seeding | Primary |
-| `src/settings/service.ts` | User settings persistence | Primary |
+| Module | Statements | Key Files |
+|--------|-----------|-----------|
+| `src/server` | 60% | index.ts, eval-routes.ts, mission-routes.ts |
+| `src/tracing` | 86% | trace-store.ts |
+| `src/dashboard` | 68% | dashboard-routes.ts, dashboard-store.ts, snapshot-engine.ts |
+| `src/tools` | 55% | runner.ts |
+| `src/agents` | 24% | supervisor.ts, base-agent.ts, registry.ts |
+| `src/llm` | 8% | service.ts (24%), model-capabilities.ts (100%) |
+| `src/db` | 52% | index.ts |
+| `src/missions` | 33% | manager.ts, schema.ts |
+| `src/settings` | 38% | service.ts |
+| `src/channels` | 17% | websocket.ts |
+| `src/server/voice-proxy.ts` | — | Out of scope (needs voice provider) |
 
 Run coverage: `pnpm test:api:coverage` (reports to `coverage-api/`)
 
