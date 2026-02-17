@@ -59,9 +59,6 @@ importers:
       js-tiktoken:
         specifier: ^1.0.21
         version: 1.0.21
-      playwright:
-        specifier: ^1.58.2
-        version: 1.58.2
       pngjs:
         specifier: ^7.0.0
         version: 7.0.0
@@ -141,6 +138,9 @@ importers:
       nodemon:
         specifier: ^3.1.0
         version: 3.1.11
+      playwright:
+        specifier: ^1.58.2
+        version: 1.58.2
       tsx:
         specifier: ^4.19.1
         version: 4.21.0
