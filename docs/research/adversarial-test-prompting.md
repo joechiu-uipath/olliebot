@@ -992,6 +992,8 @@ private validateTestCode(code: string): boolean {
 }
 ```
 
+**Important**: This validates syntax only. Validated code must still be executed in a sandboxed environment (e.g., `vm2`, isolated worker, or containerized runner) to prevent malicious code execution. Never directly eval() or execute untrusted code in the main process.
+
 #### Issue 2: High false positive rate (>50%)
 
 **Symptom**: Most failing tests are test errors, not real bugs
