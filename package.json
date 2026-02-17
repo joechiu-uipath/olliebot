@@ -22,14 +22,12 @@
     "typecheck": "tsc --noEmit",
     "migrate:json-to-sqlite": "tsx src/db/migrate-from-json.ts",
     "test": "vitest run",
-    "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:debug": "playwright test --debug",
     "test:e2e:report": "playwright show-report",
     "test:api": "vitest run --config api-tests/vitest.config.ts",
-    "test:api:watch": "vitest --config api-tests/vitest.config.ts",
     "test:api:coverage": "vitest run --config api-tests/vitest.config.ts --coverage"
   },
   "dependencies": {
