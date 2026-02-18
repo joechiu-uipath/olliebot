@@ -14,6 +14,7 @@
   --success: #4caf50;
   --warning: #ff9800;
   --error: #f44336;
+  --highlight: #64b5f6;
 
   /* Danger styling for destructive actions */
   --danger: #dc3545;
@@ -5716,6 +5717,42 @@ html, body {
   border-color: var(--accent);
 }
 
+/* LLM Call prev/next navigation */
+.logs-call-nav {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-left: auto;
+}
+
+.logs-nav-btn {
+  background: none;
+  border: 1px solid var(--border-color);
+  color: var(--text-secondary);
+  padding: 0.25rem 0.5rem;
+  border-radius: 0.25rem;
+  cursor: pointer;
+  font-size: 0.75rem;
+  transition: all 0.15s ease;
+}
+
+.logs-nav-btn:hover:not(:disabled) {
+  color: var(--text-primary);
+  border-color: var(--accent);
+}
+
+.logs-nav-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.logs-nav-position {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  min-width: 3rem;
+  text-align: center;
+}
+
 .logs-detail-summary {
   background: var(--bg-secondary);
   border: 1px solid var(--border-color);
@@ -5839,6 +5876,19 @@ html, body {
   align-items: center;
   gap: 0.5rem;
   font-size: 0.8125rem;
+}
+
+.logs-llm-seq {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.25rem;
+  height: 1.25rem;
+  background: var(--bg-tertiary);
+  border-radius: 0.25rem;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--text-secondary);
 }
 
 .logs-llm-model {
@@ -6026,6 +6076,7 @@ html, body {
 .logs-message-system .logs-message-role { background: rgba(156, 39, 176, 0.1); color: #ce93d8; }
 .logs-message-user .logs-message-role { background: rgba(33, 150, 243, 0.1); color: #42a5f5; }
 .logs-message-assistant .logs-message-role { background: rgba(76, 175, 80, 0.1); color: var(--success); }
+.logs-message-tool .logs-message-role { background: rgba(255, 152, 0, 0.1); color: #ffb74d; }
 
 .logs-message-content {
   padding: 0.5rem;
@@ -6037,6 +6088,11 @@ html, body {
   max-height: 200px;
   overflow-y: auto;
   margin: 0;
+}
+
+.logs-empty-content {
+  color: var(--text-muted);
+  font-style: italic;
 }
 
 /* Tool chips */
@@ -6054,6 +6110,32 @@ html, body {
   border-radius: 9999px;
   font-size: 0.6875rem;
   color: var(--text-secondary);
+  cursor: default;
+  transition: all 0.15s ease;
+}
+
+.logs-tool-chip.used {
+  background: rgba(100, 181, 246, 0.15);
+  border-color: var(--highlight);
+  color: var(--highlight);
+  font-weight: 500;
+  cursor: help;
+}
+
+.logs-tool-chip.used:hover {
+  background: rgba(100, 181, 246, 0.25);
+}
+
+.logs-tool-chip-count {
+  margin-left: 0.25rem;
+  font-size: 0.625rem;
+  opacity: 0.8;
+}
+
+.logs-tools-used-count {
+  font-size: 0.75rem;
+  font-weight: normal;
+  color: var(--highlight);
 }
 
 /* Tool use in LLM detail */
@@ -6075,7 +6157,7 @@ html, body {
 .logs-tool-use-name {
   display: inline-block;
   font-weight: 600;
-  color: var(--accent);
+  color: var(--highlight);
   font-size: 0.8125rem;
   margin-bottom: 0.25rem;
 }

@@ -103,7 +103,7 @@ function App() {
     computerUse: false,
     ragProjects: false,
   });
-  const [agentTasks, setAgentTasks] = useState([]);
+  const [scheduledTasks, setScheduledTasks] = useState([]);
   const [skills, setSkills] = useState([]);
   const [mcps, setMcps] = useState([]);
   const [tools, setTools] = useState({ builtin: [], user: [], mcp: {} });
@@ -289,7 +289,7 @@ function App() {
       setIsConnected,
       setConversations,
       setCurrentConversationId,
-      setAgentTasks,
+      setScheduledTasks,
       setBrowserSessions,
       setBrowserScreenshots,
       setSelectedBrowserSessionId,
@@ -384,7 +384,7 @@ function App() {
     }
 
     // Sidebar data
-    setAgentTasks(data.tasks);
+    setScheduledTasks(data.tasks);
     setSkills(data.skills);
     setMcps(data.mcps);
     setTools(data.tools);
@@ -1056,7 +1056,7 @@ function App() {
 
     if (success) {
       // Update the task in local state to show it's running
-      setAgentTasks((prev) =>
+      setScheduledTasks((prev) =>
         prev.map((t) =>
           t.id === taskId ? { ...t, status: 'running' } : t
         )
@@ -1136,7 +1136,7 @@ function App() {
     const newEnabled = !currentEnabled;
 
     // Optimistic UI update
-    setAgentTasks((prev) =>
+    setScheduledTasks((prev) =>
       prev.map((task) =>
         task.id === taskId
           ? { ...task, enabled: newEnabled }
@@ -1153,7 +1153,7 @@ function App() {
 
       if (res.ok) {
         const updatedTask = await res.json();
-        setAgentTasks((prev) =>
+        setScheduledTasks((prev) =>
           prev.map((task) =>
             task.id === taskId
               ? { ...task, ...updatedTask }
@@ -1163,7 +1163,7 @@ function App() {
       } else {
         console.error('Failed to toggle task:', await res.text());
         // Revert optimistic update
-        setAgentTasks((prev) =>
+        setScheduledTasks((prev) =>
           prev.map((task) =>
             task.id === taskId
               ? { ...task, enabled: currentEnabled }
@@ -1174,7 +1174,7 @@ function App() {
     } catch (error) {
       console.error('Error toggling task:', error);
       // Revert optimistic update
-      setAgentTasks((prev) =>
+      setScheduledTasks((prev) =>
         prev.map((task) =>
           task.id === taskId
             ? { ...task, enabled: currentEnabled }
@@ -2081,22 +2081,22 @@ function App() {
 
           {/* Accordions Section */}
           <div className="sidebar-accordions">
-            {/* Agent Tasks Accordion */}
+            {/* Scheduled Tasks Accordion */}
             <div className="accordion">
               <button
                 className={`accordion-header ${expandedAccordions.tasks ? 'expanded' : ''}`}
                 onClick={() => toggleAccordion('tasks')}
               >
                 <span className="accordion-icon">📋</span>
-                <span className="accordion-title">Agent Tasks</span>
+                <span className="accordion-title">Scheduled Tasks</span>
                 <span className="accordion-arrow">{expandedAccordions.tasks ? '▼' : '▶'}</span>
               </button>
               {expandedAccordions.tasks && (
                 <div className="accordion-content tasks-list">
-                  {agentTasks.length === 0 ? (
+                  {scheduledTasks.length === 0 ? (
                     <div className="accordion-empty">No active tasks</div>
                   ) : (
-                    agentTasks.map((task) => {
+                    scheduledTasks.map((task) => {
                       // Build tooltip content
                       const tooltipLines = [];
                       if (task.description) {

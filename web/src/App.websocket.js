@@ -26,7 +26,7 @@ export function createMessageHandler(deps) {
     setIsConnected,
     setConversations,
     setCurrentConversationId,
-    setAgentTasks,
+    setScheduledTasks,
     setBrowserSessions,
     setBrowserScreenshots,
     setSelectedBrowserSessionId,
@@ -527,7 +527,7 @@ export function createMessageHandler(deps) {
   }
 
   function handleTaskUpdated(data) {
-    setAgentTasks((prev) =>
+    setScheduledTasks((prev) =>
       prev.map((t) =>
         t.id === data.task.id ? { ...t, ...data.task } : t
       )
