@@ -11,7 +11,7 @@ Add a DB-backed, per-turn TODO list that the supervisor agent uses for planning 
 | **Turn ID** | Already exists — `turnId` field on `messages` and `traces` tables. Set as `message.metadata?.turnId \|\| message.id` in supervisor's `handleMessage`. |
 | **Mission TODOs** | Separate system — `mission_todos` table scoped to missions/pillars, persists across turns. Not reusable here (different lifecycle, different schema). |
 | **Tool loop** | `generateStreamingResponse` runs up to `AGENT_MAX_TOOL_ITERATIONS = 10` iterations. Each iteration: LLM call → tool execution → repeat. |
-| **Delegation** | `delegate` tool in supervisor: `await`s the worker via `handleDelegationFromTool` → `await agent.handleDelegatedTask(...)`, then `return`s (exits loop). The supervisor **waits** for the worker to finish but does not resume its own loop afterward. Workers handle sub-delegation inline — they `await` sub-agent results and continue their loop. |
+| **Delegation** | Supervisor `await`s the worker via `handleDelegationFromTool` → `await agent.handleDelegatedTask(...)`. After delegation completes, the supervisor resumes its tool loop with the worker's result, and can delegate again or continue working directly. (Updated — previously the loop exited after a single delegation.) |
 
 ---
 
@@ -197,9 +197,9 @@ if (this.hasToolAccess('create_todo', allowedTools)) {
 
 ### Tool Context Injection
 
-The `create_todo`, `list_todo`, and `complete_todo` tools need access to `turnId` and `conversationId` without the LLM providing them. Two options:
+The `create_todo`, `list_todo`, and `complete_todo` tools need access to `turnId` and `conversationId` without the LLM providing them.
 
-**Option A — Tool execution context (recommended):** The supervisor already passes context through `executeToolsWithCitations`. We extend the tool execution signature so native tools receive a `context` object:
+**Approach — Tool execution context:** The supervisor already passes context through `executeToolsWithCitations`. We extend the tool execution signature so native tools receive a `context` object:
 
 ```typescript
 interface ToolExecutionContext {
@@ -210,8 +210,6 @@ interface ToolExecutionContext {
 ```
 
 The supervisor sets this before entering the tool loop. Each todo tool reads `turnId` from context rather than from LLM params.
-
-**Option B — Closure injection:** When registering tools, bind `turnId` via closure. Less clean since turnId changes per request.
 
 ### Tool Loop Iteration Limit
 
@@ -253,65 +251,33 @@ src/tools/native/
 
 ---
 
-## Design Issues & Ambiguities To Resolve
+## Design Decisions
 
-### Issue 1: Delegation Exits the Supervisor Loop
+### 1. Delegation Resumes the Supervisor Loop — RESOLVED (implemented)
 
-**Current behavior:** The supervisor already `await`s the worker (line 573: `await this.handleDelegationFromTool(...)` → line 802: `await agent.handleDelegatedTask(...)`). The supervisor waits for the worker to finish. However, after the await, it `return`s on line 575 instead of continuing the tool loop.
+The supervisor now resumes its tool loop after delegation completes. `handleDelegationFromTool` returns the worker's result string, the delegate tool result is updated with the worker's output, and the loop continues. The supervisor can delegate multiple times in a single turn.
 
-Current flow:
-```
-supervisor creates 3 todos →
-  picks todo #1 (agentType: 'researcher') →
-    calls delegate tool →
-      supervisor AWAITS worker completion ← worker finishes
-      supervisor RETURNS ← loop does not continue to todo #2 and #3
-```
+See commit: "Allow supervisor to resume loop after delegation" on this branch.
 
-**Proposed resolution — delegate-and-resume:**
+### 2. Conversation History Window
 
-The fix is straightforward because the worker already demonstrates this pattern for sub-delegation (worker.ts lines 381-496). After sub-delegation completes, the worker feeds the result back into `llmMessages` and continues looping. We apply the same pattern to the supervisor:
+Include the original user message and the current todo list summary as part of the system prompt context for each LLM call within the turn. This ensures the LLM never loses sight of the plan, even when older messages scroll out of the `CONVERSATION_HISTORY_LIMIT = 10` window.
 
-1. Remove the `return` on line 575 of `generateStreamingResponse`
-2. After `await this.handleDelegationFromTool(...)`, capture the worker's result
-3. Push the assistant tool-use message and updated tool result (with the worker's output) into `llmMessages`
-4. Start a new stream for the supervisor's next iteration
-5. Let the loop continue — the LLM sees the delegation result and picks up the next todo
+Before each LLM call in the tool loop, prepend a synthetic context message with the current todo state (from `list_todo` DB query). This is lighter than increasing the history limit.
 
-This requires `handleDelegationFromTool` to return the worker's result string (currently it returns `void`). The worker already sends a `task_result` message on completion — we just need to surface that to the supervisor.
+### 3. Incomplete Plans on Turn End
 
-**Scope:** This change is localized to `supervisor.ts` lines 522-576 and `handleDelegationFromTool`. No changes to worker, tool runner, or DB layer.
+Remaining items stay as `pending` or `in_progress` in the DB (no auto-cancellation). The supervisor's final message to the user should mention incomplete items. On the next turn, the supervisor does NOT automatically resume old todos — turn todos are scoped to the turn that created them. The user can ask to continue, which creates a new turn with new todos.
 
-### Issue 2: Conversation History Window
+Rationale: Auto-resuming across turns adds complexity (detecting stale todos, re-establishing context) and could surprise users. Explicit is better.
 
-**Problem:** `CONVERSATION_HISTORY_LIMIT = 10` messages are sent to the LLM. With planning, a single turn could generate 20+ messages (tool calls + results). The LLM would lose context of early todos and the original user request.
+### 4. Tool Access for Workers
 
-**Proposed resolution:** Include the original user message and the current todo list summary as part of the system prompt context for each LLM call within the turn. This ensures the LLM never loses sight of the plan, even when older messages scroll out of the history window.
+Only the supervisor has access to turn todo tools. Workers don't know about the plan. The supervisor marks items complete after delegation returns. This keeps plan management centralized.
 
-Implementation: Before each LLM call in the tool loop, prepend a synthetic context message with the current todo state (from `list_todo` DB query). This is lighter than increasing the history limit.
+### 5. Concurrent Tool Execution
 
-### Issue 3: Incomplete Plans on Turn End
-
-**Problem:** What happens if the turn ends (loop max reached, error, etc.) with pending todos?
-
-**Proposed resolution:**
-- Remaining items stay as `pending` or `in_progress` in the DB (no auto-cancellation).
-- The supervisor's final message to the user should mention incomplete items.
-- On the next turn, the supervisor does NOT automatically resume old todos. Turn todos are scoped to the turn that created them. The user can ask to continue, which creates a new turn with new todos.
-
-**Rationale:** Auto-resuming across turns adds complexity (detecting stale todos, re-establishing context) and could surprise users. Explicit is better.
-
-### Issue 4: Tool Access for Workers
-
-**Question:** Should worker agents (when delegated to) have access to `complete_todo`?
-
-**Proposed resolution for v1:** No. Only the supervisor has access to turn todo tools. Workers don't know about the plan. The supervisor marks items complete after it finishes executing each step. This keeps the plan management centralized.
-
-### Issue 5: Concurrent Tool Execution
-
-**Question:** The supervisor sometimes batches tool calls. Should multiple todo items be executed in parallel?
-
-**Proposed resolution for v1:** No, sequential execution only. The supervisor picks one todo at a time, executes it, marks it complete, then moves to the next. Parallel execution adds complexity around error handling and status tracking. Keep it simple.
+Sequential execution only. The supervisor picks one todo at a time, executes it, marks it complete, then moves to the next. Parallel execution adds complexity around error handling and status tracking.
 
 ---
 

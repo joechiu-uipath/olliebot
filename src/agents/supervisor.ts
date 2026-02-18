@@ -95,8 +95,10 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
   private conversationMessageCount: Map<string, number> = new Map(); // Track message counts for auto-naming
   // Track messages currently being processed to prevent re-processing due to timeouts/retries
   private processingMessages: Set<string> = new Set();
-  // Track which messages have had delegation performed to prevent re-delegation
+  // Track which messages have had delegation performed to prevent concurrent re-delegation
   private delegatedMessages: Set<string> = new Set();
+  // Capture delegation results by agent ID (populated by handleAgentCommunication, read by handleDelegationFromTool)
+  private delegationResults: Map<string, { result: string; status: string }> = new Map();
   // Mutex for message deduplication to prevent race conditions
   private messageProcessingMutex = new Mutex();
 
@@ -365,7 +367,7 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
     traceId?: string,
     spanId?: string
   ): Promise<void> {
-    const streamId = uuid();
+    let streamId = uuid();
     let fullResponse = '';
 
     // Citation tracking - sources collected from tool executions
@@ -522,26 +524,6 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
             // Check if delegate tool was called
             const delegateResult = results.find(r => r.toolName === 'delegate' && r.success);
             if (delegateResult) {
-              // Check if we've already delegated for this message (prevent re-delegation on retries)
-              // Use mutex to make check-then-add atomic and prevent race conditions
-              const shouldDelegate = await this.messageProcessingMutex.runExclusive(() => {
-                if (this.delegatedMessages.has(message.id)) {
-                  console.log(`[${this.identity.name}] Already delegated for message ${message.id}, skipping`);
-                  return false;
-                }
-                this.delegatedMessages.add(message.id);
-                return true;
-              });
-
-              if (!shouldDelegate) {
-                // End stream and return without re-delegating
-                this.endStreamWithCitations(channel, streamId, conversationId, undefined, turnUsage);
-                if (unsubscribeTool) {
-                  unsubscribeTool();
-                }
-                return;
-              }
-
               // Extract delegation params from tool output
               const delegationParams = delegateResult.output as {
                 type: string;
@@ -551,7 +533,7 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
                 customEmoji?: string;
               };
 
-              // End the stream before delegation (no citations for delegated tasks, but include usage)
+              // End the current stream before delegation (worker will start its own stream)
               this.endStreamWithCitations(channel, streamId, conversationId, undefined, turnUsage);
 
               // Save any response content before delegation
@@ -560,19 +542,57 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
                 this.saveAssistantMessageWithContext(fullResponse.trim(), conversationId, turnId, { reasoningMode, usage: turnUsage });
               }
 
-              // Delegation logging handled by handleDelegationFromTool
-
               // Unsubscribe from tool events BEFORE delegating
               // This prevents duplicate tool events when the sub-agent uses the same toolRunner
               if (unsubscribeTool) {
                 unsubscribeTool();
-                unsubscribeTool = undefined; // Prevent double unsubscribe in finally block
+                unsubscribeTool = undefined;
               }
 
-              // Perform the delegation
-              await this.handleDelegationFromTool(delegationParams, message, channel, conversationId, turnId, traceId, spanId);
+              // Perform the delegation and capture the worker's result
+              const workerResult = await this.handleDelegationFromTool(delegationParams, message, channel, conversationId, turnId, traceId, spanId);
 
-              return;
+              // Update the delegate tool result with the worker's actual output
+              // so the LLM sees what the sub-agent produced on the next loop iteration
+              const delegateIndex = results.indexOf(delegateResult);
+              if (delegateIndex >= 0) {
+                results[delegateIndex] = {
+                  ...results[delegateIndex],
+                  output: {
+                    ...delegateResult.output as Record<string, unknown>,
+                    result: workerResult,
+                  },
+                };
+              }
+
+              // Re-subscribe to tool events after delegation completes
+              // (supervisor may execute more tools in subsequent iterations)
+              if (this.toolRunner) {
+                unsubscribeTool = this.toolRunner.onToolEvent((event) => {
+                  if (event.callerId && event.callerId !== callerId) {
+                    return;
+                  }
+                  const messageEventService = getMessageEventService();
+                  messageEventService.setChannel(channel);
+                  messageEventService.emitToolEvent(event, conversationId ?? null, {
+                    id: this.identity.id,
+                    name: this.identity.name,
+                    emoji: this.identity.emoji,
+                  }, turnId);
+                });
+              }
+
+              // Start a new stream for the supervisor's next iteration
+              streamId = uuid();
+              fullResponse = '';
+              channel.startStream(streamId, {
+                agentId: this.identity.id,
+                agentName: this.identity.name,
+                agentEmoji: this.identity.emoji,
+                conversationId,
+              });
+
+              // Fall through to push messages into llmMessages and continue the loop
             }
 
             // Add assistant message with tool use to conversation
@@ -750,7 +770,7 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
     turnId: string | undefined,
     traceId?: string,
     spanId?: string
-  ): Promise<void> {
+  ): Promise<string> {
     const { type, mission, customName, customEmoji, rationale } = params;
 
     try {
@@ -797,23 +817,22 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
       // Create task assignment
       await this.delegateTask(mission);
 
-      // Have the sub-agent handle the message
+      // Have the sub-agent handle the message and wait for completion
+      // The worker sends a task_result message via sendToAgent before handleDelegatedTask resolves.
+      // Since routeCommunication → receiveFromAgent → handleAgentCommunication is awaited synchronously,
+      // the result is captured in this.delegationResults by the time this await returns.
       agent.registerChannel(channel);
       await agent.handleDelegatedTask(originalMessage, mission, channel);
 
+      // Retrieve the worker's result (stored by handleAgentCommunication during the await above)
+      const delegationResult = this.delegationResults.get(agent.identity.id);
+      this.delegationResults.delete(agent.identity.id);
+
+      return delegationResult?.result || '';
+
     } catch (error) {
       console.error(`[${this.identity.name}] Delegation failed:`, error);
-      // Fall back to handling directly
-      const fallbackResponse = await this.generateResponse([
-        ...this.conversationHistory.slice(-CONVERSATION_HISTORY_LIMIT),
-        {
-          id: uuid(),
-          role: 'system',
-          content: 'Delegation failed. Please respond directly to the user.',
-          createdAt: new Date(),
-        },
-      ]);
-      await this.sendMessage(fallbackResponse, { conversationId });
+      return `Delegation to ${type} failed: ${error instanceof Error ? error.message : String(error)}`;
     }
   }
 
@@ -960,6 +979,11 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
           task.result = payload.result;
           task.completedAt = new Date();
         }
+        // Store result by agent ID so handleDelegationFromTool can retrieve it
+        this.delegationResults.set(comm.fromAgent, {
+          result: payload.result || '',
+          status: payload.status || 'completed',
+        });
         break;
       }
       case 'status_update': {
