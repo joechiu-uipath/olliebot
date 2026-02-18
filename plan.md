@@ -11,7 +11,7 @@ Add a DB-backed, per-turn TODO list that the supervisor agent uses for planning 
 | **Turn ID** | Already exists — `turnId` field on `messages` and `traces` tables. Set as `message.metadata?.turnId \|\| message.id` in supervisor's `handleMessage`. |
 | **Mission TODOs** | Separate system — `mission_todos` table scoped to missions/pillars, persists across turns. Not reusable here (different lifecycle, different schema). |
 | **Tool loop** | `generateStreamingResponse` runs up to `AGENT_MAX_TOOL_ITERATIONS = 10` iterations. Each iteration: LLM call → tool execution → repeat. |
-| **Delegation** | `delegate` tool exits `generateStreamingResponse` immediately. Supervisor does NOT wait for worker completion and does NOT resume after delegation. One delegation per turn max. |
+| **Delegation** | `delegate` tool in supervisor: `await`s the worker via `handleDelegationFromTool` → `await agent.handleDelegatedTask(...)`, then `return`s (exits loop). The supervisor **waits** for the worker to finish but does not resume its own loop afterward. Workers handle sub-delegation inline — they `await` sub-agent results and continue their loop. |
 
 ---
 
@@ -255,34 +255,32 @@ src/tools/native/
 
 ## Design Issues & Ambiguities To Resolve
 
-### Issue 1: Delegation Breaks the Drain Loop (CRITICAL)
+### Issue 1: Delegation Exits the Supervisor Loop
 
-**Problem:** When the supervisor calls the `delegate` tool, `generateStreamingResponse` returns immediately. The supervisor does NOT wait for the worker to finish and does NOT resume processing remaining todos.
+**Current behavior:** The supervisor already `await`s the worker (line 573: `await this.handleDelegationFromTool(...)` → line 802: `await agent.handleDelegatedTask(...)`). The supervisor waits for the worker to finish. However, after the await, it `return`s on line 575 instead of continuing the tool loop.
 
 Current flow:
 ```
 supervisor creates 3 todos →
   picks todo #1 (agentType: 'researcher') →
     calls delegate tool →
-      generateStreamingResponse RETURNS ← turn ends here
-      todo #2 and #3 never executed
+      supervisor AWAITS worker completion ← worker finishes
+      supervisor RETURNS ← loop does not continue to todo #2 and #3
 ```
 
-**Proposed resolution — Keep delegation out of scope for v1:**
+**Proposed resolution — delegate-and-resume:**
 
-For the initial implementation, the supervisor should execute all todo items **directly** (using its own tools) rather than delegating. The `agentType` field in the schema is stored for future use but not acted upon in v1.
+The fix is straightforward because the worker already demonstrates this pattern for sub-delegation (worker.ts lines 381-496). After sub-delegation completes, the worker feeds the result back into `llmMessages` and continues looping. We apply the same pattern to the supervisor:
 
-The system prompt instruction would say:
-> Execute each task yourself using available tools. The `agentType` field is for documentation purposes — do not delegate tasks from the plan.
+1. Remove the `return` on line 575 of `generateStreamingResponse`
+2. After `await this.handleDelegationFromTool(...)`, capture the worker's result
+3. Push the assistant tool-use message and updated tool result (with the worker's output) into `llmMessages`
+4. Start a new stream for the supervisor's next iteration
+5. Let the loop continue — the LLM sees the delegation result and picks up the next todo
 
-This avoids the architectural problem entirely. A future iteration can add a "delegate-and-resume" pattern where:
-- `handleDelegationFromTool` awaits worker completion
-- Control returns to the tool loop after delegation
-- Supervisor continues with remaining todos
+This requires `handleDelegationFromTool` to return the worker's result string (currently it returns `void`). The worker already sends a `task_result` message on completion — we just need to surface that to the supervisor.
 
-**Alternative (more complex):** Modify `generateStreamingResponse` to not exit on delegation — instead, await the delegation result and continue the loop. This is a larger refactor of the supervisor's delegation model and should be a separate change.
-
-**Question for user:** Is keeping delegation out of v1 acceptable, or is delegate-and-resume a hard requirement?
+**Scope:** This change is localized to `supervisor.ts` lines 522-576 and `handleDelegationFromTool`. No changes to worker, tool runner, or DB layer.
 
 ### Issue 2: Conversation History Window
 
