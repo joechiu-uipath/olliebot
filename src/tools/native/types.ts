@@ -45,6 +45,12 @@ export interface ToolExecutionContext {
     total?: number;
     message?: string;
   }) => void;
+  /** Conversation ID for the current request (set by supervisor). */
+  conversationId?: string;
+  /** Turn ID for the current request (set by supervisor). */
+  turnId?: string;
+  /** Agent ID of the caller (set by supervisor). */
+  agentId?: string;
 }
 
 export interface NativeTool {

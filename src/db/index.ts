@@ -281,6 +281,31 @@ class Database {
       END;
     `);
 
+    // Turn TODO items (per-turn task planning for supervisor agent)
+    this.sqlite.exec(`
+      CREATE TABLE IF NOT EXISTS turn_todos (
+        id TEXT PRIMARY KEY,
+        conversationId TEXT NOT NULL,
+        turnId TEXT NOT NULL,
+        title TEXT NOT NULL,
+        context TEXT NOT NULL DEFAULT '',
+        completionCriteria TEXT NOT NULL DEFAULT '',
+        agentType TEXT,
+        status TEXT NOT NULL DEFAULT 'pending'
+          CHECK(status IN ('pending', 'in_progress', 'completed', 'cancelled')),
+        priority INTEGER NOT NULL DEFAULT 0,
+        outcome TEXT,
+        createdAt TEXT NOT NULL,
+        startedAt TEXT,
+        completedAt TEXT
+      )
+    `);
+
+    this.sqlite.exec(`
+      CREATE INDEX IF NOT EXISTS idx_turn_todos_turn ON turn_todos(turnId, status);
+      CREATE INDEX IF NOT EXISTS idx_turn_todos_conversation ON turn_todos(conversationId, turnId);
+    `);
+
     // Set schema version
     this.sqlite.pragma(`user_version = ${SCHEMA_VERSION}`);
 

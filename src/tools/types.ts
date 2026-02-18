@@ -31,6 +31,12 @@ export interface ToolRequest {
   // Tracing context for recording tool calls
   traceId?: string;
   spanId?: string;
+  // Optional execution context passed to native tools (conversationId, turnId, agentId)
+  executionContext?: {
+    conversationId?: string;
+    turnId?: string;
+    agentId?: string;
+  };
 }
 
 // File attachment from tool execution (e.g., screenshots, generated images)

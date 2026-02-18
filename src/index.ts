@@ -47,6 +47,9 @@ import {
   MissionTodoUpdateTool,
   MissionTodoCompleteTool,
   MissionMetricRecordTool,
+  TurnTodoCreateTool,
+  TurnTodoListTool,
+  TurnTodoCompleteTool,
 } from './tools/index.js';
 import {
   ReadFrontendCodeTool,
@@ -55,6 +58,7 @@ import {
 } from './self-coding/index.js';
 import { TaskManager } from './tasks/index.js';
 import { MissionManager, initMissionSchema, validateMissionConversations } from './missions/index.js';
+import { TurnTodoRepository } from './todos/index.js';
 import { MemoryService } from './memory/index.js';
 import { UserToolManager } from './tools/user/index.js';
 import {
@@ -497,6 +501,13 @@ async function main(): Promise<void> {
   toolRunner.registerNativeTool(new MissionTodoCompleteTool(missionManager));
   toolRunner.registerNativeTool(new MissionMetricRecordTool(missionManager));
   console.log('[Init] Mission tools registered (todo_create, todo_update, todo_complete, metric_record)');
+
+  // Register turn TODO tools (supervisor-only task planning)
+  const turnTodoRepository = new TurnTodoRepository();
+  toolRunner.registerNativeTool(new TurnTodoCreateTool(turnTodoRepository));
+  toolRunner.registerNativeTool(new TurnTodoListTool(turnTodoRepository));
+  toolRunner.registerNativeTool(new TurnTodoCompleteTool(turnTodoRepository));
+  console.log('[Init] Turn TODO tools registered (create_todo, list_todo, complete_todo)');
 
   // Create supervisor agent (multi-agent architecture)
   console.log('[Init] Creating supervisor agent...');

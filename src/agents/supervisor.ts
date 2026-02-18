@@ -18,6 +18,7 @@ import type { LLMService } from '../llm/service.js';
 import type { LLMMessage } from '../llm/types.js';
 import { getDb } from '../db/index.js';
 import { isWellKnownConversation } from '../db/well-known-conversations.js';
+import { TurnTodoRepository } from '../todos/index.js';
 import { formatToolResultBlocks } from '../utils/index.js';
 import { logSystemPrompt } from '../utils/prompt-logger.js';
 import type { CitationSource, StoredCitationData } from '../citations/types.js';
@@ -30,6 +31,7 @@ import {
   SUPERVISOR_NAME,
   CONVERSATION_HISTORY_LIMIT,
   AGENT_MAX_TOOL_ITERATIONS,
+  AGENT_MAX_TOOL_ITERATIONS_WITH_PLAN,
   SUPERVISOR_MAX_CONCURRENT_TASKS,
   MESSAGE_DEDUP_WINDOW_MS,
   RECENT_CONVERSATION_WINDOW_MS,
@@ -87,6 +89,28 @@ Partial list of browser related tools:
  - browser_session: use this to launch a browser instance
  - browser_navigate: use this to go to a specific URL
  - browser_action: use this to perform actions like click, type and other into the browser
+`;
+
+const TASK_PLANNING_SECTION = `
+
+## Task Planning & Execution
+
+For complex requests that involve multiple distinct steps, use the task planning system:
+
+1. **Plan first**: Break the objective into individual tasks and call \`create_todo\` with the full list.
+2. **Execute sequentially**: After creating the plan, use \`list_todo\` to see remaining items. Pick the next pending item, execute it (directly or via delegation), then call \`complete_todo\` with the outcome.
+3. **Drain before responding**: You MUST NOT produce a final response to the user until all TODO items are completed or cancelled. After completing each item, check \`list_todo\` for remaining work.
+4. **Skip planning for simple tasks**: If the user's request can be handled in 1-2 tool calls, respond directly without creating a plan.
+
+When to use planning:
+- Multi-step research or analysis
+- Tasks requiring multiple tool calls across different domains
+- Requests that explicitly ask for several things
+
+When NOT to use planning:
+- Simple factual questions
+- Single tool calls (web search, screenshot, etc.)
+- Casual conversation
 `;
 
 export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAgent {
@@ -153,6 +177,11 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
     // Add browser section if browser_session tool is available
     if (this.hasToolAccess('browser_session', allowedTools)) {
       prompt += BROWSER_SECTION;
+    }
+
+    // Add task planning section if turn todo tools are available
+    if (this.hasToolAccess('create_todo', allowedTools)) {
+      prompt += TASK_PLANNING_SECTION;
     }
 
     return prompt;
@@ -472,9 +501,12 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
       ];
 
       // Tool execution loop - continues until LLM stops requesting tools
+      // Dynamic limit: extends when turn todos are active (plans need more iterations)
       let continueLoop = true;
       let iterationCount = 0;
-      while (continueLoop && iterationCount < AGENT_MAX_TOOL_ITERATIONS) {
+      let effectiveMaxIterations = AGENT_MAX_TOOL_ITERATIONS;
+      const turnTodoRepo = new TurnTodoRepository();
+      while (continueLoop && iterationCount < effectiveMaxIterations) {
         iterationCount++;
 
         if (tools.length > 0 && this.toolRunner) {
@@ -511,7 +543,8 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
             // Execute requested tools with citation extraction
             // callerId includes conversationId to ensure correct event routing
             const toolRequests = response.toolUse.map((tu) =>
-              this.toolRunner!.createRequest(tu.id, tu.name, tu.input, undefined, callerId, { traceId })
+              this.toolRunner!.createRequest(tu.id, tu.name, tu.input, undefined, callerId, { traceId },
+                { conversationId, turnId, agentId: this.identity.id })
             );
 
             const { results, citations } = await this.toolRunner.executeToolsWithCitations(toolRequests);
@@ -609,6 +642,17 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
               role: 'user',
               content: toolResultBlocks,
             });
+
+            // Extend loop budget if turn todos are still pending
+            if (turnId) {
+              const todoCounts = turnTodoRepo.countByStatus(turnId);
+              if (todoCounts.pending > 0 || todoCounts.in_progress > 0) {
+                effectiveMaxIterations = Math.min(
+                  Math.max(effectiveMaxIterations, iterationCount + AGENT_MAX_TOOL_ITERATIONS),
+                  AGENT_MAX_TOOL_ITERATIONS_WITH_PLAN
+                );
+              }
+            }
 
             // Continue loop to let LLM process tool results
           } else {

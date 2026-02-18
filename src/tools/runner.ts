@@ -240,6 +240,7 @@ export class ToolRunner {
     }
 
     // Build execution context with a progress callback that emits tool_progress events
+    // Merge in any extra context fields (conversationId, turnId, agentId) from the request
     const context: ToolExecutionContext = {
       onProgress: (progress) => {
         this.emitEvent({
@@ -252,6 +253,7 @@ export class ToolRunner {
           callerId: request.callerId,
         });
       },
+      ...request.executionContext,
     };
 
     let result: ToolResult;
@@ -483,7 +485,8 @@ export class ToolRunner {
     parameters: Record<string, unknown>,
     groupId?: string,
     callerId?: string,
-    traceContext?: { traceId?: string; spanId?: string }
+    traceContext?: { traceId?: string; spanId?: string },
+    executionContext?: { conversationId?: string; turnId?: string; agentId?: string }
   ): ToolRequest {
     const { source } = this.parseToolName(toolName);
     return {
@@ -495,6 +498,7 @@ export class ToolRunner {
       callerId,
       traceId: traceContext?.traceId,
       spanId: traceContext?.spanId,
+      executionContext,
     };
   }
 }

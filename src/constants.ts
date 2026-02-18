@@ -103,6 +103,13 @@ export const WORKER_HISTORY_LIMIT = 5;
 export const AGENT_MAX_TOOL_ITERATIONS = 10;
 
 /**
+ * Extended iteration limit when the supervisor has an active turn TODO plan.
+ * Plans require more iterations (create + N*(execute + complete) + list checks).
+ * Hard cap to prevent runaway loops.
+ */
+export const AGENT_MAX_TOOL_ITERATIONS_WITH_PLAN = 50;
+
+/**
  * Maximum concurrent tasks a supervisor can manage.
  * Limits how many sub-agents can be spawned simultaneously.
  */
