@@ -19,9 +19,10 @@ const POLL_INTERVAL_MS = 5000;
 // ============================================================
 
 export function useLogsMode() {
-  // Read traceId from URL search params (for deep-linking)
+  // Read traceId and llmCallId from URL search params (for deep-linking)
   const [searchParams] = useSearchParams();
   const urlTraceId = searchParams.get('traceId');
+  const urlLlmCallId = searchParams.get('llmCallId');
 
   // Check if we're on the /traces route (to control polling)
   const location = useLocation();
@@ -39,8 +40,9 @@ export function useLogsMode() {
   const [workloadFilter, setWorkloadFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
 
-  // Track which trace ID we've already auto-loaded (to avoid re-fetching on re-renders)
+  // Track which IDs we've already auto-loaded (to avoid re-fetching on re-renders)
   const lastHandledTraceIdRef = useRef(null);
+  const lastHandledLlmCallIdRef = useRef(null);
 
   // Loading
   const [loading, setLoading] = useState(false);
@@ -141,6 +143,18 @@ export function useLogsMode() {
     }
   }, [urlTraceId, fetchFullTrace]);
 
+  // Handle LLM call ID from URL (deep-link to specific call)
+  useEffect(() => {
+    if (urlLlmCallId && urlLlmCallId !== lastHandledLlmCallIdRef.current) {
+      lastHandledLlmCallIdRef.current = urlLlmCallId;
+      fetchLlmCallDetail(urlLlmCallId);
+    } else if (!urlLlmCallId && lastHandledLlmCallIdRef.current) {
+      // URL no longer has llmCallId - clear selection
+      lastHandledLlmCallIdRef.current = null;
+      setSelectedLlmCall(null);
+    }
+  }, [urlLlmCallId, fetchLlmCallDetail]);
+
   // ---- WebSocket handler for real-time updates ----
 
   const handleLogEvent = useCallback((data) => {
@@ -222,6 +236,9 @@ export function useLogsMode() {
     selectedTrace,
     selectedLlmCall,
 
+    // URL params (for navigation)
+    urlTraceId,
+
     // View
     activeView,
     setActiveView,
@@ -299,6 +316,14 @@ function StatusBadge({ status }) {
 
 function WorkloadBadge({ workload }) {
   return <span className={`logs-badge workload-${workload}`}>{workload}</span>;
+}
+
+function StopReasonBadge({ stopReason }) {
+  // Stop reasons that indicate failures/issues
+  const errorReasons = ['content_filter', 'length', 'error', 'cancelled'];
+  const isError = errorReasons.includes(stopReason);
+  const cls = isError ? 'logs-badge error' : 'logs-badge completed';
+  return <span className={cls}>{stopReason}</span>;
 }
 
 // ============================================================
@@ -421,7 +446,7 @@ export const LogsMainContent = memo(function LogsMainContent({ logsMode }) {
   const navigate = useNavigate();
   const { activeView, traces, llmCalls, selectedTrace, selectedLlmCall,
     fetchFullTrace, fetchLlmCallDetail, setSelectedTrace, setSelectedLlmCall,
-    loading, error } = logsMode;
+    urlTraceId, loading, error } = logsMode;
 
   // Select a trace (updates URL and fetches details)
   const handleSelectTrace = useCallback((traceId) => {
@@ -429,23 +454,63 @@ export const LogsMainContent = memo(function LogsMainContent({ logsMode }) {
     fetchFullTrace(traceId);
   }, [navigate, fetchFullTrace]);
 
-  // Back navigation (clears URL param and selection)
-  const handleBack = useCallback(() => {
+  // Select an LLM call from trace detail (updates URL with llmCallId)
+  const handleSelectLlmCall = useCallback((callId) => {
+    const traceId = urlTraceId || selectedTrace?.trace?.id;
+    if (traceId) {
+      navigate(`/traces?traceId=${traceId}&llmCallId=${callId}`, { replace: true });
+    }
+    fetchLlmCallDetail(callId);
+  }, [navigate, urlTraceId, selectedTrace, fetchLlmCallDetail]);
+
+  // Select an LLM call from the global LLM calls list (includes call's own traceId for back navigation)
+  const handleSelectLlmCallFromList = useCallback((call) => {
+    if (call.traceId) {
+      navigate(`/traces?traceId=${call.traceId}&llmCallId=${call.id}`, { replace: true });
+    } else {
+      navigate(`/traces?llmCallId=${call.id}`, { replace: true });
+    }
+    fetchLlmCallDetail(call.id);
+  }, [navigate, fetchLlmCallDetail]);
+
+  // Back from trace detail to traces list
+  const handleBackToTraces = useCallback(() => {
     navigate('/traces', { replace: true });
     setSelectedTrace(null);
     setSelectedLlmCall(null);
   }, [navigate, setSelectedTrace, setSelectedLlmCall]);
 
+  // Back from LLM call detail to trace detail (or traces list if no trace context)
+  const handleBackToTrace = useCallback(() => {
+    const traceId = urlTraceId || selectedTrace?.trace?.id;
+    if (traceId) {
+      navigate(`/traces?traceId=${traceId}`, { replace: true });
+    } else {
+      // No trace context - go back to traces list
+      navigate('/traces', { replace: true });
+    }
+    setSelectedLlmCall(null);
+  }, [navigate, urlTraceId, selectedTrace, setSelectedLlmCall]);
+
   // ---- Detail views ----
   if (selectedLlmCall) {
-    return <LlmCallDetailView call={selectedLlmCall} onBack={handleBack} />;
+    // Get sibling LLM calls from the same trace for prev/next navigation
+    const siblingCalls = selectedTrace?.llmCalls || [];
+    return (
+      <LlmCallDetailView
+        call={selectedLlmCall}
+        onBack={handleBackToTrace}
+        siblingCalls={siblingCalls}
+        onSelectLlmCall={handleSelectLlmCall}
+      />
+    );
   }
   if (selectedTrace) {
     return (
       <TraceDetailView
         trace={selectedTrace}
-        onBack={handleBack}
-        onSelectLlmCall={fetchLlmCallDetail}
+        onBack={handleBackToTraces}
+        onSelectLlmCall={handleSelectLlmCall}
         loading={loading}
       />
     );
@@ -504,7 +569,7 @@ export const LogsMainContent = memo(function LogsMainContent({ logsMode }) {
             <div className="logs-empty">No LLM calls yet.</div>
           )}
           {llmCalls.map((c) => (
-            <div key={c.id} className="logs-list-row" onClick={() => fetchLlmCallDetail(c.id)}>
+            <div key={c.id} className="logs-list-row" onClick={() => handleSelectLlmCallFromList(c)}>
               <span className="logs-col-workload"><WorkloadBadge workload={c.workload} /></span>
               <span className="logs-col-model" title={c.model}>{c.model?.split('/').pop() || c.model}</span>
               <span className="logs-col-agent">{c.callerAgentName || '-'}</span>
@@ -578,13 +643,16 @@ const TraceDetailView = memo(function TraceDetailView({ trace, onBack, onSelectL
         <div className="logs-detail-section">
           <h4>LLM Calls ({llmCalls.length})</h4>
           <div className="logs-llm-calls">
-            {llmCalls.map((c) => (
+            {[...llmCalls]
+              .sort((a, b) => new Date(a.startedAt).getTime() - new Date(b.startedAt).getTime())
+              .map((c, index) => (
               <div key={c.id} className="logs-llm-card" onClick={() => onSelectLlmCall(c.id)}>
                 <div className="logs-llm-header">
+                  <span className="logs-llm-seq">{index + 1}</span>
                   <WorkloadBadge workload={c.workload} />
                   <span className="logs-llm-model">{c.model}</span>
                   <span className="logs-llm-agent">{c.callerAgentName || ''}</span>
-                  <StatusBadge status={c.status} />
+                  {c.status !== 'completed' && <StatusBadge status={c.status} />}
                   <span className="logs-llm-duration">{formatDuration(c.durationMs)}</span>
                 </div>
                 <div className="logs-llm-stats">
@@ -593,7 +661,7 @@ const TraceDetailView = memo(function TraceDetailView({ trace, onBack, onSelectL
                     <span className="logs-token-reduction-inline"> | compressed: {savingsPercent(c.tokenReductionOriginalTokens, c.tokenReductionCompressedTokens)}% saved</span>
                   )}
                   {c.callerPurpose && <span> | {c.callerPurpose}</span>}
-                  {c.stopReason && <span> | stop: {c.stopReason}</span>}
+                  {c.stopReason && <span> | stop: <StopReasonBadge stopReason={c.stopReason} /></span>}
                 </div>
               </div>
             ))}
@@ -620,13 +688,24 @@ const TraceDetailView = memo(function TraceDetailView({ trace, onBack, onSelectL
 // LLM Call detail view
 // ============================================================
 
-const LlmCallDetailView = memo(function LlmCallDetailView({ call, onBack }) {
+const LlmCallDetailView = memo(function LlmCallDetailView({ call, onBack, siblingCalls = [], onSelectLlmCall }) {
   const [showMessages, setShowMessages] = useState(false);
   const [showResponse, setShowResponse] = useState(true);
   const [showRawRequest, setShowRawRequest] = useState(false);
   const [showTokenReduction, setShowTokenReduction] = useState(true);
 
   if (!call) return null;
+
+  // Find current position and prev/next calls (sorted by startedAt)
+  const sortedSiblings = [...siblingCalls].sort((a, b) =>
+    new Date(a.startedAt).getTime() - new Date(b.startedAt).getTime()
+  );
+  const currentIndex = sortedSiblings.findIndex(c => c.id === call.id);
+  const prevCall = currentIndex > 0 ? sortedSiblings[currentIndex - 1] : null;
+  const nextCall = currentIndex >= 0 && currentIndex < sortedSiblings.length - 1
+    ? sortedSiblings[currentIndex + 1]
+    : null;
+  const hasNavigation = siblingCalls.length > 1 && currentIndex >= 0;
 
   let parsedMessages = null;
   if (call.messagesJson) {
@@ -650,7 +729,29 @@ const LlmCallDetailView = memo(function LlmCallDetailView({ call, onBack }) {
       <div className="logs-detail-header">
         <button className="logs-back-btn" onClick={onBack}>&larr; Back</button>
         <h3>LLM Call Detail</h3>
-        <StatusBadge status={call.status} />
+        {call.status !== 'completed' && <StatusBadge status={call.status} />}
+        {/* Prev/Next navigation within same trace */}
+        {hasNavigation && (
+          <div className="logs-call-nav">
+            <button
+              className="logs-nav-btn"
+              onClick={() => prevCall && onSelectLlmCall(prevCall.id)}
+              disabled={!prevCall}
+              title={prevCall ? `Previous: ${prevCall.model} (${prevCall.callerAgentName || prevCall.workload})` : 'No previous call'}
+            >
+              ◀ Prev
+            </button>
+            <span className="logs-nav-position">{currentIndex + 1} / {sortedSiblings.length}</span>
+            <button
+              className="logs-nav-btn"
+              onClick={() => nextCall && onSelectLlmCall(nextCall.id)}
+              disabled={!nextCall}
+              title={nextCall ? `Next: ${nextCall.model} (${nextCall.callerAgentName || nextCall.workload})` : 'No next call'}
+            >
+              Next ▶
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Call metadata */}
@@ -661,9 +762,9 @@ const LlmCallDetailView = memo(function LlmCallDetailView({ call, onBack }) {
           <span>Workload: <strong><WorkloadBadge workload={call.workload} /></strong></span>
           <span>Duration: <strong>{formatDuration(call.durationMs)}</strong></span>
           <span>Tokens: <strong>{formatTokens(call.inputTokens)} in / {formatTokens(call.outputTokens)} out</strong></span>
-          {call.stopReason && <span>Stop Reason: <strong>{call.stopReason}</strong></span>}
+          {call.stopReason && <span>Stop Reason: <StopReasonBadge stopReason={call.stopReason} /></span>}
           {call.callerAgentName && <span>Agent: <strong>{call.callerAgentName}</strong></span>}
-          {call.callerPurpose && <span>Purpose: <strong>{call.callerPurpose}</strong></span>}
+          {call.callerPurpose && <span>Output: <strong>{call.callerPurpose}</strong></span>}
           {call.maxTokens && <span>Max Tokens: <strong>{call.maxTokens}</strong></span>}
           {call.temperature != null && <span>Temperature: <strong>{call.temperature}</strong></span>}
           {call.reasoningEffort && <span>Reasoning: <strong>{call.reasoningEffort}</strong></span>}
@@ -722,16 +823,47 @@ const LlmCallDetailView = memo(function LlmCallDetailView({ call, onBack }) {
       )}
 
       {/* Available Tools */}
-      {parsedTools && parsedTools.length > 0 && (
-        <div className="logs-detail-section">
-          <h4>Tools Available ({parsedTools.length})</h4>
-          <div className="logs-tools-list">
-            {parsedTools.map((t, i) => (
-              <span key={i} className="logs-tool-chip">{t.name}</span>
-            ))}
+      {parsedTools && parsedTools.length > 0 && (() => {
+        // Build a map of tool name -> tool use details for highlighting
+        const toolUseMap = new Map();
+        if (call.stopReason === 'tool_use' && parsedToolUse) {
+          for (const tu of parsedToolUse) {
+            // A tool can be called multiple times, so store as array
+            if (!toolUseMap.has(tu.name)) {
+              toolUseMap.set(tu.name, []);
+            }
+            toolUseMap.get(tu.name).push(tu);
+          }
+        }
+
+        return (
+          <div className="logs-detail-section">
+            <h4>Tools Available ({parsedTools.length}){toolUseMap.size > 0 && <span className="logs-tools-used-count"> · {toolUseMap.size} used</span>}</h4>
+            <div className="logs-tools-list">
+              {parsedTools.map((t, i) => {
+                const usages = toolUseMap.get(t.name);
+                const isUsed = !!usages;
+                const tooltipContent = isUsed
+                  ? usages.map((u, idx) =>
+                      `${usages.length > 1 ? `[${idx + 1}] ` : ''}${JSON.stringify(u.input, null, 2)}`
+                    ).join('\n\n')
+                  : null;
+
+                return (
+                  <span
+                    key={i}
+                    className={`logs-tool-chip ${isUsed ? 'used' : ''}`}
+                    title={tooltipContent}
+                  >
+                    {t.name}
+                    {isUsed && usages.length > 1 && <span className="logs-tool-chip-count">×{usages.length}</span>}
+                  </span>
+                );
+              })}
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Messages (collapsible - can be large) - system messages filtered out since shown above */}
       {nonSystemMessages.length > 0 && (
@@ -741,16 +873,55 @@ const LlmCallDetailView = memo(function LlmCallDetailView({ call, onBack }) {
           </h4>
           {showMessages && (
             <div className="logs-messages-list">
-              {nonSystemMessages.map((msg, i) => (
-                <div key={i} className={`logs-message logs-message-${msg.role}`}>
-                  <div className="logs-message-role">{msg.role}</div>
-                  <pre className="logs-message-content">
-                    {typeof msg.content === 'string'
-                      ? msg.content.substring(0, 2000)
-                      : JSON.stringify(msg.content, null, 2)?.substring(0, 2000)}
-                  </pre>
-                </div>
-              ))}
+              {nonSystemMessages.map((msg, i) => {
+                // Determine content to display
+                let displayContent = '';
+                let hasToolResult = false;
+
+                if (typeof msg.content === 'string') {
+                  displayContent = msg.content;
+                } else if (Array.isArray(msg.content)) {
+                  // Handle content blocks (text, tool_use, tool_result, etc.)
+                  const parts = msg.content.map(block => {
+                    if (block.type === 'text') return block.text;
+                    if (block.type === 'tool_use') return `[Tool Use: ${block.name}]\n${JSON.stringify(block.input, null, 2)}`;
+                    if (block.type === 'tool_result') {
+                      hasToolResult = true;
+                      return `[Tool Result: ${block.tool_use_id}]\n${typeof block.content === 'string' ? block.content : JSON.stringify(block.content, null, 2)}`;
+                    }
+                    return JSON.stringify(block, null, 2);
+                  });
+                  displayContent = parts.join('\n\n');
+                } else if (msg.content) {
+                  displayContent = JSON.stringify(msg.content, null, 2);
+                }
+
+                // For assistant messages with toolUse property, show tool use details
+                if (!displayContent && msg.role === 'assistant' && msg.toolUse && msg.toolUse.length > 0) {
+                  const toolUseParts = msg.toolUse.map(tu =>
+                    `[Tool Use: ${tu.name}]\n${JSON.stringify(tu.input, null, 2)}`
+                  );
+                  displayContent = toolUseParts.join('\n\n');
+                }
+
+                // Determine display role - OpenAI uses "tool" role for tool results
+                const isOpenAIProvider = call.provider === 'openai' || call.provider === 'azure_openai';
+                let displayRole = msg.role;
+                if (hasToolResult && msg.role === 'user' && isOpenAIProvider) {
+                  displayRole = 'tool';
+                }
+
+                return (
+                  <div key={i} className={`logs-message logs-message-${displayRole}`}>
+                    <div className="logs-message-role">{displayRole}</div>
+                    <pre className="logs-message-content">
+                      {displayContent?.substring(0, 2000) || (
+                        <span className="logs-empty-content">(empty)</span>
+                      )}
+                    </pre>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
