@@ -52,7 +52,7 @@ export const DEFAULT_MESSAGE_EMBEDDING_CONFIG: Omit<MessageEmbeddingConfig, 'dbP
   indexInterval: MESSAGE_EMBEDDING_INDEX_INTERVAL_MS,
   embeddingBatchSize: MESSAGE_EMBEDDING_BATCH_SIZE,
   maxMessagesPerRun: MESSAGE_MAX_PER_INDEXING_RUN,
-  indexableRoles: [...MESSAGE_DEFAULT_INDEXABLE_ROLES],
+  indexableRoles: MESSAGE_DEFAULT_INDEXABLE_ROLES,
   minContentLength: MESSAGE_MIN_CONTENT_LENGTH,
   strategies: [{ type: 'direct', weight: 1.0, enabled: true }],
   fusionMethod: 'rrf',

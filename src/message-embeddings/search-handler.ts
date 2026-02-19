@@ -82,7 +82,7 @@ function handleFtsSearch(params: SearchParams): SearchResponse {
   const result = db.messages.search(params.query, {
     limit: params.limit,
     before: params.before || undefined,
-    roles: [...MESSAGE_DEFAULT_INDEXABLE_ROLES],
+    roles: MESSAGE_DEFAULT_INDEXABLE_ROLES,
     includeTotal: params.includeTotal,
   });
 
@@ -121,7 +121,7 @@ async function handleHybridSearch(
     Promise.resolve(
       db.messages.search(params.query, {
         limit: overFetchLimit,
-        roles: [...MESSAGE_DEFAULT_INDEXABLE_ROLES],
+        roles: MESSAGE_DEFAULT_INDEXABLE_ROLES,
       })
     ),
     embeddingService.search(params.query, overFetchLimit),
@@ -134,7 +134,7 @@ async function handleHybridSearch(
       id: m.id,
       documentPath: m.conversationId,
       text: m.snippet,
-      score: 1.0 / (idx + 1), // Normalize BM25 rank to a 0-1 score
+      score: 1.0 / (idx + 1), // Reciprocal rank scoring (RRF-compatible)
       chunkIndex: 0,
       contentType: 'text' as const,
       metadata: {
