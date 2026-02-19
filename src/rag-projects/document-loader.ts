@@ -59,7 +59,7 @@ const DEFAULT_CHUNK_OPTIONS: ChunkOptions = {
 /**
  * Split text into chunks with overlap.
  */
-function chunkText(text: string, options: ChunkOptions = DEFAULT_CHUNK_OPTIONS): string[] {
+export function chunkText(text: string, options: ChunkOptions = DEFAULT_CHUNK_OPTIONS): string[] {
   const { chunkSize, chunkOverlap, preserveParagraphs } = options;
   const chunks: string[] = [];
 

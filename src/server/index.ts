@@ -19,7 +19,8 @@ import { setupEvalRoutes } from './eval-routes.js';
 import type { BrowserSessionManager } from '../browser/index.js';
 import type { DesktopSessionManager } from '../desktop/index.js';
 import type { TaskManager } from '../tasks/index.js';
-import { type RAGProjectService, createRAGProjectRoutes, type IndexingProgress } from '../rag-projects/index.js';
+import { type RAGProjectService, createRAGProjectRoutes, type IndexingProgress, fuseResults } from '../rag-projects/index.js';
+import type { StrategySearchResult } from '../rag-projects/fusion.js';
 import type { MissionManager } from '../missions/index.js';
 import { setupMissionRoutes } from './mission-routes.js';
 import { getDashboardStore, SnapshotEngine, RenderEngine, setupDashboardRoutes } from '../dashboard/index.js';
@@ -29,6 +30,7 @@ import { getUserSettingsService } from '../settings/index.js';
 import { OllieBotMCPServer } from '../mcp-server/index.js';
 import type { LogBuffer } from '../mcp-server/index.js';
 import type { TraceStore } from '../tracing/trace-store.js';
+import type { MessageEmbeddingService, MessageSearchResult, MessageSearchResultSource } from '../message-embeddings/index.js';
 
 export interface ServerConfig {
   port: number;
@@ -69,6 +71,8 @@ export interface ServerConfig {
   // Evaluation directories (for test isolation)
   evaluationsDir?: string;
   resultsDir?: string;
+  // Message embedding service for semantic search
+  messageEmbeddingService?: MessageEmbeddingService;
 }
 
 export class AssistantServer {
@@ -108,6 +112,7 @@ export class AssistantServer {
   private fastModel?: string;
   private evaluationsDir?: string;
   private resultsDir?: string;
+  private messageEmbeddingService?: MessageEmbeddingService;
 
   constructor(config: ServerConfig) {
     this.port = config.port;
@@ -138,6 +143,7 @@ export class AssistantServer {
     this.fastModel = config.fastModel;
     this.evaluationsDir = config.evaluationsDir;
     this.resultsDir = config.resultsDir;
+    this.messageEmbeddingService = config.messageEmbeddingService;
 
     // Security: Default to localhost-only binding (Layer 1: Network Binding)
     this.bindAddress = config.bindAddress ?? '127.0.0.1';
@@ -839,7 +845,7 @@ export class AssistantServer {
     });
 
     // Soft delete a conversation (well-known conversations cannot be deleted)
-    this.app.delete('/api/conversations/:id', (c) => {
+    this.app.delete('/api/conversations/:id', async (c) => {
       try {
         const id = c.req.param('id');
 
@@ -850,6 +856,12 @@ export class AssistantServer {
 
         const db = getDb();
         db.conversations.softDelete(id);
+
+        // Purge message embeddings for this conversation
+        if (this.messageEmbeddingService) {
+          await this.messageEmbeddingService.deleteByConversationId(id);
+        }
+
         return c.json({ success: true });
       } catch (error) {
         console.error('[API] Failed to delete conversation:', error);
@@ -901,14 +913,16 @@ export class AssistantServer {
       }
     });
 
-    // Search messages across all conversations using FTS
-    this.app.get('/api/messages/search', (c) => {
+    // Search messages across all conversations
+    // Supports mode=fts (default), mode=semantic, mode=hybrid
+    this.app.get('/api/messages/search', async (c) => {
       try {
         const db = getDb();
         const query = c.req.query('q') || '';
         const limit = Math.min(Math.max(parseInt(c.req.query('limit') || '20'), 1), 100);
         const before = c.req.query('before');
         const includeTotal = c.req.query('includeTotal') === 'true';
+        const mode = (c.req.query('mode') || 'fts') as 'fts' | 'semantic' | 'hybrid';
 
         if (!query.trim()) {
           return c.json({
@@ -917,25 +931,169 @@ export class AssistantServer {
           });
         }
 
-        const result = db.messages.search(query, {
-          limit,
-          before: before || undefined,
-          roles: ['user', 'assistant'],
-          includeTotal,
+        // ── FTS-only mode (default, backward compatible) ──
+        if (mode === 'fts') {
+          const result = db.messages.search(query, {
+            limit,
+            before: before || undefined,
+            roles: ['user', 'assistant'],
+            includeTotal,
+          });
+
+          return c.json({
+            items: result.items.map(m => ({
+              id: m.id,
+              conversationId: m.conversationId,
+              conversationTitle: m.conversationTitle,
+              role: m.role,
+              snippet: m.snippet,
+              createdAt: m.createdAt,
+              score: m.rank,
+              sources: [{ source: 'fts', score: m.rank }] as MessageSearchResultSource[],
+            })),
+            pagination: result.pagination,
+          });
+        }
+
+        // ── Semantic-only mode ──
+        if (mode === 'semantic') {
+          if (!this.messageEmbeddingService) {
+            return c.json({ error: 'Semantic search not available (no embedding provider configured)' }, 503);
+          }
+
+          const results = await this.messageEmbeddingService.search(query, limit);
+          return c.json({
+            items: results,
+            pagination: { hasOlder: false, hasNewer: false, oldestCursor: null, newestCursor: null },
+          });
+        }
+
+        // ── Hybrid mode: FTS + semantic, fused with RRF ──
+        if (!this.messageEmbeddingService) {
+          // Fall back to FTS-only if no embedding service
+          const result = db.messages.search(query, {
+            limit,
+            before: before || undefined,
+            roles: ['user', 'assistant'],
+            includeTotal,
+          });
+
+          return c.json({
+            items: result.items.map(m => ({
+              id: m.id,
+              conversationId: m.conversationId,
+              conversationTitle: m.conversationTitle,
+              role: m.role,
+              snippet: m.snippet,
+              createdAt: m.createdAt,
+              score: m.rank,
+              sources: [{ source: 'fts', score: m.rank }] as MessageSearchResultSource[],
+            })),
+            pagination: result.pagination,
+          });
+        }
+
+        // Run FTS and semantic search in parallel
+        const [ftsResult, semanticResults] = await Promise.all([
+          Promise.resolve(db.messages.search(query, {
+            limit: limit * 2, // Over-fetch for fusion
+            roles: ['user', 'assistant'],
+          })),
+          this.messageEmbeddingService.search(query, limit * 2),
+        ]);
+
+        // Map FTS results to StrategySearchResult format for fusion.
+        // Use messageId as the common ID for merging.
+        const ftsForFusion: StrategySearchResult = {
+          strategyId: 'fts',
+          results: ftsResult.items.map((m, idx) => ({
+            id: m.id, // messageId
+            documentPath: m.conversationId,
+            text: m.snippet,
+            score: 1.0 / (idx + 1), // Normalize BM25 rank to a 0-1 score for display
+            chunkIndex: 0,
+            contentType: 'text' as const,
+            metadata: {
+              conversationId: m.conversationId,
+              conversationTitle: m.conversationTitle,
+              role: m.role,
+              createdAt: m.createdAt,
+              snippet: m.snippet,
+              ftsRank: m.rank,
+            },
+          })),
+        };
+
+        const semanticForFusion: StrategySearchResult = {
+          strategyId: 'semantic',
+          results: semanticResults.map((m) => ({
+            id: m.messageId,
+            documentPath: m.conversationId,
+            text: m.text,
+            score: m.score,
+            chunkIndex: 0,
+            contentType: 'text' as const,
+            metadata: {
+              conversationId: m.conversationId,
+              conversationTitle: m.conversationTitle,
+              role: m.role,
+              createdAt: m.createdAt,
+              snippet: m.snippet,
+              semanticSources: m.sources,
+            },
+          })),
+        };
+
+        // Fuse with RRF — FTS weight 1.0, semantic weight 0.8
+        const fused = fuseResults(
+          [ftsForFusion, semanticForFusion],
+          [
+            { type: 'fts' as never, weight: 1.0, enabled: true },
+            { type: 'semantic' as never, weight: 0.8, enabled: true },
+          ],
+          'rrf',
+          limit
+        );
+
+        // Build final results with merged sources
+        const hybridItems: MessageSearchResult[] = fused.map((r) => {
+          const meta = r.metadata as Record<string, unknown>;
+          const sources: MessageSearchResultSource[] = [];
+
+          // Collect provenance from each strategy that contributed
+          for (const ss of r.strategyScores) {
+            if (ss.strategyId === 'fts') {
+              sources.push({
+                source: 'fts',
+                score: (meta?.ftsRank as number) ?? ss.score,
+              });
+            } else if (ss.strategyId === 'semantic') {
+              // Propagate per-strategy semantic sources if available
+              const semanticSources = meta?.semanticSources as MessageSearchResultSource[] | undefined;
+              if (semanticSources && semanticSources.length > 0) {
+                sources.push(...semanticSources);
+              } else {
+                sources.push({ source: 'semantic', score: ss.score });
+              }
+            }
+          }
+
+          return {
+            messageId: r.id,
+            conversationId: (meta?.conversationId as string) || r.documentPath,
+            conversationTitle: (meta?.conversationTitle as string) || '',
+            role: (meta?.role as string) || '',
+            text: r.text,
+            snippet: (meta?.snippet as string) || r.text.slice(0, 64),
+            createdAt: (meta?.createdAt as string) || '',
+            score: r.fusedScore,
+            sources,
+          };
         });
 
-        // Transform for API response
         return c.json({
-          items: result.items.map(m => ({
-            id: m.id,
-            conversationId: m.conversationId,
-            conversationTitle: m.conversationTitle,
-            role: m.role,
-            snippet: m.snippet,
-            createdAt: m.createdAt,
-            rank: m.rank,
-          })),
-          pagination: result.pagination,
+          items: hybridItems,
+          pagination: { hasOlder: false, hasNewer: false, oldestCursor: null, newestCursor: null },
         });
       } catch (error) {
         console.error('[API] Search failed:', error);
