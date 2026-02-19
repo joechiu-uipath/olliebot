@@ -230,12 +230,10 @@ export class MessageEmbeddingService extends EventEmitter {
 
       // Process each strategy
       for (const strategy of this.strategies) {
-        // Prepare chunk texts for this strategy
-        const preparedTexts: string[] = [];
-        for (const chunk of allChunks) {
-          const text = await strategy.prepareChunkText(chunk);
-          preparedTexts.push(text);
-        }
+        // Prepare chunk texts for this strategy (parallelized)
+        const preparedTexts = await Promise.all(
+          allChunks.map((chunk) => strategy.prepareChunkText(chunk))
+        );
 
         // Embed in batches
         const allVectors: number[][] = [];
@@ -310,21 +308,21 @@ export class MessageEmbeddingService extends EventEmitter {
   ): Promise<MessageSearchResult[]> {
     if (!this.store || this.strategies.length === 0) return [];
 
-    const strategyResults: StrategySearchResult[] = [];
-
-    // Search each strategy
-    for (const strategy of this.strategies) {
-      const preparedQuery = await strategy.prepareQueryText(query);
-      const queryVector = await this.embeddingProvider.embed(preparedQuery);
-      // Request extra results to allow for deduplication and filtering
-      const results = await this.store.searchByVector(
-        queryVector,
-        strategy.id,
-        topK * MESSAGE_SEARCH_OVERFETCH_MULTIPLIER,
-        minScore
-      );
-      strategyResults.push({ strategyId: strategy.id, results });
-    }
+    // Search all strategies in parallel
+    const strategyResults = await Promise.all(
+      this.strategies.map(async (strategy) => {
+        const preparedQuery = await strategy.prepareQueryText(query);
+        const queryVector = await this.embeddingProvider.embed(preparedQuery);
+        // Request extra results to allow for deduplication and filtering
+        const results = await this.store!.searchByVector(
+          queryVector,
+          strategy.id,
+          topK * MESSAGE_SEARCH_OVERFETCH_MULTIPLIER,
+          minScore
+        );
+        return { strategyId: strategy.id, results };
+      })
+    );
 
     // Fuse if multiple strategies, otherwise pass through
     const fused = fuseResults(

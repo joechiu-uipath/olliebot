@@ -16,6 +16,7 @@ import {
   MESSAGE_SEARCH_FTS_WEIGHT,
   MESSAGE_SEARCH_SEMANTIC_WEIGHT,
   MESSAGE_SEARCH_SNIPPET_LENGTH,
+  MESSAGE_DEFAULT_INDEXABLE_ROLES,
 } from '../constants.js';
 
 export type SearchMode = 'fts' | 'semantic' | 'hybrid';
@@ -81,7 +82,7 @@ function handleFtsSearch(params: SearchParams): SearchResponse {
   const result = db.messages.search(params.query, {
     limit: params.limit,
     before: params.before || undefined,
-    roles: ['user', 'assistant'],
+    roles: [...MESSAGE_DEFAULT_INDEXABLE_ROLES],
     includeTotal: params.includeTotal,
   });
 
@@ -120,7 +121,7 @@ async function handleHybridSearch(
     Promise.resolve(
       db.messages.search(params.query, {
         limit: overFetchLimit,
-        roles: ['user', 'assistant'],
+        roles: [...MESSAGE_DEFAULT_INDEXABLE_ROLES],
       })
     ),
     embeddingService.search(params.query, overFetchLimit),

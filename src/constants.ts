@@ -309,6 +309,11 @@ export const MESSAGE_SEARCH_FTS_WEIGHT = 1.0;
  */
 export const MESSAGE_SEARCH_SEMANTIC_WEIGHT = 0.8;
 
+/**
+ * Default roles to index and search in messages.
+ */
+export const MESSAGE_DEFAULT_INDEXABLE_ROLES = ['user', 'assistant'] as const;
+
 // ============================================================
 // QUERY & FETCH LIMITS
 // ============================================================

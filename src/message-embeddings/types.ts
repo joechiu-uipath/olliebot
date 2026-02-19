@@ -10,6 +10,7 @@ import {
   MESSAGE_EMBEDDING_BATCH_SIZE,
   MESSAGE_MAX_PER_INDEXING_RUN,
   MESSAGE_MIN_CONTENT_LENGTH,
+  MESSAGE_DEFAULT_INDEXABLE_ROLES,
 } from '../constants.js';
 
 // ─── Watermark State ─────────────────────────────────────────
@@ -30,15 +31,15 @@ export interface MessageEmbeddingState {
 export interface MessageEmbeddingConfig {
   /** Path for the LanceDB database (e.g., user/data/message-embeddings.lance) */
   dbPath: string;
-  /** Interval in ms between indexing runs (default: 60000) */
+  /** Interval in ms between indexing runs */
   indexInterval: number;
-  /** Batch size for embedding API calls (default: 50) */
+  /** Batch size for embedding API calls */
   embeddingBatchSize: number;
-  /** Maximum messages to process per indexing run (default: 500) */
+  /** Maximum messages to process per indexing run */
   maxMessagesPerRun: number;
   /** Roles to index (default: ['user', 'assistant']) */
   indexableRoles: string[];
-  /** Minimum content length to index — skip empty/tiny messages (default: 10) */
+  /** Minimum content length to index — skip empty/tiny messages */
   minContentLength: number;
   /** Retrieval strategies (default: direct only) */
   strategies: StrategyConfig[];
@@ -51,7 +52,7 @@ export const DEFAULT_MESSAGE_EMBEDDING_CONFIG: Omit<MessageEmbeddingConfig, 'dbP
   indexInterval: MESSAGE_EMBEDDING_INDEX_INTERVAL_MS,
   embeddingBatchSize: MESSAGE_EMBEDDING_BATCH_SIZE,
   maxMessagesPerRun: MESSAGE_MAX_PER_INDEXING_RUN,
-  indexableRoles: ['user', 'assistant'],
+  indexableRoles: [...MESSAGE_DEFAULT_INDEXABLE_ROLES],
   minContentLength: MESSAGE_MIN_CONTENT_LENGTH,
   strategies: [{ type: 'direct', weight: 1.0, enabled: true }],
   fusionMethod: 'rrf',
