@@ -47,6 +47,7 @@ After successful execution, the user can click the Refresh button in the Dashboa
     required: ['missionSlug', 'spec'],
   };
 
+  readonly private = true;
   private missionManager: MissionManager;
   private dashboardStore: DashboardStore;
   private renderEngine: RenderEngine;

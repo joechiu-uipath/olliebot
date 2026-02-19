@@ -36,6 +36,7 @@ Cannot cancel an in_progress TODO — there is no reliable cancellation for a ru
     required: ['todoId', 'action', 'reason'],
   };
 
+  readonly private = true;
   private missionManager: MissionManager;
 
   constructor(missionManager: MissionManager) {

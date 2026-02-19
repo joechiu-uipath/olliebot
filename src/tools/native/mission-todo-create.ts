@@ -59,6 +59,7 @@ Each TODO should have a clear justification (why this, why now) and measurable c
     required: ['missionSlug', 'pillarSlug', 'title'],
   };
 
+  readonly private = true;
   private missionManager: MissionManager;
 
   constructor(missionManager: MissionManager) {

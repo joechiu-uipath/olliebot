@@ -36,6 +36,7 @@ Use this after collecting a metric value via the appropriate tool. Pass the raw 
     required: ['metricId', 'value'],
   };
 
+  readonly private = true;
   private missionManager: MissionManager;
 
   constructor(missionManager: MissionManager) {

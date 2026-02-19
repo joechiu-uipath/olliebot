@@ -439,6 +439,161 @@ export const LogsSidebarContent = memo(function LogsSidebarContent({ logsMode })
 });
 
 // ============================================================
+// Grouped Traces View
+// ============================================================
+
+function groupTracesByConversation(traces) {
+  const groups = new Map();
+  const ungrouped = [];
+
+  for (const trace of traces) {
+    if (trace.conversationId) {
+      if (!groups.has(trace.conversationId)) {
+        groups.set(trace.conversationId, []);
+      }
+      groups.get(trace.conversationId).push(trace);
+    } else {
+      ungrouped.push(trace);
+    }
+  }
+
+  // Convert to array and sort groups by most recent trace
+  const sortedGroups = [...groups.entries()]
+    .map(([conversationId, traces]) => ({
+      conversationId,
+      traces,
+      // Aggregate stats
+      totalTraces: traces.length,
+      totalLlmCalls: traces.reduce((sum, t) => sum + (t.llmCallCount || 0), 0),
+      totalToolCalls: traces.reduce((sum, t) => sum + (t.toolCallCount || 0), 0),
+      totalTokens: traces.reduce((sum, t) => sum + (t.totalInputTokens || 0) + (t.totalOutputTokens || 0), 0),
+      latestTrace: traces[0], // traces are already sorted by time (newest first)
+      hasRunning: traces.some(t => t.status === 'running'),
+    }))
+    .sort((a, b) => new Date(b.latestTrace.startedAt) - new Date(a.latestTrace.startedAt));
+
+  return { groups: sortedGroups, ungrouped };
+}
+
+const ConversationGroup = memo(function ConversationGroup({ group, onSelectTrace }) {
+  const [expanded, setExpanded] = useState(true);
+  const { conversationId, traces, totalTraces, totalLlmCalls, totalToolCalls, totalTokens, latestTrace, hasRunning } = group;
+
+  // Use first trace's trigger content as a label hint
+  const firstTrigger = traces[traces.length - 1]?.triggerContent; // oldest trace
+
+  return (
+    <div className="logs-conversation-group">
+      <div
+        className={`logs-conversation-header ${hasRunning ? 'running' : ''}`}
+        onClick={() => setExpanded(!expanded)}
+      >
+        <span className="logs-conversation-expand">{expanded ? '▾' : '▸'}</span>
+        <span className="logs-conversation-icon">💬</span>
+        <span className="logs-conversation-label" title={conversationId}>
+          {firstTrigger ? firstTrigger.substring(0, 50) : conversationId.substring(0, 12)}
+          {firstTrigger && firstTrigger.length > 50 && '...'}
+        </span>
+        <span className="logs-conversation-stats">
+          <span className="logs-conversation-stat">{totalTraces} traces</span>
+          <span className="logs-conversation-stat">{totalLlmCalls} LLM</span>
+          <span className="logs-conversation-stat">{totalToolCalls} tools</span>
+          <span className="logs-conversation-stat">{formatTokens(totalTokens)} tokens</span>
+        </span>
+        <span className="logs-conversation-time">{formatTimestamp(latestTrace.startedAt)}</span>
+        {hasRunning && <span className="logs-badge running">running</span>}
+      </div>
+      {expanded && (
+        <div className="logs-conversation-traces">
+          {traces.map((t) => (
+            <div key={t.id} className="logs-list-row logs-grouped-row" onClick={() => onSelectTrace(t.id)}>
+              <span className="logs-col-trigger" title={t.triggerContent || ''}>
+                <span className="logs-trigger-type">{t.triggerType === 'user_message' ? '💬' : t.triggerType === 'task_run' ? '⏰' : '⚙️'}</span>
+                {t.triggerContent ? t.triggerContent.substring(0, 35) : t.triggerType}
+              </span>
+              <span className="logs-col-agents">{t.agentCount}</span>
+              <span className="logs-col-llm">{t.llmCallCount}</span>
+              <span className="logs-col-tools">{t.toolCallCount}</span>
+              <span className="logs-col-tokens">{formatTokens((t.totalInputTokens || 0) + (t.totalOutputTokens || 0))}</span>
+              <span className="logs-col-duration">{formatDuration(t.durationMs)}</span>
+              <span className="logs-col-status"><StatusBadge status={t.status} /></span>
+              <span className="logs-col-time">{formatTimestamp(t.startedAt)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+});
+
+const GroupedTracesView = memo(function GroupedTracesView({ traces, loading, onSelectTrace }) {
+  const { groups, ungrouped } = groupTracesByConversation(traces);
+
+  if (traces.length === 0 && !loading) {
+    return (
+      <div className="logs-list">
+        <div className="logs-empty">No traces yet. Send a message to generate traces.</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="logs-grouped-list">
+      {/* Header for grouped rows */}
+      <div className="logs-list-header logs-grouped-header">
+        <span className="logs-col-trigger">Trigger</span>
+        <span className="logs-col-agents">Agents</span>
+        <span className="logs-col-llm">LLM</span>
+        <span className="logs-col-tools">Tools</span>
+        <span className="logs-col-tokens">Tokens</span>
+        <span className="logs-col-duration">Duration</span>
+        <span className="logs-col-status">Status</span>
+        <span className="logs-col-time">Time</span>
+      </div>
+
+      {/* Grouped conversations */}
+      {groups.map((group) => (
+        <ConversationGroup
+          key={group.conversationId}
+          group={group}
+          onSelectTrace={onSelectTrace}
+        />
+      ))}
+
+      {/* Ungrouped traces (tasks, system) */}
+      {ungrouped.length > 0 && (
+        <div className="logs-conversation-group logs-ungrouped">
+          <div className="logs-conversation-header">
+            <span className="logs-conversation-icon">⚙️</span>
+            <span className="logs-conversation-label">System / Tasks</span>
+            <span className="logs-conversation-stats">
+              <span className="logs-conversation-stat">{ungrouped.length} traces</span>
+            </span>
+          </div>
+          <div className="logs-conversation-traces">
+            {ungrouped.map((t) => (
+              <div key={t.id} className="logs-list-row logs-grouped-row" onClick={() => onSelectTrace(t.id)}>
+                <span className="logs-col-trigger" title={t.triggerContent || ''}>
+                  <span className="logs-trigger-type">{t.triggerType === 'user_message' ? '💬' : t.triggerType === 'task_run' ? '⏰' : '⚙️'}</span>
+                  {t.triggerContent ? t.triggerContent.substring(0, 35) : t.triggerType}
+                </span>
+                <span className="logs-col-agents">{t.agentCount}</span>
+                <span className="logs-col-llm">{t.llmCallCount}</span>
+                <span className="logs-col-tools">{t.toolCallCount}</span>
+                <span className="logs-col-tokens">{formatTokens((t.totalInputTokens || 0) + (t.totalOutputTokens || 0))}</span>
+                <span className="logs-col-duration">{formatDuration(t.durationMs)}</span>
+                <span className="logs-col-status"><StatusBadge status={t.status} /></span>
+                <span className="logs-col-time">{formatTimestamp(t.startedAt)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+});
+
+// ============================================================
 // Main content
 // ============================================================
 
@@ -522,36 +677,11 @@ export const LogsMainContent = memo(function LogsMainContent({ logsMode }) {
       {error && <div className="logs-error">{error}</div>}
 
       {activeView === 'traces' && (
-        <div className="logs-list">
-          <div className="logs-list-header">
-            <span className="logs-col-trigger">Trigger</span>
-            <span className="logs-col-agents">Agents</span>
-            <span className="logs-col-llm">LLM</span>
-            <span className="logs-col-tools">Tools</span>
-            <span className="logs-col-tokens">Tokens</span>
-            <span className="logs-col-duration">Duration</span>
-            <span className="logs-col-status">Status</span>
-            <span className="logs-col-time">Time</span>
-          </div>
-          {traces.length === 0 && !loading && (
-            <div className="logs-empty">No traces yet. Send a message to generate traces.</div>
-          )}
-          {traces.map((t) => (
-            <div key={t.id} className="logs-list-row" onClick={() => handleSelectTrace(t.id)}>
-              <span className="logs-col-trigger" title={t.triggerContent || ''}>
-                <span className="logs-trigger-type">{t.triggerType === 'user_message' ? '💬' : t.triggerType === 'task_run' ? '⏰' : '⚙️'}</span>
-                {t.triggerContent ? t.triggerContent.substring(0, 40) : t.triggerType}
-              </span>
-              <span className="logs-col-agents">{t.agentCount}</span>
-              <span className="logs-col-llm">{t.llmCallCount}</span>
-              <span className="logs-col-tools">{t.toolCallCount}</span>
-              <span className="logs-col-tokens">{formatTokens((t.totalInputTokens || 0) + (t.totalOutputTokens || 0))}</span>
-              <span className="logs-col-duration">{formatDuration(t.durationMs)}</span>
-              <span className="logs-col-status"><StatusBadge status={t.status} /></span>
-              <span className="logs-col-time">{formatTimestamp(t.startedAt)}</span>
-            </div>
-          ))}
-        </div>
+        <GroupedTracesView
+          traces={traces}
+          loading={loading}
+          onSelectTrace={handleSelectTrace}
+        />
       )}
 
       {activeView === 'llm-calls' && (

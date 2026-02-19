@@ -33,6 +33,7 @@ This tool is restricted to Mission Lead agents — Pillar Owners cannot self-cer
     required: ['todoId', 'outcome'],
   };
 
+  readonly private = true;
   private missionManager: MissionManager;
 
   constructor(missionManager: MissionManager) {
