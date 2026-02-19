@@ -245,6 +245,77 @@ export const RAG_DEFAULT_CHUNK_OVERLAP = 100;
 export const RAG_DEFAULT_TOP_K = 10;
 
 // ============================================================
+// MESSAGE EMBEDDING & SEMANTIC SEARCH CONFIGURATION
+// ============================================================
+
+/**
+ * Interval in milliseconds between background message indexing runs.
+ * Current: 60 seconds
+ */
+export const MESSAGE_EMBEDDING_INDEX_INTERVAL_MS = 60_000;
+
+/**
+ * Chunk size for splitting long messages during embedding.
+ * Smaller than RAG documents since messages are typically shorter.
+ */
+export const MESSAGE_CHUNK_SIZE = 800;
+
+/**
+ * Overlap between message chunks to preserve context.
+ */
+export const MESSAGE_CHUNK_OVERLAP = 100;
+
+/**
+ * Batch size for embedding API calls during message indexing.
+ * Larger batches are more efficient but may hit rate limits.
+ */
+export const MESSAGE_EMBEDDING_BATCH_SIZE = 50;
+
+/**
+ * Maximum messages to process per indexing run.
+ * Prevents long-running indexing passes that block other operations.
+ */
+export const MESSAGE_MAX_PER_INDEXING_RUN = 500;
+
+/**
+ * Minimum message content length to index.
+ * Skip empty or very short messages to reduce noise.
+ */
+export const MESSAGE_MIN_CONTENT_LENGTH = 10;
+
+/**
+ * Default number of results to return from message search.
+ */
+export const MESSAGE_SEARCH_DEFAULT_TOP_K = 20;
+
+/**
+ * Length of text snippet to display in search results.
+ */
+export const MESSAGE_SEARCH_SNIPPET_LENGTH = 64;
+
+/**
+ * Overfetch multiplier for hybrid search before fusion.
+ * Request N times more results from each source to allow for deduplication.
+ */
+export const MESSAGE_SEARCH_OVERFETCH_MULTIPLIER = 2;
+
+/**
+ * Weight for FTS results in hybrid search fusion.
+ */
+export const MESSAGE_SEARCH_FTS_WEIGHT = 1.0;
+
+/**
+ * Weight for semantic results in hybrid search fusion.
+ */
+export const MESSAGE_SEARCH_SEMANTIC_WEIGHT = 0.8;
+
+/**
+ * Default roles to index and search in messages.
+ * Exported as a mutable copy to prevent accidental modification of the constant.
+ */
+export const MESSAGE_DEFAULT_INDEXABLE_ROLES = ['user', 'assistant'];
+
+// ============================================================
 // QUERY & FETCH LIMITS
 // ============================================================
 

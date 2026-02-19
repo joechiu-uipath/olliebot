@@ -9,11 +9,7 @@
 
 import { chunkText } from '../rag-projects/document-loader.js';
 import type { DocumentChunk } from '../rag-projects/types.js';
-
-/** Chunk size for messages (smaller than documents — messages are typically shorter). */
-const MESSAGE_CHUNK_SIZE = 800;
-/** Overlap between message chunks. */
-const MESSAGE_CHUNK_OVERLAP = 100;
+import { MESSAGE_CHUNK_SIZE, MESSAGE_CHUNK_OVERLAP } from '../constants.js';
 
 /** Minimal message shape needed for chunking. */
 export interface MessageForChunking {

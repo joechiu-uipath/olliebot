@@ -23,6 +23,12 @@ import {
 } from '../rag-projects/strategies/index.js';
 import { fuseResults, type StrategySearchResult } from '../rag-projects/fusion.js';
 import { chunkMessage, type MessageForChunking } from './message-chunker.js';
+import { createSnippet } from './utils.js';
+import {
+  MESSAGE_SEARCH_DEFAULT_TOP_K,
+  MESSAGE_SEARCH_SNIPPET_LENGTH,
+  MESSAGE_SEARCH_OVERFETCH_MULTIPLIER,
+} from '../constants.js';
 import type {
   MessageEmbeddingConfig,
   MessageEmbeddingState,
@@ -224,12 +230,10 @@ export class MessageEmbeddingService extends EventEmitter {
 
       // Process each strategy
       for (const strategy of this.strategies) {
-        // Prepare chunk texts for this strategy
-        const preparedTexts: string[] = [];
-        for (const chunk of allChunks) {
-          const text = await strategy.prepareChunkText(chunk);
-          preparedTexts.push(text);
-        }
+        // Prepare chunk texts for this strategy (parallelized)
+        const preparedTexts = await Promise.all(
+          allChunks.map((chunk) => strategy.prepareChunkText(chunk))
+        );
 
         // Embed in batches
         const allVectors: number[][] = [];
@@ -299,28 +303,33 @@ export class MessageEmbeddingService extends EventEmitter {
    */
   async search(
     query: string,
-    topK: number = 20,
+    topK: number = MESSAGE_SEARCH_DEFAULT_TOP_K,
     minScore: number = 0
   ): Promise<MessageSearchResult[]> {
     if (!this.store || this.strategies.length === 0) return [];
 
-    const strategyResults: StrategySearchResult[] = [];
-
-    // Search each strategy
-    for (const strategy of this.strategies) {
-      const preparedQuery = await strategy.prepareQueryText(query);
-      const queryVector = await this.embeddingProvider.embed(preparedQuery);
-      // Request extra results to allow for deduplication and filtering
-      const results = await this.store.searchByVector(queryVector, strategy.id, topK * 2, minScore);
-      strategyResults.push({ strategyId: strategy.id, results });
-    }
+    // Search all strategies in parallel
+    const strategyResults = await Promise.all(
+      this.strategies.map(async (strategy) => {
+        const preparedQuery = await strategy.prepareQueryText(query);
+        const queryVector = await this.embeddingProvider.embed(preparedQuery);
+        // Request extra results to allow for deduplication and filtering
+        const results = await this.store!.searchByVector(
+          queryVector,
+          strategy.id,
+          topK * MESSAGE_SEARCH_OVERFETCH_MULTIPLIER,
+          minScore
+        );
+        return { strategyId: strategy.id, results };
+      })
+    );
 
     // Fuse if multiple strategies, otherwise pass through
     const fused = fuseResults(
       strategyResults,
       this.config.strategies,
       this.config.fusionMethod,
-      topK * 2 // Over-fetch before dedup
+      topK * MESSAGE_SEARCH_OVERFETCH_MULTIPLIER // Over-fetch before dedup
     );
 
     // Deduplicate by messageId (multiple chunks from same message → keep best)
@@ -400,7 +409,7 @@ export class MessageEmbeddingService extends EventEmitter {
         conversationTitle: title,
         role: (meta?.role as string) || 'unknown',
         text: result.text,
-        snippet: createSnippet(result.text, 64),
+        snippet: createSnippet(result.text, MESSAGE_SEARCH_SNIPPET_LENGTH),
         createdAt: (meta?.createdAt as string) || '',
         score: result.fusedScore,
         sources,
@@ -471,16 +480,4 @@ export class MessageEmbeddingService extends EventEmitter {
       totalVectors,
     };
   }
-}
-
-// ─── Helpers ─────────────────────────────────────────────────
-
-/**
- * Create a display snippet from text, truncating at word boundaries.
- */
-function createSnippet(text: string, maxLength: number): string {
-  if (text.length <= maxLength) return text;
-  const truncated = text.slice(0, maxLength);
-  const lastSpace = truncated.lastIndexOf(' ');
-  return (lastSpace > maxLength / 2 ? truncated.slice(0, lastSpace) : truncated) + '...';
 }
