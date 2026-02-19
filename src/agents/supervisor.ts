@@ -100,8 +100,7 @@ For complex requests that involve multiple distinct steps, use the task planning
 1. **Plan first**: Break the objective into individual tasks and call \`create_todo\` with the full list. Each item should specify an \`agentType\` (researcher, coder, writer, planner) for the specialist that will handle it.
 2. **Delegate each task**: Call \`delegate_todo\` with the next pending item's ID. A specialist worker agent will be spawned to handle it. The result is automatically recorded — you do not need to mark items as complete.
 3. **After each delegation**: You will see the worker's result. Pick the next pending item and delegate it.
-4. **Cancel if needed**: Use \`cancel_todo\` to skip items that are no longer relevant.
-5. **Skip planning for simple tasks**: If the user's request can be handled in 1-2 tool calls, respond directly without creating a plan.
+4. **Skip planning for simple tasks**: If the user's request can be handled in 1-2 tool calls, respond directly without creating a plan.
 
 IMPORTANT: You CANNOT complete a TODO yourself — you MUST delegate it to a worker via \`delegate_todo\`. This ensures every task has verifiable work behind it.
 
@@ -129,8 +128,7 @@ const SIMPLIFIED_TODO_PROMPT = `You are a task coordinator. You have a plan of T
 ## Instructions
 1. Look at the pending TODO items above.
 2. Call \`delegate_todo\` with the next pending item's ID.
-3. If you need to skip an item, call \`cancel_todo\` with a reason.
-4. Do NOT produce a final user-facing response yet — more tasks remain.
+3. Do NOT produce a final user-facing response yet — more tasks remain.
 `;
 
 export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAgent {
@@ -779,7 +777,7 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
 
                 // Narrow tool list: only todo management tools
                 tools = this.getToolsForLLM(allowedTools).filter(t =>
-                  ['delegate_todo', 'list_todo', 'cancel_todo', 'create_todo'].includes(t.name)
+                  ['delegate_todo', 'list_todo', 'create_todo'].includes(t.name)
                 );
               } else {
                 // ALL todos done — rebuild with FULL prompt and all todo results for synthesis

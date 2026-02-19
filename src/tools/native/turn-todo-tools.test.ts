@@ -1,7 +1,7 @@
 /**
  * Turn TODO Tools unit tests
  *
- * Tests create_todo, list_todo, cancel_todo, and delegate_todo tools.
+ * Tests create_todo, list_todo, and delegate_todo tools.
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
@@ -9,7 +9,6 @@ import { initDb, closeDb } from '../../db/index.js';
 import { TurnTodoRepository } from '../../todos/index.js';
 import { TurnTodoCreateTool } from './turn-todo-create.js';
 import { TurnTodoListTool } from './turn-todo-list.js';
-import { CancelTodoTool } from './turn-todo-complete.js';
 import { DelegateTodoTool } from './delegate-todo.js';
 import type { ToolExecutionContext } from './types.js';
 
@@ -17,7 +16,6 @@ describe('Turn TODO Tools', () => {
   let repo: TurnTodoRepository;
   let createTool: TurnTodoCreateTool;
   let listTool: TurnTodoListTool;
-  let cancelTool: CancelTodoTool;
   let delegateTool: DelegateTodoTool;
 
   const context: ToolExecutionContext = {
@@ -32,7 +30,6 @@ describe('Turn TODO Tools', () => {
     repo = new TurnTodoRepository();
     createTool = new TurnTodoCreateTool(repo);
     listTool = new TurnTodoListTool(repo);
-    cancelTool = new CancelTodoTool(repo);
     delegateTool = new DelegateTodoTool(repo);
   });
 
@@ -141,72 +138,6 @@ describe('Turn TODO Tools', () => {
     it('fails without turnId context', async () => {
       const result = await listTool.execute({});
       expect(result.success).toBe(false);
-    });
-  });
-
-  describe('CancelTodoTool', () => {
-    let todoId: string;
-
-    beforeEach(async () => {
-      const result = await createTool.execute({
-        items: [{ title: 'Cancel me' }, { title: 'Other task' }],
-      }, context);
-      const output = result.output as { created: Array<{ id: string }> };
-      todoId = output.created[0].id;
-    });
-
-    it('has correct name', () => {
-      expect(cancelTool.name).toBe('cancel_todo');
-    });
-
-    it('cancels a pending todo', async () => {
-      const result = await cancelTool.execute({
-        todoId,
-        reason: 'No longer needed',
-      }, context);
-
-      expect(result.success).toBe(true);
-      const output = result.output as { id: string; status: string; reason: string; remaining: number };
-      expect(output.id).toBe(todoId);
-      expect(output.status).toBe('cancelled');
-      expect(output.reason).toBe('No longer needed');
-      expect(output.remaining).toBe(1); // one task still pending
-    });
-
-    it('fails for nonexistent todo', async () => {
-      const result = await cancelTool.execute({
-        todoId: 'nonexistent',
-        reason: 'test',
-      }, context);
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('not found');
-    });
-
-    it('fails for already cancelled todo', async () => {
-      await cancelTool.execute({ todoId, reason: 'first' }, context);
-      const result = await cancelTool.execute({ todoId, reason: 'second' }, context);
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('already cancelled');
-    });
-
-    it('fails for in_progress todo', async () => {
-      // Simulate in_progress state
-      repo.update(todoId, { status: 'in_progress', startedAt: new Date().toISOString() });
-      const result = await cancelTool.execute({ todoId, reason: 'test' }, context);
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('in-progress');
-    });
-
-    it('fails without todoId', async () => {
-      const result = await cancelTool.execute({ reason: 'test' }, context);
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('todoId');
-    });
-
-    it('fails without reason', async () => {
-      const result = await cancelTool.execute({ todoId }, context);
-      expect(result.success).toBe(false);
-      expect(result.error).toContain('reason');
     });
   });
 
