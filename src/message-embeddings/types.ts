@@ -5,6 +5,12 @@
  */
 
 import type { StrategyConfig, FusionMethod } from '../rag-projects/strategies/types.js';
+import {
+  MESSAGE_EMBEDDING_INDEX_INTERVAL_MS,
+  MESSAGE_EMBEDDING_BATCH_SIZE,
+  MESSAGE_MAX_PER_INDEXING_RUN,
+  MESSAGE_MIN_CONTENT_LENGTH,
+} from '../constants.js';
 
 // ─── Watermark State ─────────────────────────────────────────
 
@@ -42,11 +48,11 @@ export interface MessageEmbeddingConfig {
 
 /** Default configuration. */
 export const DEFAULT_MESSAGE_EMBEDDING_CONFIG: Omit<MessageEmbeddingConfig, 'dbPath'> = {
-  indexInterval: 60_000,
-  embeddingBatchSize: 50,
-  maxMessagesPerRun: 500,
+  indexInterval: MESSAGE_EMBEDDING_INDEX_INTERVAL_MS,
+  embeddingBatchSize: MESSAGE_EMBEDDING_BATCH_SIZE,
+  maxMessagesPerRun: MESSAGE_MAX_PER_INDEXING_RUN,
   indexableRoles: ['user', 'assistant'],
-  minContentLength: 10,
+  minContentLength: MESSAGE_MIN_CONTENT_LENGTH,
   strategies: [{ type: 'direct', weight: 1.0, enabled: true }],
   fusionMethod: 'rrf',
 };

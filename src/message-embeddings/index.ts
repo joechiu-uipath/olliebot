@@ -8,9 +8,16 @@
 // Service
 export { MessageEmbeddingService } from './service.js';
 
+// Search handler
+export { handleMessageSearch } from './search-handler.js';
+export type { SearchMode, SearchParams } from './search-handler.js';
+
 // Message chunker
 export { chunkMessage } from './message-chunker.js';
 export type { MessageForChunking } from './message-chunker.js';
+
+// Utilities
+export { createSnippet } from './utils.js';
 
 // Types
 export type {
