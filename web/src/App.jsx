@@ -25,6 +25,9 @@ import { useMissionMode, MissionSidebarContent, MissionMainContent } from './App
 import { transformMessages, shouldCollapseByDefault } from './utils/messageHelpers';
 import { createMessageHandler } from './App.websocket';
 import { useConversationSubscription } from './hooks/useConversationSubscription';
+import { useMessageSearch } from './hooks/useMessageSearch';
+import { SearchBox } from './components/SearchBox';
+import { SearchResults } from './components/SearchResults';
 
 // Mode constants
 const MODES = {
@@ -147,10 +150,13 @@ function App() {
   // Auto-scroll state
   const [showScrollButton, setShowScrollButton] = useState(false);
 
-  // Pagination state for virtualization
+  // Pagination state for virtualization (bidirectional: older and newer)
   const [hasMoreOlder, setHasMoreOlder] = useState(true);
   const [isLoadingOlder, setIsLoadingOlder] = useState(false);
   const [oldestCursor, setOldestCursor] = useState(null);
+  const [hasMoreNewer, setHasMoreNewer] = useState(false);
+  const [isLoadingNewer, setIsLoadingNewer] = useState(false);
+  const [newestCursor, setNewestCursor] = useState(null);
   const [firstItemIndex, setFirstItemIndex] = useState(VIRTUOSO_START_INDEX);
 
   // Expanded tool events
@@ -167,6 +173,22 @@ function App() {
 
   // Mission mode - managed by useMissionMode hook (state lives in App.Mission.jsx)
   const missionMode = useMissionMode();
+
+  // Message search - full-text search across all conversations
+  const {
+    searchQuery,
+    setSearchQuery,
+    searchResults,
+    isSearching,
+    searchPagination,
+    isSearchMode,
+    search: performSearch,
+    clearSearch,
+    loadMoreResults,
+  } = useMessageSearch();
+
+  // Highlighted message (for scroll-to-message after search navigation)
+  const [highlightedMessageId, setHighlightedMessageId] = useState(null);
 
   // Conversation subscription — multi-conversation WebSocket event routing for embedded chats
   const { subscribe: subscribeConversation, dispatch: dispatchConversation } = useConversationSubscription();
@@ -370,9 +392,11 @@ function App() {
       const pagination = feedData.pagination || {};
       const items = transformMessages(feedData.items);
       setMessages(items);
-      // Initialize pagination state
+      // Initialize pagination state (bidirectional)
       setHasMoreOlder(pagination.hasOlder || false);
       setOldestCursor(pagination.oldestCursor || null);
+      setHasMoreNewer(pagination.hasNewer || false);
+      setNewestCursor(pagination.newestCursor || null);
       // Reset to starting high index for prepending
       setFirstItemIndex(VIRTUOSO_START_INDEX);
     } else {
@@ -380,6 +404,8 @@ function App() {
       setMessages([]);
       setHasMoreOlder(false);
       setOldestCursor(null);
+      setHasMoreNewer(false);
+      setNewestCursor(null);
       setFirstItemIndex(0);
     }
 
@@ -491,6 +517,8 @@ function App() {
   const isNavigatingRef = useRef(false);
   // Fetch counter to prevent stale responses from overwriting newer ones
   const messageFetchCounter = useRef(0);
+  // Track which messageId we've already scrolled to (to prevent re-scrolling on re-render)
+  const scrolledToMessageIdRef = useRef(null);
 
   useEffect(() => {
     if (isNavigatingRef.current) {
@@ -499,39 +527,80 @@ function App() {
     }
 
     const path = location.pathname;
+    const searchParams = new URLSearchParams(location.search);
+    const targetMessageId = searchParams.get('messageId');
 
     // Handle chat routes - all conversations use /chat/:id pattern
     if (path.startsWith('/chat/')) {
       const convId = decodeURIComponent(path.slice(6)); // Remove '/chat/'
-      if (convId && convId !== currentConversationId) {
+      // Skip if we've already scrolled to this exact messageId
+      const alreadyScrolled = targetMessageId && scrolledToMessageIdRef.current === targetMessageId;
+      // Load messages if: different conversation OR new messageId to scroll to
+      if (convId && (convId !== currentConversationId || (targetMessageId && !alreadyScrolled))) {
         setCurrentConversationId(convId);
         // Load conversation messages with pagination
+        // If we have a target message, use the "around" parameter to center results on it
         const apiConvId = encodeURIComponent(convId);
         const fetchId = ++messageFetchCounter.current;
-        fetch(`/api/conversations/${apiConvId}/messages?limit=${MESSAGE_PAGE_SIZE}&includeTotal=true`)
+        const url = targetMessageId
+          ? `/api/conversations/${apiConvId}/messages?limit=50&around=${encodeURIComponent(targetMessageId)}&includeTotal=true`
+          : `/api/conversations/${apiConvId}/messages?limit=${MESSAGE_PAGE_SIZE}&includeTotal=true`;
+
+        fetch(url)
           .then(res => res.ok ? res.json() : { items: [], pagination: {} })
           .then(data => {
             // Only update if this is still the latest fetch
             if (fetchId !== messageFetchCounter.current) return;
             const pagination = data.pagination || {};
-            setMessages(transformMessages(data.items || []));
+            const loadedMessages = transformMessages(data.items || []);
+            setMessages(loadedMessages);
             setHasMoreOlder(pagination.hasOlder || false);
             setOldestCursor(pagination.oldestCursor || null);
+            setHasMoreNewer(pagination.hasNewer || false);
+            setNewestCursor(pagination.newestCursor || null);
             setFirstItemIndex(VIRTUOSO_START_INDEX);
 
             // Request active stream/tool state for this conversation (to resume in-progress displays)
             sendMessage({ type: 'get-active-stream', conversationId: convId });
+
+            // Scroll to target message if specified in URL
+            if (targetMessageId) {
+              // Use targetIndex from API if available, otherwise search locally
+              let targetIndex = data.targetIndex;
+              if (targetIndex === undefined || targetIndex < 0) {
+                targetIndex = loadedMessages.findIndex(m => m.id === targetMessageId);
+              }
+
+              if (targetIndex !== -1 && targetIndex >= 0) {
+                // Mark this messageId as scrolled to (before the timeout to prevent race conditions)
+                scrolledToMessageIdRef.current = targetMessageId;
+                // Delay scroll to ensure Virtuoso has fully rendered and settled
+                setTimeout(() => {
+                  virtuosoRef.current?.scrollToIndex({
+                    index: targetIndex,
+                    align: 'center',
+                    behavior: 'auto', // Immediate scroll for reliability
+                  });
+                  // Set highlight
+                  setHighlightedMessageId(targetMessageId);
+                  setTimeout(() => setHighlightedMessageId(null), 3000);
+                }, 300);
+              }
+              // Keep the messageId in URL - it's useful for bookmarking/sharing
+            }
           })
           .catch(() => {
             if (fetchId !== messageFetchCounter.current) return;
             setMessages([]);
             setHasMoreOlder(false);
             setOldestCursor(null);
+            setHasMoreNewer(false);
+            setNewestCursor(null);
           });
       }
     }
     // Note: Eval routes are handled by useEvalMode hook in App.Eval.jsx
-  }, [location.pathname, conversations, currentConversationId, transformMessages, sendMessage]);
+  }, [location.pathname, location.search, conversations, currentConversationId, transformMessages, sendMessage, navigate]);
 
   // Redirect root and /chat to Feed conversation
   useEffect(() => {
@@ -616,6 +685,52 @@ function App() {
     setIsLoadingOlder(false);
   }, [isLoadingOlder, hasMoreOlder, oldestCursor]);
 
+  // Load newer messages when scrolling toward bottom (for bidirectional scrolling after search navigation)
+  const loadNewerMessages = useCallback(async () => {
+    if (isLoadingNewer || !hasMoreNewer || !newestCursor) return;
+
+    const convId = currentConversationIdRef.current;
+    if (!convId) return;
+
+    setIsLoadingNewer(true);
+    const fetchId = messageFetchCounter.current;
+    let res = null;
+    try {
+      const apiConvId = encodeURIComponent(convId);
+      res = await fetch(
+        `/api/conversations/${apiConvId}/messages?limit=20&after=${encodeURIComponent(newestCursor)}`
+      );
+    } catch (error) {
+      console.error('Failed to load newer messages:', error);
+    }
+
+    // Bail if conversation changed while fetching
+    if (fetchId !== messageFetchCounter.current) {
+      setIsLoadingNewer(false);
+      return;
+    }
+
+    let data = null;
+    if (res && res.ok) {
+      data = await res.json();
+    }
+
+    if (data) {
+      const newerMessages = transformMessages(data.items || []);
+      const pagination = data.pagination || {};
+
+      if (newerMessages.length > 0) {
+        // Append messages (newer messages go at the end)
+        setMessages((prev) => [...prev, ...newerMessages]);
+        setHasMoreNewer(pagination.hasNewer || false);
+        setNewestCursor(pagination.newestCursor || null);
+      } else {
+        setHasMoreNewer(false);
+      }
+    }
+    setIsLoadingNewer(false);
+  }, [isLoadingNewer, hasMoreNewer, newestCursor]);
+
   // Handle Virtuoso atBottomStateChange
   const handleAtBottomStateChange = useCallback((atBottom) => {
     setShowScrollButton(!atBottom);
@@ -681,6 +796,8 @@ function App() {
     setIsResponsePending(false);
     setHasMoreOlder(false);
     setOldestCursor(null);
+    setHasMoreNewer(false);
+    setNewestCursor(null);
   };
 
   // Delete conversation (soft delete)
@@ -724,6 +841,8 @@ function App() {
               setMessages(transformMessages(data.items || []));
               setHasMoreOlder(pagination.hasOlder || false);
               setOldestCursor(pagination.oldestCursor || null);
+              setHasMoreNewer(pagination.hasNewer || false);
+              setNewestCursor(pagination.newestCursor || null);
               setFirstItemIndex(VIRTUOSO_START_INDEX);
             }
           });
@@ -732,6 +851,8 @@ function App() {
         setMessages([]);
         setHasMoreOlder(false);
         setOldestCursor(null);
+        setHasMoreNewer(false);
+        setNewestCursor(null);
         setFirstItemIndex(VIRTUOSO_START_INDEX);
         navigate('/chat/feed');
       }
@@ -761,6 +882,8 @@ function App() {
       setMessages([]);
       setHasMoreOlder(false);
       setOldestCursor(null);
+      setHasMoreNewer(false);
+      setNewestCursor(null);
       setFirstItemIndex(VIRTUOSO_START_INDEX);
     }
   };
@@ -860,7 +983,12 @@ function App() {
 
   // Switch conversation - navigates to the conversation URL
   const handleSelectConversation = (convId) => {
-    if (convId === currentConversationId) return;
+    // Always clear search mode when selecting a conversation
+    if (isSearchMode) {
+      clearSearch();
+    }
+
+    if (convId === currentConversationId && !isSearchMode) return;
 
     // Mark that we're navigating to prevent URL sync effect from re-triggering
     isNavigatingRef.current = true;
@@ -885,6 +1013,8 @@ function App() {
         setMessages(transformMessages(data.items || []));
         setHasMoreOlder(pagination.hasOlder || false);
         setOldestCursor(pagination.oldestCursor || null);
+        setHasMoreNewer(pagination.hasNewer || false);
+        setNewestCursor(pagination.newestCursor || null);
         setFirstItemIndex(VIRTUOSO_START_INDEX);
 
         // Request active stream state for this conversation (to resume streaming display)
@@ -895,8 +1025,26 @@ function App() {
         setMessages([]);
         setHasMoreOlder(false);
         setOldestCursor(null);
+        setHasMoreNewer(false);
+        setNewestCursor(null);
       });
   };
+
+  // Handle clicking a search result - navigate to conversation with messageId in URL
+  // The URL sync effect handles loading messages and scrolling to the target
+  const handleSearchResultClick = useCallback((result) => {
+    const { conversationId, id: messageId } = result;
+
+    // Clear search mode
+    clearSearch();
+
+    // Reset the scrolled ref so we scroll to this new message
+    scrolledToMessageIdRef.current = null;
+
+    // Navigate to the conversation with messageId in URL
+    // The URL sync effect will handle loading and scrolling
+    navigate(`/chat/${encodeURIComponent(conversationId)}?messageId=${encodeURIComponent(messageId)}`);
+  }, [clearSearch, navigate]);
 
   // Handle chat submission - receives input text from ChatInput component
   // Uses refs to avoid dependencies that would cause callback recreation
@@ -1802,7 +1950,7 @@ function App() {
             </span>
           </div>
           {expandedAgentMessages.has(msg.id) && (
-            <div className={`message ${msg.role}${msg.isError ? ' error' : ''}${msg.isStreaming ? ' streaming' : ''}`}>
+            <div className={`message ${msg.role}${msg.isError ? ' error' : ''}${msg.isStreaming ? ' streaming' : ''}${highlightedMessageId === msg.id ? ' highlighted' : ''}`}>
               <div className="message-avatar">
                 {msg.isError ? '⚠️' : (msg.agentEmoji || DEFAULT_AGENT_ICON)}
               </div>
@@ -1836,7 +1984,7 @@ function App() {
 
     // Default message display
     return (
-      <div className={`message ${msg.role}${msg.isError ? ' error' : ''}${msg.isStreaming ? ' streaming' : ''}`}>
+      <div className={`message ${msg.role}${msg.isError ? ' error' : ''}${msg.isStreaming ? ' streaming' : ''}${highlightedMessageId === msg.id ? ' highlighted' : ''}`}>
         <div className="message-avatar">
           {msg.isError ? '⚠️' : msg.role === 'user' ? '👤' : (msg.agentEmoji || DEFAULT_AGENT_ICON)}
         </div>
@@ -1929,9 +2077,9 @@ function App() {
         </div>
       </div>
     );
-  }, [expandedTools, expandedAgentMessages, handleAction, formatFileSize, renderToolResult, toggleToolExpand, toggleAgentMessageExpand, agentTemplates, navigate]);
+  }, [expandedTools, expandedAgentMessages, handleAction, formatFileSize, renderToolResult, toggleToolExpand, toggleAgentMessageExpand, agentTemplates, navigate, highlightedMessageId]);
 
-  // Virtuoso header component for loading indicator
+  // Virtuoso header component for loading indicator (older messages)
   const VirtuosoHeader = useCallback(() => {
     if (isLoadingOlder) {
       return (
@@ -1944,6 +2092,19 @@ function App() {
     return null;
   }, [isLoadingOlder]);
 
+  // Virtuoso footer component for loading indicator (newer messages)
+  const VirtuosoFooter = useCallback(() => {
+    if (isLoadingNewer) {
+      return (
+        <div className="virtuoso-loading-footer">
+          <span className="loading-spinner"></span>
+          Loading newer messages...
+        </div>
+      );
+    }
+    return null;
+  }, [isLoadingNewer]);
+
   return (
     <div className="app-layout" style={{ width: appWidth }}>
       {/* Left resize handle (right handle removed to avoid scrollbar conflict) */}
@@ -1955,13 +2116,23 @@ function App() {
       {/* Collapsible Sidebar */}
       <aside className={`sidebar ${sidebarOpen ? 'open' : 'collapsed'}`}>
         <div className="sidebar-header">
+          {sidebarOpen && mode === MODES.CHAT && (
+            <SearchBox
+              value={searchQuery}
+              onChange={setSearchQuery}
+              onSearch={performSearch}
+              onClear={clearSearch}
+              isSearching={isSearching}
+              placeholder="Search..."
+            />
+          )}
           <button
             className="new-conversation-btn"
             onClick={handleNewConversation}
             title="New Chat"
           >
             <span className="btn-icon">+</span>
-            {sidebarOpen && <span>New Chat</span>}
+            {sidebarOpen && !isSearchMode && <span>New Chat</span>}
           </button>
           <button
             className="sidebar-toggle"
@@ -2416,6 +2587,16 @@ function App() {
         {mode === MODES.CHAT && (
         <>
         <main className="chat-container">
+          {/* Search Results View */}
+          {isSearchMode ? (
+            <SearchResults
+              results={searchResults}
+              pagination={searchPagination}
+              isLoading={isSearching}
+              onResultClick={handleSearchResultClick}
+              onLoadMore={loadMoreResults}
+            />
+          ) : (
           <div className="messages">
           {messages.length === 0 ? (
             <div className="welcome">
@@ -2433,15 +2614,18 @@ function App() {
               atBottomStateChange={handleAtBottomStateChange}
               atBottomThreshold={100}
               startReached={loadOlderMessages}
+              endReached={loadNewerMessages}
               increaseViewportBy={{ top: 200, bottom: 200 }}
               components={{
                 Header: VirtuosoHeader,
+                Footer: VirtuosoFooter,
               }}
               itemContent={renderMessageItem}
               className="virtuoso-scroller"
             />
           )}
           </div>
+          )}
 
           {/* Scroll to bottom button */}
           {showScrollButton && (

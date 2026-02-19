@@ -651,6 +651,7 @@ export class AssistantServer {
         const limit = Math.min(Math.max(parseInt(c.req.query('limit') || '20'), 1), 100);
         const before = c.req.query('before');
         const after = c.req.query('after');
+        const around = c.req.query('around'); // Message ID to center results around
         const includeTotal = c.req.query('includeTotal') === 'true';
 
         // Helper to transform message for API response
@@ -696,6 +697,79 @@ export class AssistantServer {
             usage: m.metadata?.usage,
           };
         };
+
+        // Handle "around" mode - load messages centered around a specific message
+        if (around) {
+          const targetMessage = db.messages.findById(around);
+          if (!targetMessage || targetMessage.conversationId !== conversationId) {
+            // Target message not found, fall back to normal pagination
+            const result = db.messages.findByConversationIdPaginated(conversationId, {
+              limit,
+              includeTotal,
+            });
+            return c.json({
+              items: result.items.map(transformMessage).filter(Boolean),
+              pagination: result.pagination,
+              targetIndex: -1, // Indicate target not found
+            });
+          }
+
+          // Encode cursor for the target message
+          const targetCursor = Buffer.from(JSON.stringify({
+            createdAt: targetMessage.createdAt,
+            id: targetMessage.id,
+          })).toString('base64url');
+
+          // Fetch messages before the target (older)
+          const halfLimit = Math.floor(limit / 2);
+          const beforeResult = db.messages.findByConversationIdPaginated(conversationId, {
+            limit: halfLimit,
+            before: targetCursor,
+          });
+
+          // Fetch messages after the target (newer), including the target itself
+          const afterResult = db.messages.findByConversationIdPaginated(conversationId, {
+            limit: limit - halfLimit,
+            after: targetCursor,
+          });
+
+          // Combine: older messages + target + newer messages
+          // The "after" query doesn't include the cursor message, so we need to add the target
+          const combinedItems = [
+            ...beforeResult.items,
+            targetMessage,
+            ...afterResult.items,
+          ];
+
+          // Sort by createdAt to ensure proper order
+          combinedItems.sort((a, b) => {
+            const timeCompare = a.createdAt.localeCompare(b.createdAt);
+            return timeCompare !== 0 ? timeCompare : a.id.localeCompare(b.id);
+          });
+
+          // Find target index in combined results
+          const targetIndex = combinedItems.findIndex(m => m.id === around);
+
+          // Calculate pagination for combined results
+          const oldestCursor = combinedItems.length > 0
+            ? Buffer.from(JSON.stringify({ createdAt: combinedItems[0].createdAt, id: combinedItems[0].id })).toString('base64url')
+            : null;
+          const newestCursor = combinedItems.length > 0
+            ? Buffer.from(JSON.stringify({ createdAt: combinedItems[combinedItems.length - 1].createdAt, id: combinedItems[combinedItems.length - 1].id })).toString('base64url')
+            : null;
+
+          return c.json({
+            items: combinedItems.map(transformMessage).filter(Boolean),
+            pagination: {
+              hasOlder: beforeResult.pagination.hasOlder,
+              hasNewer: afterResult.pagination.hasNewer,
+              oldestCursor,
+              newestCursor,
+              totalCount: includeTotal ? db.messages.countByConversationId(conversationId) : undefined,
+            },
+            targetIndex, // Index of the target message in the results
+          });
+        }
 
         // Use paginated query
         const result = db.messages.findByConversationIdPaginated(conversationId, {
@@ -824,6 +898,48 @@ export class AssistantServer {
       } catch (error) {
         console.error('[API] Failed to rename conversation:', error);
         return c.json({ error: 'Failed to rename conversation' }, 500);
+      }
+    });
+
+    // Search messages across all conversations using FTS
+    this.app.get('/api/messages/search', (c) => {
+      try {
+        const db = getDb();
+        const query = c.req.query('q') || '';
+        const limit = Math.min(Math.max(parseInt(c.req.query('limit') || '20'), 1), 100);
+        const before = c.req.query('before');
+        const includeTotal = c.req.query('includeTotal') === 'true';
+
+        if (!query.trim()) {
+          return c.json({
+            items: [],
+            pagination: { hasOlder: false, hasNewer: false, oldestCursor: null, newestCursor: null },
+          });
+        }
+
+        const result = db.messages.search(query, {
+          limit,
+          before: before || undefined,
+          roles: ['user', 'assistant'],
+          includeTotal,
+        });
+
+        // Transform for API response
+        return c.json({
+          items: result.items.map(m => ({
+            id: m.id,
+            conversationId: m.conversationId,
+            conversationTitle: m.conversationTitle,
+            role: m.role,
+            snippet: m.snippet,
+            createdAt: m.createdAt,
+            rank: m.rank,
+          })),
+          pagination: result.pagination,
+        });
+      } catch (error) {
+        console.error('[API] Search failed:', error);
+        return c.json({ error: 'Search failed' }, 500);
       }
     });
 

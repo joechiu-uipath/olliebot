@@ -86,6 +86,19 @@ export interface MessageQueryOptions {
   includeTotal?: boolean;
 }
 
+export interface MessageSearchOptions {
+  limit?: number;        // Default 20, max 100
+  before?: string;       // Cursor for pagination
+  roles?: ('user' | 'assistant')[];  // Filter by role (default: user, assistant)
+  includeTotal?: boolean;
+}
+
+export interface MessageSearchResult extends Message {
+  conversationTitle: string;
+  snippet: string;  // FTS5 snippet with <mark> highlighting
+  rank: number;     // BM25 relevance score
+}
+
 // ============================================================================
 // Repository Interfaces
 // ============================================================================
@@ -106,6 +119,7 @@ export interface MessageRepository {
   countByConversationId(conversationId: string): number;
   create(message: Message): void;
   deleteByConversationId(conversationId: string): number;
+  search(query: string, options?: MessageSearchOptions): PaginatedResult<MessageSearchResult>;
 }
 
 export interface EmbeddingRepository {
@@ -649,6 +663,129 @@ class Database {
         const count = countResult.cnt;
         this.sqlite.prepare('DELETE FROM messages WHERE conversationId = ?').run(conversationId);
         return count;
+      },
+
+      search: (query: string, options?: MessageSearchOptions): PaginatedResult<MessageSearchResult> => {
+        const limit = Math.min(Math.max(options?.limit ?? 20, 1), MAX_QUERY_LIMIT);
+        const roles = options?.roles ?? ['user', 'assistant'];
+        const beforeCursor = options?.before ? decodeCursor(options.before) : null;
+
+        // Escape FTS5 special characters and prepare query
+        // FTS5 uses quotes for phrases, * for prefix, AND/OR/NOT for boolean
+        const cleanedQuery = query
+          .replace(/['"]/g, '')  // Remove quotes
+          .trim();
+
+        if (!cleanedQuery) {
+          return {
+            items: [],
+            pagination: { hasOlder: false, hasNewer: false, oldestCursor: null, newestCursor: null },
+          };
+        }
+
+        // Build FTS5 query with prefix matching for each term
+        const ftsQuery = cleanedQuery
+          .split(/\s+/)
+          .filter(Boolean)
+          .map(term => `"${term}"*`)  // Prefix matching with wildcards
+          .join(' OR ');
+
+        const fetchLimit = limit + 1;
+        const rolePlaceholders = roles.map(() => '?').join(',');
+
+        // Build the SQL query
+        let sql = `
+          SELECT
+            m.id, m.conversationId, m.role, m.content, m.metadata, m.createdAt, m.turnId,
+            c.title as conversationTitle,
+            snippet(messages_fts, 0, '<mark>', '</mark>', '...', 64) as snippet,
+            bm25(messages_fts) as rank
+          FROM messages m
+          JOIN messages_fts ON messages_fts.rowid = m.rowid
+          JOIN conversations c ON c.id = m.conversationId
+          WHERE messages_fts MATCH ?
+            AND m.role IN (${rolePlaceholders})
+            AND c.deletedAt IS NULL
+        `;
+
+        const params: unknown[] = [ftsQuery, ...roles];
+
+        if (beforeCursor) {
+          // Paginate by rank, then by createdAt DESC, then by id DESC
+          sql += ` AND (m.createdAt < ? OR (m.createdAt = ? AND m.id < ?))`;
+          params.push(beforeCursor.createdAt, beforeCursor.createdAt, beforeCursor.id);
+        }
+
+        sql += ` ORDER BY bm25(messages_fts), m.createdAt DESC, m.id DESC LIMIT ?`;
+        params.push(fetchLimit);
+
+        interface SearchRow extends MessageRow {
+          conversationTitle: string;
+          snippet: string;
+          rank: number;
+        }
+
+        let rows: SearchRow[];
+        try {
+          rows = this.sqlite.prepare(sql).all(...params) as SearchRow[];
+        } catch (err) {
+          // FTS5 query syntax error - return empty results
+          console.error('[Database] FTS search error:', err);
+          return {
+            items: [],
+            pagination: { hasOlder: false, hasNewer: false, oldestCursor: null, newestCursor: null },
+          };
+        }
+
+        const hasMore = rows.length > limit;
+        if (hasMore) {
+          rows = rows.slice(0, limit);
+        }
+
+        const items: MessageSearchResult[] = rows.map(row => ({
+          ...this.deserializeMessage(row),
+          conversationTitle: row.conversationTitle,
+          snippet: row.snippet,
+          rank: row.rank,
+        }));
+
+        // Calculate pagination
+        const oldestCursor = items.length > 0
+          ? encodeCursor({ createdAt: items[items.length - 1].createdAt, id: items[items.length - 1].id })
+          : null;
+        const newestCursor = items.length > 0
+          ? encodeCursor({ createdAt: items[0].createdAt, id: items[0].id })
+          : null;
+
+        let totalCount: number | undefined;
+        if (options?.includeTotal) {
+          try {
+            const countSql = `
+              SELECT COUNT(*) as cnt
+              FROM messages m
+              JOIN messages_fts ON messages_fts.rowid = m.rowid
+              JOIN conversations c ON c.id = m.conversationId
+              WHERE messages_fts MATCH ?
+                AND m.role IN (${rolePlaceholders})
+                AND c.deletedAt IS NULL
+            `;
+            const countResult = this.sqlite.prepare(countSql).get(ftsQuery, ...roles) as { cnt: number };
+            totalCount = countResult.cnt;
+          } catch {
+            // Ignore count errors
+          }
+        }
+
+        return {
+          items,
+          pagination: {
+            hasOlder: hasMore,
+            hasNewer: beforeCursor !== null,
+            oldestCursor,
+            newestCursor,
+            totalCount,
+          },
+        };
       },
     };
   }
