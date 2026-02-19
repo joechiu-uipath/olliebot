@@ -66,6 +66,9 @@ export interface ServerConfig {
   logBuffer?: LogBuffer;
   fastProvider?: string;
   fastModel?: string;
+  // Evaluation directories (for test isolation)
+  evaluationsDir?: string;
+  resultsDir?: string;
 }
 
 export class AssistantServer {
@@ -103,6 +106,8 @@ export class AssistantServer {
   private logBuffer?: LogBuffer;
   private fastProvider?: string;
   private fastModel?: string;
+  private evaluationsDir?: string;
+  private resultsDir?: string;
 
   constructor(config: ServerConfig) {
     this.port = config.port;
@@ -131,6 +136,8 @@ export class AssistantServer {
     this.logBuffer = config.logBuffer;
     this.fastProvider = config.fastProvider;
     this.fastModel = config.fastModel;
+    this.evaluationsDir = config.evaluationsDir;
+    this.resultsDir = config.resultsDir;
 
     // Security: Default to localhost-only binding (Layer 1: Network Binding)
     this.bindAddress = config.bindAddress ?? '127.0.0.1';
@@ -991,6 +998,8 @@ export class AssistantServer {
         llmService: this.llmService,
         toolRunner: this.toolRunner,
         channel: this.wsChannel,
+        evaluationsDir: this.evaluationsDir,
+        resultsDir: this.resultsDir,
       });
       console.log('[Server] Evaluation routes enabled');
     }
@@ -1396,6 +1405,14 @@ export class AssistantServer {
         });
       });
     });
+  }
+
+  /**
+   * Disconnect all WebSocket clients without stopping the server.
+   * Used for test isolation between test cases.
+   */
+  disconnectAllClients(): void {
+    this.wsChannel.disconnectAllClients();
   }
 
   /**

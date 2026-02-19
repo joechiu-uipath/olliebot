@@ -15,6 +15,10 @@ export interface EvalRoutesConfig {
   llmService: LLMService;
   toolRunner: ToolRunner;
   channel?: Channel;
+  /** Custom evaluations directory (defaults to user/evaluations) */
+  evaluationsDir?: string;
+  /** Custom results directory (defaults to user/evaluations/results) */
+  resultsDir?: string;
 }
 
 // Store for active evaluation jobs
@@ -26,8 +30,8 @@ const activeJobs = new Map<string, {
 }>();
 
 export function setupEvalRoutes(app: Hono, config: EvalRoutesConfig): EvaluationManager {
-  const evaluationsDir = join(process.cwd(), 'user', 'evaluations');
-  const resultsDir = join(process.cwd(), 'user', 'evaluations', 'results');
+  const evaluationsDir = config.evaluationsDir ?? join(process.cwd(), 'user', 'evaluations');
+  const resultsDir = config.resultsDir ?? join(process.cwd(), 'user', 'evaluations', 'results');
 
   const manager = new EvaluationManager({
     evaluationsDir,

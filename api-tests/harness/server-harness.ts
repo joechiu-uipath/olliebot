@@ -197,6 +197,8 @@ export class ServerHarness {
       tools: path.join(this._tempDir, 'tools'),
       memory: path.join(this._tempDir, 'memory'),
       rag: path.join(this._tempDir, 'rag'),
+      evaluations: path.join(this._tempDir, 'evaluations'),
+      results: path.join(this._tempDir, 'evaluations', 'results'),
     };
     for (const dir of Object.values(dirs)) {
       fs.mkdirSync(dir, { recursive: true });
@@ -330,6 +332,8 @@ export class ServerHarness {
       skillManager: this._skillManager,
       taskManager: this._taskManager,
       ragProjectService: this._ragProjectService,
+      evaluationsDir: dirs.evaluations,
+      resultsDir: dirs.results,
     };
 
     this.server = new AssistantServer(config);
@@ -341,9 +345,12 @@ export class ServerHarness {
    * Much faster than tearing down and re-creating the entire server.
    */
   async reset(): Promise<void> {
-    const db = getDb();
+    // Disconnect all WebSocket clients to ensure clean state
+    if (this.server) {
+      this.server.disconnectAllClients();
+    }
 
-    // Clear mission tables (reverse dependency order)
+    const db = getDb();
     db.rawExec('DELETE FROM pillar_metric_history');
     db.rawExec('DELETE FROM pillar_strategies');
     db.rawExec('DELETE FROM mission_todos');

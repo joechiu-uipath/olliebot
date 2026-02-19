@@ -498,6 +498,19 @@ export class WebSocketChannel implements Channel {
     return this.clients.size;
   }
 
+  /**
+   * Disconnect all clients without closing the channel.
+   * Used for test isolation between test cases.
+   */
+  disconnectAllClients(): void {
+    for (const client of this.clients.values()) {
+      client.ws.close();
+    }
+    this.clients.clear();
+    this.activeStreams.clear();
+    this.activeTools.clear();
+  }
+
   async close(): Promise<void> {
     // Close all client connections
     for (const client of this.clients.values()) {
