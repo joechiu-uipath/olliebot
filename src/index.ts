@@ -49,7 +49,8 @@ import {
   MissionMetricRecordTool,
   TurnTodoCreateTool,
   TurnTodoListTool,
-  TurnTodoCompleteTool,
+  CancelTodoTool,
+  DelegateTodoTool,
 } from './tools/index.js';
 import {
   ReadFrontendCodeTool,
@@ -506,8 +507,9 @@ async function main(): Promise<void> {
   const turnTodoRepository = new TurnTodoRepository();
   toolRunner.registerNativeTool(new TurnTodoCreateTool(turnTodoRepository));
   toolRunner.registerNativeTool(new TurnTodoListTool(turnTodoRepository));
-  toolRunner.registerNativeTool(new TurnTodoCompleteTool(turnTodoRepository));
-  console.log('[Init] Turn TODO tools registered (create_todo, list_todo, complete_todo)');
+  toolRunner.registerNativeTool(new CancelTodoTool(turnTodoRepository));
+  toolRunner.registerNativeTool(new DelegateTodoTool(turnTodoRepository));
+  console.log('[Init] Turn TODO tools registered (create_todo, list_todo, cancel_todo, delegate_todo)');
 
   // Create supervisor agent (multi-agent architecture)
   console.log('[Init] Creating supervisor agent...');

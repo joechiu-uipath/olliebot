@@ -97,10 +97,13 @@ const TASK_PLANNING_SECTION = `
 
 For complex requests that involve multiple distinct steps, use the task planning system:
 
-1. **Plan first**: Break the objective into individual tasks and call \`create_todo\` with the full list.
-2. **Execute sequentially**: After creating the plan, use \`list_todo\` to see remaining items. Pick the next pending item, execute it (directly or via delegation), then call \`complete_todo\` with the outcome.
-3. **Drain before responding**: You MUST NOT produce a final response to the user until all TODO items are completed or cancelled. After completing each item, check \`list_todo\` for remaining work.
-4. **Skip planning for simple tasks**: If the user's request can be handled in 1-2 tool calls, respond directly without creating a plan.
+1. **Plan first**: Break the objective into individual tasks and call \`create_todo\` with the full list. Each item should specify an \`agentType\` (researcher, coder, writer, planner) for the specialist that will handle it.
+2. **Delegate each task**: Call \`delegate_todo\` with the next pending item's ID. A specialist worker agent will be spawned to handle it. The result is automatically recorded — you do not need to mark items as complete.
+3. **After each delegation**: You will see the worker's result. Pick the next pending item and delegate it.
+4. **Cancel if needed**: Use \`cancel_todo\` to skip items that are no longer relevant.
+5. **Skip planning for simple tasks**: If the user's request can be handled in 1-2 tool calls, respond directly without creating a plan.
+
+IMPORTANT: You CANNOT complete a TODO yourself — you MUST delegate it to a worker via \`delegate_todo\`. This ensures every task has verifiable work behind it.
 
 When to use planning:
 - Multi-step research or analysis
@@ -111,6 +114,23 @@ When NOT to use planning:
 - Simple factual questions
 - Single tool calls (web search, screenshot, etc.)
 - Casual conversation
+`;
+
+/**
+ * Simplified system prompt used between todo delegations.
+ * The supervisor only needs to pick the next pending todo and delegate it.
+ * This keeps the context window small and the LLM focused.
+ */
+const SIMPLIFIED_TODO_PROMPT = `You are a task coordinator. You have a plan of TODO items to execute. Your ONLY job is to delegate the next pending item.
+
+## Current TODO State
+{{TODO_SUMMARY}}
+
+## Instructions
+1. Look at the pending TODO items above.
+2. Call \`delegate_todo\` with the next pending item's ID.
+3. If you need to skip an item, call \`cancel_todo\` with a reason.
+4. Do NOT produce a final user-facing response yet — more tasks remain.
 `;
 
 export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAgent {
@@ -185,6 +205,25 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
     }
 
     return prompt;
+  }
+
+  /**
+   * Build a human-readable summary of the current turn TODO state.
+   * Used in the simplified prompt between delegations.
+   */
+  private buildTodoSummary(repo: TurnTodoRepository, turnId: string): string {
+    const allTodos = repo.findByTurn(turnId);
+    if (allTodos.length === 0) return '(no TODO items)';
+
+    return allTodos.map((t, i) => {
+      const statusIcon = t.status === 'completed' ? '[DONE]'
+        : t.status === 'in_progress' ? '[IN PROGRESS]'
+        : t.status === 'cancelled' ? '[CANCELLED]'
+        : '[PENDING]';
+      let line = `${i + 1}. ${statusIcon} ${t.title} (id: ${t.id})`;
+      if (t.outcome) line += `\n   Outcome: ${t.outcome}`;
+      return line;
+    }).join('\n');
   }
 
   // Note: getConversationId() is not overridden - supervisor uses request-scoped conversationId
@@ -451,7 +490,7 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
       // For scheduled tasks, only allow tools specified in the task's actions list
       const allowedTools = message.metadata?.allowedTools as string[] | undefined;
       const systemPrompt = this.buildSystemPrompt(undefined, allowedTools);
-      const tools = this.getToolsForLLM(allowedTools);
+      let tools = this.getToolsForLLM(allowedTools);
 
       // Log system prompt to file for debugging
       logSystemPrompt(this.identity.name, systemPrompt);
@@ -626,6 +665,151 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
               });
 
               // Fall through to push messages into llmMessages and continue the loop
+            }
+
+            // Check if delegate_todo tool was called
+            const delegateTodoResult = results.find(r => r.toolName === 'delegate_todo' && r.success);
+            if (delegateTodoResult) {
+              const todoParams = delegateTodoResult.output as {
+                todoId: string;
+                todoTitle: string;
+                type: string;
+                mission: string;
+              };
+
+              // --- Mechanical step 1: Mark todo as in_progress ---
+              const now = new Date().toISOString();
+              turnTodoRepo.update(todoParams.todoId, { status: 'in_progress', startedAt: now });
+
+              // --- Mechanical step 2: Spawn worker and await result ---
+              // End the current stream before delegation (worker will start its own stream)
+              this.endStreamWithCitations(channel, streamId, conversationId, undefined, turnUsage);
+
+              // Save any response content before delegation
+              const reasoningMode = message.metadata?.reasoningMode as string | undefined;
+              if (fullResponse.trim() && conversationId && turnId) {
+                this.saveAssistantMessageWithContext(fullResponse.trim(), conversationId, turnId, { reasoningMode, usage: turnUsage });
+              }
+
+              // Unsubscribe from tool events BEFORE delegating
+              if (unsubscribeTool) {
+                unsubscribeTool();
+                unsubscribeTool = undefined;
+              }
+
+              // Perform the delegation
+              const workerResult = await this.handleDelegationFromTool(
+                { type: todoParams.type, mission: todoParams.mission },
+                message, channel, conversationId, turnId, traceId, spanId
+              );
+
+              // --- Mechanical step 3: Mark todo as completed with worker result ---
+              const completedAt = new Date().toISOString();
+              turnTodoRepo.update(todoParams.todoId, {
+                status: 'completed',
+                outcome: workerResult || '(no output)',
+                completedAt,
+              });
+
+              console.log(`[${this.identity.name}] TODO "${todoParams.todoTitle}" completed mechanically from worker result`);
+
+              // Re-subscribe to tool events
+              if (this.toolRunner) {
+                unsubscribeTool = this.toolRunner.onToolEvent((event) => {
+                  if (event.callerId && event.callerId !== callerId) {
+                    return;
+                  }
+                  const messageEventService = getMessageEventService();
+                  messageEventService.setChannel(channel);
+                  messageEventService.emitToolEvent(event, conversationId ?? null, {
+                    id: this.identity.id,
+                    name: this.identity.name,
+                    emoji: this.identity.emoji,
+                  }, turnId);
+                });
+              }
+
+              // Update the delegate_todo tool result so the LLM sees what happened
+              const delegateTodoIndex = results.indexOf(delegateTodoResult);
+              if (delegateTodoIndex >= 0) {
+                results[delegateTodoIndex] = {
+                  ...results[delegateTodoIndex],
+                  output: {
+                    todoId: todoParams.todoId,
+                    todoTitle: todoParams.todoTitle,
+                    status: 'completed',
+                    outcome: workerResult || '(no output)',
+                  },
+                };
+              }
+
+              // --- Step 4: Check remaining todos and rebuild context ---
+              const todoCounts = turnTodoRepo.countByStatus(turnId!);
+              const remaining = todoCounts.pending + todoCounts.in_progress;
+
+              // Start a new stream for the supervisor's next iteration
+              streamId = uuid();
+              fullResponse = '';
+              channel.startStream(streamId, {
+                agentId: this.identity.id,
+                agentName: this.identity.name,
+                agentEmoji: this.identity.emoji,
+                conversationId,
+              });
+
+              if (remaining > 0) {
+                // More todos remain — rebuild with SIMPLIFIED prompt and narrow tool list.
+                // Supervisor only needs to pick the next todo and delegate it.
+                const todoSummary = this.buildTodoSummary(turnTodoRepo, turnId!);
+                const simplifiedPrompt = SIMPLIFIED_TODO_PROMPT.replace('{{TODO_SUMMARY}}', todoSummary);
+
+                llmMessages = [
+                  { role: 'system', content: simplifiedPrompt },
+                  { role: 'user', content: message.content },
+                ];
+
+                // Push the delegate_todo result so the LLM sees what just completed
+                llmMessages.push({
+                  role: 'assistant',
+                  content: response.content || '',
+                  toolUse: response.toolUse,
+                });
+                const toolResultBlocks = formatToolResultBlocks(results);
+                llmMessages.push({ role: 'user', content: toolResultBlocks });
+
+                // Narrow tool list: only todo management tools
+                tools = this.getToolsForLLM(allowedTools).filter(t =>
+                  ['delegate_todo', 'list_todo', 'cancel_todo', 'create_todo'].includes(t.name)
+                );
+              } else {
+                // ALL todos done — rebuild with FULL prompt and all todo results for synthesis
+                const allTodos = turnTodoRepo.findByTurn(turnId!);
+                const resultsSection = allTodos.map((t, i) =>
+                  `${i + 1}. [${t.status}] ${t.title}\n   Outcome: ${t.outcome || '(none)'}`
+                ).join('\n');
+
+                const fullPrompt = this.buildSystemPrompt(undefined, allowedTools);
+                llmMessages = [
+                  { role: 'system', content: fullPrompt },
+                  { role: 'user', content: message.content },
+                  {
+                    role: 'assistant',
+                    content: `All planned tasks are complete. Here are the results:\n\n${resultsSection}\n\nI will now synthesize these results into a response.`,
+                  },
+                ];
+
+                // Restore full tool list (supervisor may need tools for final response)
+                tools = this.getToolsForLLM(allowedTools);
+              }
+
+              // Extend loop budget for remaining work
+              effectiveMaxIterations = Math.min(
+                Math.max(effectiveMaxIterations, iterationCount + AGENT_MAX_TOOL_ITERATIONS),
+                AGENT_MAX_TOOL_ITERATIONS_WITH_PLAN
+              );
+
+              // Continue loop — don't push messages again (already rebuilt above)
+              continue;
             }
 
             // Add assistant message with tool use to conversation

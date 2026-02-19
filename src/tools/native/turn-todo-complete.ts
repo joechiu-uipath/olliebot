@@ -1,35 +1,33 @@
 /**
- * Turn TODO Complete Tool
+ * Cancel TODO Tool
  *
- * Marks a TODO item as completed or cancelled. The supervisor calls this
- * after finishing each step in the plan.
+ * Allows the supervisor to cancel a TODO item that should not be executed.
+ * This is the only way for the LLM to change a todo's status — actual completion
+ * is handled mechanically when a worker agent returns from delegate_todo.
  */
 
 import type { NativeTool, NativeToolResult, ToolExecutionContext } from './types.js';
 import { TurnTodoRepository } from '../../todos/index.js';
 
-export class TurnTodoCompleteTool implements NativeTool {
-  readonly name = 'complete_todo';
-  readonly description = `Mark a TODO item as completed or cancelled. Call this after finishing each task in the plan, providing a brief outcome summary.`;
+export class CancelTodoTool implements NativeTool {
+  readonly name = 'cancel_todo';
+  readonly description = `Cancel a TODO item that should not be executed. Provide a reason for cancellation. Use this when a task is no longer relevant or was superseded by earlier results.
+
+NOTE: You cannot mark a TODO as "completed" with this tool. Completion happens automatically when a worker agent finishes via delegate_todo.`;
 
   readonly inputSchema = {
     type: 'object',
     properties: {
       todoId: {
         type: 'string',
-        description: 'The ID of the TODO item to complete',
+        description: 'The ID of the TODO item to cancel',
       },
-      outcome: {
+      reason: {
         type: 'string',
-        description: 'What was done, or why the item was cancelled',
-      },
-      status: {
-        type: 'string',
-        enum: ['completed', 'cancelled'],
-        description: 'New status (default: completed)',
+        description: 'Why this item is being cancelled',
       },
     },
-    required: ['todoId', 'outcome'],
+    required: ['todoId', 'reason'],
   };
 
   private repository: TurnTodoRepository;
@@ -40,17 +38,13 @@ export class TurnTodoCompleteTool implements NativeTool {
 
   async execute(params: Record<string, unknown>, context?: ToolExecutionContext): Promise<NativeToolResult> {
     const todoId = params.todoId as string;
-    const outcome = params.outcome as string;
-    const status = (params.status as string) || 'completed';
+    const reason = params.reason as string;
 
     if (!todoId) {
       return { success: false, error: 'todoId is required' };
     }
-    if (!outcome) {
-      return { success: false, error: 'outcome is required' };
-    }
-    if (status !== 'completed' && status !== 'cancelled') {
-      return { success: false, error: 'status must be "completed" or "cancelled"' };
+    if (!reason) {
+      return { success: false, error: 'reason is required' };
     }
 
     const existing = this.repository.findById(todoId);
@@ -62,12 +56,15 @@ export class TurnTodoCompleteTool implements NativeTool {
       return { success: false, error: `TODO item is already ${existing.status}` };
     }
 
+    if (existing.status === 'in_progress') {
+      return { success: false, error: 'Cannot cancel an in-progress item (a worker is currently executing it)' };
+    }
+
     const now = new Date().toISOString();
     const updated = this.repository.update(todoId, {
-      status: status as 'completed' | 'cancelled',
-      outcome,
+      status: 'cancelled',
+      outcome: reason,
       completedAt: now,
-      ...(existing.status !== 'in_progress' ? { startedAt: now } : {}),
     });
 
     if (!updated) {
@@ -82,9 +79,8 @@ export class TurnTodoCompleteTool implements NativeTool {
       output: {
         id: updated.id,
         title: updated.title,
-        status: updated.status,
-        outcome: updated.outcome,
-        completedAt: updated.completedAt,
+        status: 'cancelled',
+        reason,
         remaining,
       },
     };
