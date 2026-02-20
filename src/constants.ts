@@ -313,7 +313,7 @@ export const MESSAGE_SEARCH_SEMANTIC_WEIGHT = 0.8;
  * Default roles to index and search in messages.
  * Exported as a mutable copy to prevent accidental modification of the constant.
  */
-export const MESSAGE_DEFAULT_INDEXABLE_ROLES = ['user', 'assistant'];
+export const MESSAGE_DEFAULT_INDEXABLE_ROLES: ('user' | 'assistant')[] = ['user', 'assistant'];
 
 // ============================================================
 // QUERY & FETCH LIMITS

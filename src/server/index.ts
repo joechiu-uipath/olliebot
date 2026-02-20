@@ -22,6 +22,14 @@ import type { TaskManager } from '../tasks/index.js';
 import { type RAGProjectService, createRAGProjectRoutes, type IndexingProgress } from '../rag-projects/index.js';
 import { handleMessageSearch } from '../message-embeddings/index.js';
 import type { MessageEmbeddingService } from '../message-embeddings/index.js';
+import { MissionManager } from '../missions/index.js';
+import { TraceStore } from '../tracing/index.js';
+import { LogBuffer, OllieBotMCPServer } from '../mcp-server/index.js';
+import { getUserSettingsService } from '../settings/index.js';
+import { setMessageEventServiceChannel, getMessageEventService } from '../services/message-event-service.js';
+import { setupMissionRoutes } from './mission-routes.js';
+import { getDashboardStore, SnapshotEngine, RenderEngine, setupDashboardRoutes } from '../dashboard/index.js';
+import { MissionUpdateDashboardTool } from '../tools/native/mission-update-dashboard.js';
 
 export interface ServerConfig {
   port: number;
