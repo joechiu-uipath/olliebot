@@ -11,6 +11,38 @@ function HighlightedSnippet({ html }) {
 }
 
 /**
+ * Renders source badges for a search result.
+ * Shows individual badges for each source (FTS, EMB) with score tooltips.
+ */
+function SourceBadges({ sources }) {
+  if (!sources || sources.length === 0) return null;
+
+  const ftsSource = sources.find(s => s.source === 'fts');
+  const embSource = sources.find(s => s.source === 'semantic');
+
+  return (
+    <span className="search-source-badges">
+      {ftsSource && (
+        <span
+          className="source-badge source-badge-fts"
+          title={`Full-text search (BM25 rank: ${Math.abs(ftsSource.score).toFixed(2)})`}
+        >
+          FTS
+        </span>
+      )}
+      {embSource && (
+        <span
+          className="source-badge source-badge-emb"
+          title={`Embedding search${embSource.strategy ? ` (${embSource.strategy})` : ''} (similarity: ${embSource.score.toFixed(3)})`}
+        >
+          EMB
+        </span>
+      )}
+    </span>
+  );
+}
+
+/**
  * Format a date string for display in search results.
  * Shows time for today, weekday+time for this week, otherwise month+day.
  */
@@ -69,7 +101,7 @@ export const SearchResults = memo(function SearchResults({
 
   const renderItem = (index, result) => (
     <div
-      key={result.id}
+      key={result.id || result.messageId}
       className="search-result-item"
       onClick={() => onResultClick(result)}
       role="button"
@@ -86,9 +118,7 @@ export const SearchResults = memo(function SearchResults({
           {result.conversationTitle || 'Untitled Chat'}
         </span>
         <span className="search-result-meta">
-          <span className="search-result-rank" title="BM25 relevance score">
-            {Math.abs(result.rank).toFixed(2)}
-          </span>
+          <SourceBadges sources={result.sources} />
           <span className="search-result-time">{formatResultDate(result.createdAt)}</span>
         </span>
       </div>

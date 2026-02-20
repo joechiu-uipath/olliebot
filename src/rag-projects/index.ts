@@ -32,10 +32,13 @@ export { createRAGProjectRoutes } from './routes.js';
 export {
   loadDocument,
   loadAndChunkDocument,
+  chunkText,
   isSupportedFile,
   getMimeType,
   SUPPORTED_EXTENSIONS,
 } from './document-loader.js';
+
+export type { ChunkOptions } from './document-loader.js';
 
 // Vector store
 export { LanceStore, createLanceStore } from './lance-store.js';

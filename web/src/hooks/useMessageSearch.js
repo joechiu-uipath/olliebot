@@ -1,7 +1,8 @@
 import { useState, useCallback, useRef } from 'react';
 
 /**
- * Hook for searching messages across all conversations using full-text search.
+ * Hook for searching messages across all conversations using hybrid search.
+ * Combines FTS (full-text) and embedding-based semantic search with RRF fusion.
  * Features debounced search, pagination, and request cancellation.
  */
 export function useMessageSearch() {
@@ -34,6 +35,7 @@ export function useMessageSearch() {
         q: query,
         limit: '20',
         includeTotal: 'true',
+        mode: 'hybrid',
       });
 
       if (loadMore && searchPagination?.oldestCursor) {

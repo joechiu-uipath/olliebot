@@ -20,15 +20,16 @@ import type { BrowserSessionManager } from '../browser/index.js';
 import type { DesktopSessionManager } from '../desktop/index.js';
 import type { TaskManager } from '../tasks/index.js';
 import { type RAGProjectService, createRAGProjectRoutes, type IndexingProgress } from '../rag-projects/index.js';
-import type { MissionManager } from '../missions/index.js';
+import { handleMessageSearch } from '../message-embeddings/index.js';
+import type { MessageEmbeddingService } from '../message-embeddings/index.js';
+import { MissionManager } from '../missions/index.js';
+import { TraceStore } from '../tracing/index.js';
+import { LogBuffer, OllieBotMCPServer } from '../mcp-server/index.js';
+import { getUserSettingsService } from '../settings/index.js';
+import { setMessageEventServiceChannel, getMessageEventService } from '../services/message-event-service.js';
 import { setupMissionRoutes } from './mission-routes.js';
 import { getDashboardStore, SnapshotEngine, RenderEngine, setupDashboardRoutes } from '../dashboard/index.js';
 import { MissionUpdateDashboardTool } from '../tools/native/mission-update-dashboard.js';
-import { getMessageEventService, setMessageEventServiceChannel } from '../services/message-event-service.js';
-import { getUserSettingsService } from '../settings/index.js';
-import { OllieBotMCPServer } from '../mcp-server/index.js';
-import type { LogBuffer } from '../mcp-server/index.js';
-import type { TraceStore } from '../tracing/trace-store.js';
 
 export interface ServerConfig {
   port: number;
@@ -69,6 +70,8 @@ export interface ServerConfig {
   // Evaluation directories (for test isolation)
   evaluationsDir?: string;
   resultsDir?: string;
+  // Message embedding service for semantic search
+  messageEmbeddingService?: MessageEmbeddingService;
 }
 
 export class AssistantServer {
@@ -108,6 +111,7 @@ export class AssistantServer {
   private fastModel?: string;
   private evaluationsDir?: string;
   private resultsDir?: string;
+  private messageEmbeddingService?: MessageEmbeddingService;
 
   constructor(config: ServerConfig) {
     this.port = config.port;
@@ -138,6 +142,7 @@ export class AssistantServer {
     this.fastModel = config.fastModel;
     this.evaluationsDir = config.evaluationsDir;
     this.resultsDir = config.resultsDir;
+    this.messageEmbeddingService = config.messageEmbeddingService;
 
     // Security: Default to localhost-only binding (Layer 1: Network Binding)
     this.bindAddress = config.bindAddress ?? '127.0.0.1';
@@ -839,7 +844,7 @@ export class AssistantServer {
     });
 
     // Soft delete a conversation (well-known conversations cannot be deleted)
-    this.app.delete('/api/conversations/:id', (c) => {
+    this.app.delete('/api/conversations/:id', async (c) => {
       try {
         const id = c.req.param('id');
 
@@ -850,6 +855,12 @@ export class AssistantServer {
 
         const db = getDb();
         db.conversations.softDelete(id);
+
+        // Purge message embeddings for this conversation
+        if (this.messageEmbeddingService) {
+          await this.messageEmbeddingService.deleteByConversationId(id);
+        }
+
         return c.json({ success: true });
       } catch (error) {
         console.error('[API] Failed to delete conversation:', error);
@@ -901,46 +912,10 @@ export class AssistantServer {
       }
     });
 
-    // Search messages across all conversations using FTS
-    this.app.get('/api/messages/search', (c) => {
-      try {
-        const db = getDb();
-        const query = c.req.query('q') || '';
-        const limit = Math.min(Math.max(parseInt(c.req.query('limit') || '20'), 1), 100);
-        const before = c.req.query('before');
-        const includeTotal = c.req.query('includeTotal') === 'true';
-
-        if (!query.trim()) {
-          return c.json({
-            items: [],
-            pagination: { hasOlder: false, hasNewer: false, oldestCursor: null, newestCursor: null },
-          });
-        }
-
-        const result = db.messages.search(query, {
-          limit,
-          before: before || undefined,
-          roles: ['user', 'assistant'],
-          includeTotal,
-        });
-
-        // Transform for API response
-        return c.json({
-          items: result.items.map(m => ({
-            id: m.id,
-            conversationId: m.conversationId,
-            conversationTitle: m.conversationTitle,
-            role: m.role,
-            snippet: m.snippet,
-            createdAt: m.createdAt,
-            rank: m.rank,
-          })),
-          pagination: result.pagination,
-        });
-      } catch (error) {
-        console.error('[API] Search failed:', error);
-        return c.json({ error: 'Search failed' }, 500);
-      }
+    // Search messages across all conversations
+    // Supports mode=fts (default), mode=semantic, mode=hybrid
+    this.app.get('/api/messages/search', async (c) => {
+      return handleMessageSearch(c, this.messageEmbeddingService || null);
     });
 
     // Get chat history (for current/active conversation)

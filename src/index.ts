@@ -56,6 +56,7 @@ import {
 import { TaskManager } from './tasks/index.js';
 import { MissionManager, initMissionSchema, validateMissionConversations } from './missions/index.js';
 import { MemoryService } from './memory/index.js';
+import { MessageEmbeddingService, DEFAULT_MESSAGE_EMBEDDING_CONFIG } from './message-embeddings/index.js';
 import { UserToolManager } from './tools/user/index.js';
 import {
   BrowserSessionManager,
@@ -307,6 +308,24 @@ async function main(): Promise<void> {
     console.log('[Init] RAG summarization provider configured');
   } else {
     console.log('[Init] RAG project service disabled (no embedding provider configured)');
+  }
+
+  // Initialize Message Embedding Service (semantic search on chat messages)
+  let messageEmbeddingService: MessageEmbeddingService | null = null;
+  if (embeddingProvider) {
+    console.log('[Init] Initializing message embedding service...');
+    messageEmbeddingService = new MessageEmbeddingService(
+      {
+        ...DEFAULT_MESSAGE_EMBEDDING_CONFIG,
+        dbPath: join(process.cwd(), 'user', 'data', 'message-embeddings.lance'),
+      },
+      embeddingProvider
+    );
+    await messageEmbeddingService.init();
+    messageEmbeddingService.startIndexer();
+    console.log('[Init] Message embedding service initialized (background indexing active)');
+  } else {
+    console.log('[Init] Message embedding service disabled (no embedding provider configured)');
   }
 
   // Initialize Tool Runner
@@ -690,6 +709,7 @@ async function main(): Promise<void> {
       logBuffer,
       fastProvider: CONFIG.fastProvider,
       fastModel: CONFIG.fastModel,
+      messageEmbeddingService: messageEmbeddingService || undefined,
     });
     await server.start();
 
@@ -768,6 +788,9 @@ async function main(): Promise<void> {
     await skillManager.close();
     if (ragProjectService) {
       await ragProjectService.close();
+    }
+    if (messageEmbeddingService) {
+      await messageEmbeddingService.close();
     }
     await closeDb();
     console.log('[Shutdown] Complete');
