@@ -29,8 +29,8 @@
     "test:e2e:report": "playwright show-report",
     "test:api": "vitest run --config api-tests/vitest.config.ts",
     "test:api:coverage": "vitest run --config api-tests/vitest.config.ts --coverage",
-    "eval": "npx promptfoo@0.120.25 eval",
-    "eval:view": "npx promptfoo@0.120.25 view"
+    "eval": "npx -y promptfoo eval",
+    "eval:view": "npx -y promptfoo view"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.30.0",
