@@ -37,12 +37,12 @@ const config: UnifiedConfig = {
     },
   },
 
-  // Test cases loaded from external YAML files
+  // Test cases loaded from external JSON files
   tests: [
-    'file://prompt-tests/basic-qa.yaml',
-    'file://prompt-tests/delegation.yaml',
-    'file://prompt-tests/response-quality.yaml',
-    'file://prompt-tests/edge-cases.yaml',
+    'file://prompt-tests/basic-qa.json',
+    'file://prompt-tests/delegation.json',
+    'file://prompt-tests/response-quality.json',
+    'file://prompt-tests/edge-cases.json',
   ],
 };
 
