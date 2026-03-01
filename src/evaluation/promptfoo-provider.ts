@@ -18,10 +18,10 @@
  */
 
 import { config as loadEnv } from 'dotenv';
-import type { LLMService } from '../llm/service.js';
-import type { ToolRunner } from '../tools/runner.js';
 import type { EvaluationRunner } from './runner.js';
 import type { TargetType } from './types.js';
+import { MockedToolRunner } from './mocked-tool-runner.js';
+import { RecordingToolExecutor } from './recording-tool-executor.js';
 
 // Load environment variables for API keys
 loadEnv();
@@ -142,18 +142,19 @@ class OllieBotProvider {
       // Build messages — prompt is the user message from the test case
       const messages = [{ role: 'user' as const, content: prompt }];
 
-      // Set up mocked tool runner (empty mocks — returns default responses)
-      const { MockedToolRunner } = await import('./mocked-tool-runner.js');
-      const mockedToolRunner = new MockedToolRunner();
+      // Set up mocked tool runner with tool definitions from the real runner
+      const tools = runner.getToolDefinitions();
+      const mockedToolRunner = new MockedToolRunner(tools);
+      const recording = new RecordingToolExecutor(mockedToolRunner);
 
       // Delegate to EvaluationRunner — reuse the existing agentic loop
       const { response, tokenUsage } = await runner.executeWithTools(
         systemPrompt,
         messages,
-        mockedToolRunner,
+        recording,
       );
 
-      const toolCalls = mockedToolRunner.getRecordedCalls();
+      const toolCalls = recording.getRecordedCalls();
       const latencyMs = Date.now() - startTime;
       const inputTokens = tokenUsage?.input || 0;
       const outputTokens = tokenUsage?.output || 0;

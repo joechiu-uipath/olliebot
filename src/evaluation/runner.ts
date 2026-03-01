@@ -2,7 +2,7 @@
  * EvaluationRunner - Executes individual evaluation runs
  *
  * Responsibilities:
- * - Set up evaluation environment with mocked tools
+ * - Set up evaluation environment with mocked or real tools
  * - Execute prompts against the target (supervisor, sub-agent, tool-generator)
  * - Capture tool calls and responses
  * - Return raw results for scoring
@@ -10,16 +10,21 @@
 
 import { v4 as uuid } from 'uuid';
 import type { LLMService } from '../llm/service.js';
-import type { LLMMessage, LLMToolUse } from '../llm/types.js';
+import type { LLMMessage } from '../llm/types.js';
 import type { ToolRunner } from '../tools/runner.js';
+import type { ToolExecutor } from '../tools/types.js';
 import type {
   EvaluationDefinition,
   SingleRunResult,
   DelegationDecision,
+  MockedToolOutput,
 } from './types.js';
 import { MockedToolRunner } from './mocked-tool-runner.js';
+import { RecordingToolExecutor } from './recording-tool-executor.js';
+import type { RecordedToolCall } from './recording-tool-executor.js';
 import { PromptLoader } from './prompt-loader.js';
 import { Scorer } from './scorer.js';
+import { formatToolResultBlocks } from '../utils/tool-results.js';
 
 export interface EvaluationRunnerConfig {
   llmService: LLMService;
@@ -66,8 +71,22 @@ export class EvaluationRunner {
       systemPrompt = this.promptLoader.loadForTarget(definition.metadata.target);
     }
 
-    // 2. Set up mocked tool runner
-    const mockedToolRunner = new MockedToolRunner(definition.mockedOutputs || {});
+    // 2. Choose tool executor based on mode
+    const toolMode = definition.toolMode || 'mocked';
+    let baseExecutor: ToolExecutor;
+
+    if (toolMode === 'mocked') {
+      baseExecutor = new MockedToolRunner(
+        this.toolRunner.getToolsForLLM(),
+        definition.mockedOutputs || {}
+      );
+    } else {
+      // 'live' or 'capture' — use real tools
+      baseExecutor = this.toolRunner;
+    }
+
+    // Wrap in recording executor for call tracking
+    const recordingExecutor = new RecordingToolExecutor(baseExecutor);
 
     // 3. Build messages
     const messages = this.buildMessages(definition);
@@ -76,16 +95,22 @@ export class EvaluationRunner {
     const { response, tokenUsage } = await this.executeWithTools(
       systemPrompt,
       messages,
-      mockedToolRunner
+      recordingExecutor
     );
 
     // 5. Get recorded tool calls
-    const recordedCalls = mockedToolRunner.getRecordedCalls();
+    const recordedCalls = recordingExecutor.getRecordedCalls();
 
-    // 6. Parse delegation if supervisor target (uses tool calls)
+    // 6. Build captured snapshots if in capture mode
+    let capturedSnapshots: Record<string, MockedToolOutput> | undefined;
+    if (toolMode === 'capture') {
+      capturedSnapshots = this.buildSnapshots(recordedCalls);
+    }
+
+    // 7. Parse delegation if supervisor target (uses tool calls)
     const delegationDecision = this.parseDelegation(response, definition, recordedCalls);
 
-    // 7. Score the results
+    // 8. Score the results
     const scores = await this.scorer.score(
       definition,
       response,
@@ -108,6 +133,7 @@ export class EvaluationRunner {
       constraintViolations: scores.constraintViolations,
       latencyMs: Date.now() - startTime,
       tokenUsage,
+      capturedSnapshots,
     };
   }
 
@@ -180,15 +206,16 @@ export class EvaluationRunner {
   }
 
   /**
-   * Execute with tool support, handling the tool call loop
+   * Execute with tool support, handling the tool call loop.
+   * Accepts any ToolExecutor — mocked, real, or recording wrapper.
    */
   async executeWithTools(
     systemPrompt: string,
     messages: LLMMessage[],
-    mockedToolRunner: MockedToolRunner
+    toolExecutor: ToolExecutor
   ): Promise<{ response: string; tokenUsage?: { input: number; output: number } }> {
-    // Get tool definitions from the real tool runner
-    const tools = this.toolRunner.getToolsForLLM();
+    // Get tool definitions from the executor
+    const tools = toolExecutor.getToolsForLLM();
 
     let currentMessages = [...messages];
     let finalResponse = '';
@@ -218,24 +245,11 @@ export class EvaluationRunner {
         break;
       }
 
-      // Handle tool calls
-      const toolResults: Array<{ tool_use_id: string; content: string; is_error?: boolean }> = [];
-
-      for (const toolUse of response.toolUse) {
-        const request = mockedToolRunner.createRequest(
-          toolUse.id,
-          toolUse.name,
-          toolUse.input
-        );
-
-        const result = await mockedToolRunner.executeTool(request);
-
-        toolResults.push({
-          tool_use_id: toolUse.id,
-          content: JSON.stringify(result.success ? result.output : { error: result.error }),
-          is_error: !result.success,
-        });
-      }
+      // Execute tools via the executor
+      const toolRequests = response.toolUse.map((toolUse) =>
+        toolExecutor.createRequest(toolUse.id, toolUse.name, toolUse.input)
+      );
+      const results = await toolExecutor.executeTools(toolRequests);
 
       // Add assistant message with tool use
       currentMessages.push({
@@ -244,19 +258,12 @@ export class EvaluationRunner {
         toolUse: response.toolUse,
       });
 
-      // Add tool results as separate user messages (OpenAI-compatible format)
-      // Each tool result is sent as a JSON object that openai-base.ts parses
-      for (const toolResult of toolResults) {
-        currentMessages.push({
-          role: 'user',
-          content: JSON.stringify({
-            type: 'tool_result',
-            tool_use_id: toolResult.tool_use_id,
-            content: toolResult.content,
-            is_error: toolResult.is_error,
-          }),
-        });
-      }
+      // Add tool results — same format as the real worker (formatToolResultBlocks)
+      const toolResultBlocks = formatToolResultBlocks(results);
+      currentMessages.push({
+        role: 'user',
+        content: toolResultBlocks,
+      });
 
       // If the response had both content and tool use, capture the content
       if (response.content && response.stopReason !== 'tool_use') {
@@ -276,6 +283,27 @@ export class EvaluationRunner {
         output: totalOutputTokens,
       },
     };
+  }
+
+  /**
+   * Build mock snapshots from recorded tool calls (for capture mode).
+   * Converts real tool results into MockedToolOutput format keyed by tool name.
+   */
+  private buildSnapshots(recordedCalls: RecordedToolCall[]): Record<string, MockedToolOutput> {
+    const snapshots: Record<string, MockedToolOutput> = {};
+
+    for (const call of recordedCalls) {
+      if (!call.result) continue;
+
+      // Use the last result for each tool name (most recent call wins)
+      snapshots[call.toolName] = {
+        success: call.result.success,
+        output: call.result.output,
+        error: call.result.error,
+      };
+    }
+
+    return snapshots;
   }
 
   /**
@@ -310,6 +338,13 @@ export class EvaluationRunner {
    */
   getPromptLoader(): PromptLoader {
     return this.promptLoader;
+  }
+
+  /**
+   * Get tool definitions from the underlying tool runner
+   */
+  getToolDefinitions() {
+    return this.toolRunner.getToolsForLLM();
   }
 
   /**

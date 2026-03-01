@@ -129,3 +129,26 @@ export interface LLMTool {
   description: string;
   input_schema: Record<string, unknown>;
 }
+
+/**
+ * Minimal interface for tool execution.
+ * Satisfied by both ToolRunner (real tools) and MockedToolRunner (test mocks).
+ */
+export interface ToolExecutor {
+  /** Get tool definitions formatted for LLM API */
+  getToolsForLLM(): LLMTool[];
+
+  /** Create a tool request from an LLM tool_use block */
+  createRequest(
+    toolUseId: string,
+    toolName: string,
+    parameters: Record<string, unknown>,
+    groupId?: string
+  ): ToolRequest;
+
+  /** Execute a single tool request */
+  executeTool(request: ToolRequest): Promise<ToolResult>;
+
+  /** Execute multiple tool requests */
+  executeTools(requests: ToolRequest[]): Promise<ToolResult[]>;
+}

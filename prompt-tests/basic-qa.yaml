@@ -1,0 +1,24 @@
+- description: Simple math question
+  vars:
+    message: "What is 2 + 2?"
+  assert:
+    - type: contains
+      value: "4"
+    - type: javascript
+      value: "output.length < 500"
+
+- description: General knowledge question
+  vars:
+    message: "What is the capital of France?"
+  assert:
+    - type: icontains
+      value: "Paris"
+
+- description: Explanation request
+  vars:
+    message: "Explain what a REST API is in 2-3 sentences."
+  assert:
+    - type: llm-rubric
+      value: "Response should explain REST API clearly and concisely in 2-3 sentences. It should mention HTTP methods or endpoints or resources."
+    - type: javascript
+      value: "output.length > 50 && output.length < 2000"
