@@ -585,7 +585,114 @@ OllieBot's built-in eval system (`src/evaluation/`) implements several of these 
 
 ---
 
-## 4. Sources & References
+## 4. Appendix: Promptfoo Integration Architecture for OllieBot
+
+This section documents how Promptfoo integrates with OllieBot's agentic loop — specifically addressing the concern that OllieBot's system prompt is an internal runtime artifact, not a static file.
+
+### The Core Insight: Promptfoo Does Not Need Your Prompt
+
+Promptfoo's **custom provider** mechanism treats your agent as a black box. You implement a single interface:
+
+```typescript
+import type { ApiProvider, ProviderOptions, ProviderResponse, CallApiContextParams } from 'promptfoo';
+
+class OllieBotProvider implements ApiProvider {
+  constructor(options: ProviderOptions) { /* config from promptfoo.config.ts */ }
+
+  id(): string { return 'olliebot'; }
+
+  async callApi(prompt: string, context?: CallApiContextParams): Promise<ProviderResponse> {
+    // prompt = the user message text (from test case vars)
+    // YOUR agent builds its own system prompt internally
+    // YOUR agent runs its own tool loop internally
+    // Promptfoo only sees the final output
+    return {
+      output: agentResponse,            // string — the agent's final text
+      cost: totalCost,                   // optional — for cost assertions
+      tokenUsage: { total, prompt: inputTokens, completion: outputTokens },
+      metadata: { toolCalls, steps },    // optional — for trajectory assertions
+    };
+  }
+}
+```
+
+The `prompt` parameter is just the user message. OllieBot's `buildSystemPrompt()` (in `src/agents/base-agent.ts`) — which dynamically assembles the base `.md` file, mission context, memory, skills, RAG knowledge, and conditional sections — runs entirely inside `callApi()`. Promptfoo never sees or controls the system prompt.
+
+### Config Format: TypeScript, Not YAML
+
+Promptfoo auto-detects `promptfooconfig.ts` and supports `export default config` with the `UnifiedConfig` type:
+
+```typescript
+import type { UnifiedConfig } from 'promptfoo';
+
+const config: UnifiedConfig = {
+  prompts: ['{{message}}'],  // passthrough — the agent builds its own system prompt
+  providers: ['file://src/evaluation/promptfoo-provider.ts'],
+  tests: [
+    {
+      vars: { message: 'What is 2 + 2?' },
+      assert: [
+        { type: 'contains', value: '4' },
+        { type: 'cost', threshold: 0.10 },
+      ],
+    },
+    {
+      vars: { message: 'Search the web for the latest TypeScript release' },
+      assert: [
+        { type: 'llm-rubric', value: 'Response mentions a specific TypeScript version number' },
+        { type: 'javascript', value: '(output) => output.length > 100' },
+      ],
+    },
+  ],
+};
+
+export default config;
+```
+
+### Alternative: Programmatic API (For Vitest Integration)
+
+Since OllieBot uses Vitest, you can call `promptfoo.evaluate()` directly from test files:
+
+```typescript
+import promptfoo from 'promptfoo';
+
+const results = await promptfoo.evaluate({
+  prompts: ['{{message}}'],
+  providers: [async (prompt) => {
+    const response = await runOllieBotAgent(prompt);
+    return { output: response.text };
+  }],
+  tests: [...],
+});
+```
+
+### How It Reuses Existing OllieBot Code
+
+The Promptfoo provider reuses `EvaluationRunner.executeWithTools()` (from `src/evaluation/runner.ts`), which already:
+- Initializes `LLMService` with the configured provider
+- Loads the system prompt via `PromptLoader`
+- Runs the full tool call loop (up to `maxToolIterations`)
+- Tracks token usage
+
+No modification to OllieBot's agent code is required. The provider is a thin adapter.
+
+### Assertion Types Available
+
+| Type | What It Checks | Example |
+|------|---------------|---------|
+| `contains` | Substring match | `{ type: 'contains', value: '4' }` |
+| `icontains` | Case-insensitive substring | `{ type: 'icontains', value: 'hello' }` |
+| `regex` | Regex pattern | `{ type: 'regex', value: '\\d+\\.\\d+' }` |
+| `is-json` | Valid JSON output | `{ type: 'is-json' }` |
+| `javascript` | Custom JS assertion | `{ type: 'javascript', value: '(output) => output.length > 50' }` |
+| `llm-rubric` | LLM-as-judge scoring | `{ type: 'llm-rubric', value: 'Response is helpful and accurate' }` |
+| `cost` | Token cost threshold | `{ type: 'cost', threshold: 0.10 }` |
+| `latency` | Response time | `{ type: 'latency', threshold: 5000 }` |
+| `similar` | Semantic similarity | `{ type: 'similar', value: 'expected response', threshold: 0.8 }` |
+
+---
+
+## 5. Sources & References
 
 ### Research Papers
 

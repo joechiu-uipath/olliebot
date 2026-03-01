@@ -28,7 +28,9 @@
     "test:e2e:debug": "playwright test --debug",
     "test:e2e:report": "playwright show-report",
     "test:api": "vitest run --config api-tests/vitest.config.ts",
-    "test:api:coverage": "vitest run --config api-tests/vitest.config.ts --coverage"
+    "test:api:coverage": "vitest run --config api-tests/vitest.config.ts --coverage",
+    "eval": "promptfoo eval",
+    "eval:view": "promptfoo view"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.30.0",
@@ -77,6 +79,7 @@
     "cross-env": "^7.0.3",
     "nodemon": "^3.1.0",
     "playwright": "^1.58.2",
+    "promptfoo": "^0.120.25",
     "tsx": "^4.19.1",
     "typescript": "^5.6.2",
     "vite": "^5.4.8",
