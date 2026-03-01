@@ -5,6 +5,8 @@
  * Promptfoo sends user input; OllieBot handles system prompt assembly, tool calls,
  * and multi-turn loops internally; only the final output is returned.
  *
+ * Delegates to EvaluationRunner.executeWithTools() — no duplication of the agentic loop.
+ *
  * Usage in promptfoo config:
  *   providers: ['file://src/evaluation/promptfoo-provider.ts']
  *
@@ -17,9 +19,8 @@
 
 import { config as loadEnv } from 'dotenv';
 import type { LLMService } from '../llm/service.js';
-import type { LLMMessage } from '../llm/types.js';
 import type { ToolRunner } from '../tools/runner.js';
-import { PromptLoader } from './prompt-loader.js';
+import type { EvaluationRunner } from './runner.js';
 import type { TargetType } from './types.js';
 
 // Load environment variables for API keys
@@ -61,21 +62,15 @@ export interface OllieBotProviderConfig {
   model?: string;
 }
 
-// Lazy-initialized singletons (created on first callApi)
-let llmService: LLMService | null = null;
-let toolRunner: ToolRunner | null = null;
+// Lazy-initialized singleton
+let evalRunner: EvaluationRunner | null = null;
 
 /**
- * Initialize LLMService and ToolRunner from environment config.
+ * Initialize EvaluationRunner from environment config.
  * Mirrors the bootstrap in src/index.ts but minimal — no server, no channels.
  */
-async function ensureInitialized(providerConfig: OllieBotProviderConfig): Promise<{
-  llmService: LLMService;
-  toolRunner: ToolRunner;
-}> {
-  if (llmService && toolRunner) {
-    return { llmService, toolRunner };
-  }
+async function ensureInitialized(providerConfig: OllieBotProviderConfig): Promise<EvaluationRunner> {
+  if (evalRunner) return evalRunner;
 
   // Dynamic imports to avoid circular dependency issues
   const { LLMService: LLMServiceClass } = await import('../llm/service.js');
@@ -83,6 +78,7 @@ async function ensureInitialized(providerConfig: OllieBotProviderConfig): Promis
   const { OpenAIProvider } = await import('../llm/openai.js');
   const { GoogleProvider } = await import('../llm/google.js');
   const { ToolRunner: ToolRunnerClass } = await import('../tools/runner.js');
+  const { EvaluationRunner: EvaluationRunnerClass } = await import('./runner.js');
 
   const mainProviderName = providerConfig.provider || process.env.MAIN_PROVIDER || 'anthropic';
   const mainModel = providerConfig.model || process.env.MAIN_MODEL || 'claude-sonnet-4-5-20250929';
@@ -102,14 +98,20 @@ async function ensureInitialized(providerConfig: OllieBotProviderConfig): Promis
     }
   }
 
-  llmService = new LLMServiceClass({
+  const llmService = new LLMServiceClass({
     main: createProvider(mainProviderName, mainModel),
     fast: createProvider(fastProviderName, fastModel),
   });
 
-  toolRunner = new ToolRunnerClass();
+  const toolRunner = new ToolRunnerClass();
 
-  return { llmService, toolRunner };
+  evalRunner = new EvaluationRunnerClass({
+    llmService,
+    toolRunner,
+    maxToolIterations: providerConfig.maxToolIterations || 10,
+  });
+
+  return evalRunner;
 }
 
 /**
@@ -131,104 +133,42 @@ class OllieBotProvider {
     const startTime = Date.now();
 
     try {
-      const { llmService: svc, toolRunner: tools } = await ensureInitialized(this.config);
-
+      const runner = await ensureInitialized(this.config);
       const target: TargetType = this.config.target || 'supervisor';
-      const maxToolIterations = this.config.maxToolIterations || 10;
 
       // Load system prompt using the existing PromptLoader
-      const promptLoader = new PromptLoader();
-      const systemPrompt = promptLoader.loadForTarget(target);
+      const systemPrompt = runner.getPromptLoader().loadForTarget(target);
 
       // Build messages — prompt is the user message from the test case
-      const messages: LLMMessage[] = [{ role: 'user', content: prompt }];
+      const messages = [{ role: 'user' as const, content: prompt }];
 
-      // Get tool definitions from the tool runner
-      const llmTools = tools.getToolsForLLM();
+      // Set up mocked tool runner (empty mocks — returns default responses)
+      const { MockedToolRunner } = await import('./mocked-tool-runner.js');
+      const mockedToolRunner = new MockedToolRunner();
 
-      // Run the agentic tool loop (mirrors EvaluationRunner.executeWithTools)
-      let currentMessages: LLMMessage[] = [...messages];
-      let finalResponse = '';
-      let totalInputTokens = 0;
-      let totalOutputTokens = 0;
-      let iterations = 0;
-      const toolCallLog: Array<{ name: string; input: Record<string, unknown> }> = [];
+      // Delegate to EvaluationRunner — reuse the existing agentic loop
+      const { response, tokenUsage } = await runner.executeWithTools(
+        systemPrompt,
+        messages,
+        mockedToolRunner,
+      );
 
-      while (iterations < maxToolIterations) {
-        iterations++;
-
-        const response = await svc.generateWithTools(currentMessages, {
-          systemPrompt,
-          tools: llmTools,
-          maxTokens: 4096,
-        });
-
-        if (response.usage) {
-          totalInputTokens += response.usage.inputTokens;
-          totalOutputTokens += response.usage.outputTokens;
-        }
-
-        // No tool use — we're done
-        if (!response.toolUse || response.toolUse.length === 0 || response.stopReason === 'end_turn') {
-          finalResponse = response.content;
-          break;
-        }
-
-        // Log and mock tool calls (eval mode — no real tool execution)
-        const toolResults: Array<{ tool_use_id: string; content: string; is_error?: boolean }> = [];
-
-        for (const toolUse of response.toolUse) {
-          toolCallLog.push({ name: toolUse.name, input: toolUse.input });
-          toolResults.push({
-            tool_use_id: toolUse.id,
-            content: JSON.stringify({ result: `[Mocked output for ${toolUse.name}]` }),
-          });
-        }
-
-        // Append assistant message with tool use
-        currentMessages.push({
-          role: 'assistant',
-          content: response.content,
-          toolUse: response.toolUse,
-        });
-
-        // Append tool results
-        for (const toolResult of toolResults) {
-          currentMessages.push({
-            role: 'user',
-            content: JSON.stringify({
-              type: 'tool_result',
-              tool_use_id: toolResult.tool_use_id,
-              content: toolResult.content,
-              is_error: toolResult.is_error,
-            }),
-          });
-        }
-
-        if (response.content && response.stopReason !== 'tool_use') {
-          finalResponse = response.content;
-        }
-      }
-
-      if (iterations >= maxToolIterations && !finalResponse) {
-        finalResponse = '[Max tool iterations reached without final response]';
-      }
-
+      const toolCalls = mockedToolRunner.getRecordedCalls();
       const latencyMs = Date.now() - startTime;
-      const totalTokens = totalInputTokens + totalOutputTokens;
+      const inputTokens = tokenUsage?.input || 0;
+      const outputTokens = tokenUsage?.output || 0;
 
       return {
-        output: finalResponse,
+        output: response,
         tokenUsage: {
-          total: totalTokens,
-          prompt: totalInputTokens,
-          completion: totalOutputTokens,
+          total: inputTokens + outputTokens,
+          prompt: inputTokens,
+          completion: outputTokens,
         },
         metadata: {
-          toolCalls: toolCallLog,
-          toolCallCount: toolCallLog.length,
-          iterations,
-          target: this.config.target || 'supervisor',
+          toolCalls: toolCalls.map(c => ({ name: c.toolName, input: c.parameters })),
+          toolCallCount: toolCalls.length,
+          target,
           latencyMs,
         },
       };

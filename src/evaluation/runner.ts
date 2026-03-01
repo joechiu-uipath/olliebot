@@ -182,7 +182,7 @@ export class EvaluationRunner {
   /**
    * Execute with tool support, handling the tool call loop
    */
-  private async executeWithTools(
+  async executeWithTools(
     systemPrompt: string,
     messages: LLMMessage[],
     mockedToolRunner: MockedToolRunner
