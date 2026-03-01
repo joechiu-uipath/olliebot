@@ -157,6 +157,13 @@ export interface EvaluationDefinition {
   testCase: TestCase;
   toolExpectations?: ToolExpectations;
   mockedOutputs?: Record<string, MockedToolOutput>;
+  /**
+   * Tool execution mode:
+   * - 'mocked' (default): Uses MockedToolRunner with mockedOutputs. Fast, deterministic.
+   * - 'live': Uses real ToolRunner. Slower, non-deterministic, tests real end-to-end behavior.
+   * - 'capture': Uses real ToolRunner AND saves results as .snapshots.json for future mock use.
+   */
+  toolMode?: 'mocked' | 'live' | 'capture';
   responseExpectations: ResponseExpectations;
   delegationExpectations?: DelegationExpectations;
   scoring?: ScoringConfig;
@@ -211,6 +218,9 @@ export interface SingleRunResult {
   // Metadata
   latencyMs: number;
   tokenUsage?: { input: number; output: number };
+
+  /** Captured tool snapshots from 'capture' mode runs (real tool results as MockedToolOutput) */
+  capturedSnapshots?: Record<string, MockedToolOutput>;
 }
 
 export interface StatisticalSummary {

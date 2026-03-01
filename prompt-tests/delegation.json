@@ -1,0 +1,17 @@
+[
+  {
+    "description": "Research delegation",
+    "vars": { "message": "Research the latest developments in quantum computing and write a summary." },
+    "assert": [
+      { "type": "llm-rubric", "value": "Response should either delegate to a researcher agent or provide substantive information about quantum computing. The response should not refuse the task." },
+      { "type": "javascript", "value": "output.length > 100" }
+    ]
+  },
+  {
+    "description": "Coding delegation",
+    "vars": { "message": "Write a TypeScript function that validates email addresses using a regex." },
+    "assert": [
+      { "type": "llm-rubric", "value": "Response should either delegate to a coder agent or provide actual TypeScript code with a regex for email validation. Must contain a function definition." }
+    ]
+  }
+]

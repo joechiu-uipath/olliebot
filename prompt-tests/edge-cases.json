@@ -1,0 +1,17 @@
+[
+  {
+    "description": "Empty-ish input handling",
+    "vars": { "message": "Hi" },
+    "assert": [
+      { "type": "llm-rubric", "value": "Response should be a friendly greeting or ask how it can help. Should not be confused or produce an error." },
+      { "type": "javascript", "value": "!output.includes(\"error\") && !output.includes(\"Error\")" }
+    ]
+  },
+  {
+    "description": "Multi-part question",
+    "vars": { "message": "What is TypeScript, who created it, and when was it first released?" },
+    "assert": [
+      { "type": "llm-rubric", "value": "Response should address all three parts: what TypeScript is, who created it (Microsoft/Anders Hejlsberg), and when it was released (2012). Must not ignore any part of the question." }
+    ]
+  }
+]
