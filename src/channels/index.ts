@@ -1,3 +1,14 @@
 export * from './types.js';
 export { ConsoleChannel } from './console.js';
 export { WebSocketChannel } from './websocket.js';
+export { MessengerChannel } from './messenger-base.js';
+export { SlackChannel } from './slack.js';
+export type { SlackChannelConfig } from './slack.js';
+export { DiscordChannel } from './discord.js';
+export type { DiscordChannelConfig } from './discord.js';
+export { AzureBotChannel } from './azure-bot.js';
+export type { AzureBotChannelConfig, BotActivity } from './azure-bot.js';
+export { WhatsAppChannel } from './whatsapp.js';
+export type { WhatsAppChannelConfig, WhatsAppWebhookPayload } from './whatsapp.js';
+export { SMSChannel } from './sms.js';
+export type { SMSChannelConfig, TwilioWebhookPayload } from './sms.js';
