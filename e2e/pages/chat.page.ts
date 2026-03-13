@@ -14,6 +14,9 @@
 import { type Page, type Locator, expect } from '@playwright/test';
 import type { WebSocketMock } from '../utils/ws-helper.js';
 
+const MESSAGE_TIMEOUT = 4000;
+const STREAMING_TIMEOUT = 4000;
+
 export class ChatPage {
   constructor(
     private page: Page,
@@ -156,7 +159,7 @@ export class ChatPage {
   }
 
   /** Wait for a message containing specific text (checks message content and task-run events). */
-  async waitForMessageContaining(text: string, timeout = 5000): Promise<void> {
+  async waitForMessageContaining(text: string, timeout = MESSAGE_TIMEOUT): Promise<void> {
     await expect(
       this.page.locator('.message-content, .task-run-event', { hasText: text }).first()
     ).toBeVisible({ timeout });
@@ -168,12 +171,12 @@ export class ChatPage {
   }
 
   /** Wait for streaming indicator to be visible. */
-  async waitForStreaming(timeout = 3000): Promise<void> {
+  async waitForStreaming(timeout = STREAMING_TIMEOUT): Promise<void> {
     await expect(this.page.locator('.message.streaming')).toBeVisible({ timeout });
   }
 
   /** Wait for streaming to complete (no streaming indicator). */
-  async waitForStreamingComplete(timeout = 3000): Promise<void> {
+  async waitForStreamingComplete(timeout = STREAMING_TIMEOUT): Promise<void> {
     await expect(this.page.locator('.message.streaming')).not.toBeVisible({ timeout });
   }
 
