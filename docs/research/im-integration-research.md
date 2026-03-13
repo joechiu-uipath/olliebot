@@ -34,9 +34,65 @@ All six platforms support bot integration with varying levels of complexity, cos
 | **Discord** | Official bot (Application) | Gateway WebSocket | REST API | Embeds + Components V2 | DMs + threads | Low-Medium | Free |
 | **FB Messenger** | Facebook Page bot | Webhook | Send API | Templates + Quick Replies | Single thread per user | Medium | Free (24h window rules) |
 
-**Recommended priority order**: Slack > Teams > Discord > WhatsApp > SMS/RCS > Facebook Messenger
+### Integration Plan
 
-Slack and Discord are the easiest to integrate (no cost, good SDKs, no public endpoint needed for Slack). Teams is high-value for enterprise but requires Azure infrastructure. WhatsApp and SMS/RCS involve per-message costs and compliance requirements but reach users on their phones.
+**M365 Agents SDK** (Teams + Facebook Messenger + LINE): Use Azure Bot Service as a unified gateway. The SDK is free (MIT), and standard channel messages (Teams, FB Messenger, LINE) are free and unlimited. Cost is primarily Azure hosting (~$15-70/month). This covers 3 platforms with a single bot codebase, at the trade-off of reduced rich output fidelity on non-Teams channels.
+
+**Native Slack Bolt SDK** (`@slack/bolt`): Slack is too important to accept the degraded experience from Azure Bot Service's Slack connector (broken Block Kit buttons, no modals, no slash commands). Socket Mode means no public endpoint needed.
+
+**Remaining platforms** (Discord, WhatsApp, SMS/RCS): Native SDKs for each, since Azure Bot Service either doesn't support them (Discord, WhatsApp) or adds unnecessary indirection (SMS already goes through Twilio either way).
+
+### M365 Agents SDK Cost Analysis
+
+| Component | Cost |
+|---|---|
+| **M365 Agents SDK** | Free (MIT license, open source) |
+| **Azure Bot Service - Standard channels** (Teams, Slack, FB, Telegram, LINE, Email, SMS) | **Free, unlimited messages** |
+| **Azure Bot Service - Premium channels** (Direct Line, Direct Line Speech) | 10K msgs/month free, then $0.50/1K |
+| **Azure App Service hosting** (required) | ~$13/month (Linux B1) to ~$69/month (Windows S1) |
+| **Entra ID** | Free tier sufficient |
+| **Application Insights** | ~$2.30/GB after 5GB/month free |
+
+**Realistic minimum**: ~$15-70/month for hosting. Message routing is the cheap part.
+
+### M365 Agents SDK - Full Channel List
+
+**Active built-in channels** (all standard = free unlimited messages):
+
+| Channel | Status | Rich Cards | Buttons | Adaptive Cards | Notes |
+|---|---|---|---|---|---|
+| **Microsoft Teams** | Full support | Full | Full | Full (v1.5 desktop, v1.2 mobile) | Best experience |
+| **Facebook Messenger** | Active | Partial (images) | Yes | Partial (text/images, buttons may not work) | 24h window rules apply |
+| **LINE** | Active | Converted to image | Partial | Converted to image | Limited rich output |
+| **Telegram** | Active | Partial | Yes (inline keyboards) | No | MarkdownV2 for text |
+| **Slack** | Active | Partial | **Known bugs** (clicks not forwarded) | Partial (rendered poorly) | **Not recommended -- use Bolt SDK** |
+| **Email (Office 365)** | Active | As images + links | No | Rendered as image | Text-focused |
+| **SMS (via Twilio)** | Active | No | No | No | Text only; Twilio fees apply |
+| **Telephony** | Active | N/A | N/A | N/A | Voice only |
+| **Web Chat** (Direct Line) | Active | Full | Full | Full | Premium channel ($0.50/1K msgs) |
+| **Direct Line Speech** | Active | N/A | N/A | N/A | Premium; voice |
+| **M365 Copilot** | Active (via Agents SDK) | Full | Full | Full | Copilot Studio integration |
+| **Outlook Actionable Messages** | Active | Partial | Yes | Yes | Email-embedded cards |
+
+**Deprecated/removed**: Skype (shut down May 2025), Skype for Business, Cortana, Kik, GroupMe, Kaizala.
+
+**NOT natively supported**: Discord, WhatsApp (Azure Communication Services preview only), WeChat, Signal, iMessage.
+
+### Why Not Use M365 Agents SDK for Slack?
+
+| Aspect | Azure Bot Service Slack Connector | Native Slack Bolt SDK |
+|---|---|---|
+| Block Kit | **Partial, known bugs** (button clicks not forwarded) | Full support |
+| Modals | **Not supported** | Full support |
+| Slash commands | Limited | Full |
+| Threading | Basic | Full control via `thread_ts` |
+| App Home tab | Not supported | Full |
+| Reactions | Limited | Full |
+| File uploads | URL-based only | Full Files API |
+| Formatting | Normalized to Activity schema, loses fidelity | Native mrkdwn |
+| Latency | Extra hop through Azure | Direct WebSocket |
+
+The Azure connector gives basic text messaging in Slack. Anything involving Block Kit interactions, modals, or slash commands is degraded or broken. For a primary channel, this is unacceptable.
 
 ---
 
@@ -48,8 +104,9 @@ OllieBot has an existing multi-channel architecture that new messenger integrati
 
 ```typescript
 interface Channel {
-  id: string;
-  name: string;
+  readonly id: string;    // Unique channel identifier (e.g., 'slack-main', 'teams-prod')
+  readonly name: string;  // Human-readable channel type (e.g., 'slack', 'teams', 'web')
+
   init(): Promise<void>;
   isConnected(): boolean;
   close(): Promise<void>;
@@ -72,6 +129,105 @@ interface Channel {
 }
 ```
 
+#### `id` and `name` are `readonly`
+
+Yes -- both `id` and `name` are declared as `readonly` in the interface. This is correct because:
+- `id` is a unique instance identifier (e.g., `'web-main'`, `'console-default'`) set at construction time. Changing it after registration would break agent-to-channel routing.
+- `name` is the channel type label (e.g., `'web'`, `'console'`). It identifies the kind of channel, not a specific instance. It should never change.
+
+New messenger channels should follow this pattern:
+```typescript
+class SlackChannel implements Channel {
+  readonly id: string;       // e.g., 'slack-workspace-T12345'
+  readonly name = 'slack';   // Always 'slack' for this channel type
+}
+```
+
+#### `onAction` vs `onInteraction` -- Detailed Use Cases
+
+These serve fundamentally different purposes:
+
+**`onAction(handler: (action: string, data: unknown) => Promise<void>)`** -- Required
+
+Handles **user-initiated UI actions** where the user clicks a button or performs a discrete action that doesn't correspond to a pending request. The action is fire-and-forget from the channel's perspective.
+
+| Use Case | `action` string | `data` payload | Example |
+|---|---|---|---|
+| Button click in sent message | `'approve'`, `'reject'`, `'retry'` | `{ conversationId, messageId }` | User clicks "Approve" on a mission plan |
+| Quick action from sidebar | `'switch_model'`, `'clear_context'` | `{ model: 'gpt-4' }` | User picks a model from a dropdown |
+| Slash command trigger | `'command'` | `{ command: '/help' }` | User types a slash command |
+| Agent delegation choice | `'delegate_to'` | `{ agentName: 'researcher' }` | User picks which agent to hand off to |
+| Conversation action | `'archive'`, `'pin'`, `'delete'` | `{ conversationId }` | User right-clicks a conversation |
+| Cancel running operation | `'cancel_mission'`, `'stop_task'` | `{ missionId }` | User clicks "Stop" on a running mission |
+
+**How it flows**: WebSocket client sends `{ type: 'action', action: 'approve', data: { ... } }` -> WebSocketChannel routes to `actionHandler` -> Supervisor logs it. Currently the Supervisor only logs actions (`console.log`), suggesting this is an extension point for future UI interactivity.
+
+**For messenger channels**: Map platform-native actions to this handler:
+- **Slack**: Block Kit button clicks, overflow menu selections -> `onAction`
+- **Teams**: Adaptive Card `Action.Submit` -> `onAction`
+- **Discord**: Button clicks, select menu selections -> `onAction`
+- **WhatsApp**: Reply button taps, list item selections -> `onAction`
+- **FB Messenger**: Postback buttons, Quick Reply taps -> `onAction`
+
+---
+
+**`onInteraction(handler: (requestId: string, response: unknown, conversationId?: string) => Promise<void>)`** -- Optional
+
+Handles **responses to bot-initiated requests** -- a request/response pattern where the bot asks a question or presents a form, and the user responds to that specific request. The `requestId` correlates the response back to the original request.
+
+| Use Case | Who initiates | `requestId` | `response` payload | Example |
+|---|---|---|---|---|
+| Tool confirmation prompt | Bot asks user to confirm a tool execution | Tool's `requestId` | `{ approved: true }` | Bot: "Run `rm -rf ./dist`?" User: clicks "Confirm" |
+| Form/modal submission | Bot opens a form for structured input | Form's `requestId` | `{ name: 'John', email: 'j@x.com' }` | Bot asks for config params via a modal |
+| Multi-step wizard response | Bot walks user through steps | Step's `requestId` | `{ selectedOption: 'option-b' }` | Mission setup wizard |
+| File selection response | Bot asks user to pick from options | Request's `requestId` | `{ fileId: 'abc123' }` | Bot: "Which file to analyze?" |
+| Approval with feedback | Bot requests approval + optional notes | Approval `requestId` | `{ approved: true, notes: 'LGTM' }` | Code review approval flow |
+
+**How it flows**: Bot sends a message with a `requestId` embedded (e.g., via buttons or a form) -> User responds in the UI -> WebSocket client sends `{ type: 'interaction-response', requestId: 'req-123', data: { approved: true }, conversationId: '...' }` -> WebSocketChannel routes to `interactionHandler`.
+
+**Key difference from `onAction`**:
+- `onAction`: User proactively does something. No pending request. Fire-and-forget.
+- `onInteraction`: Bot asked a question, user is answering it. The `requestId` ties the response to the original ask.
+
+**For messenger channels**: This maps to:
+- **Slack**: Modal submission (`view_submission`) with a stored `requestId` in `private_metadata`
+- **Teams**: Adaptive Card `Action.Submit` where the card includes a `requestId` in its data payload
+- **Discord**: Modal submission, or button clicks on a message that contains a `requestId` in custom_id
+- **WhatsApp**: Reply button taps where button payload contains the `requestId`
+
+---
+
+#### `broadcast(data: unknown)` -- Detailed Use Cases
+
+`broadcast` is a **push notification channel** for system events that need to reach all connected clients immediately, independent of any conversation or message flow. It is NOT for sending chat messages to users.
+
+**Current usage in the codebase** (from `supervisor.ts` and `websocket.ts`):
+
+| Event Type | Payload | When Triggered | Purpose |
+|---|---|---|---|
+| `conversation_created` | `{ type, conversation: { id, title, createdAt, updatedAt } }` | New conversation auto-created | Frontend adds conversation to sidebar |
+| `conversation_updated` | `{ type, conversation: { id, title, updatedAt } }` | Conversation title auto-renamed | Frontend updates sidebar title |
+| `tool_requested` | `{ type, requestId, toolName, source, conversationId, parameters, agent* }` | Worker starts a tool call | Frontend shows "running tool..." indicator |
+| `tool_progress` | `{ type, requestId, progress: { current, total?, message? } }` | Tool reports progress | Frontend updates progress bar |
+| `tool_execution_finished` | `{ type, requestId, ... }` | Tool completes | Frontend clears tool indicator |
+
+**How it works in WebSocketChannel**: Serializes `data` to JSON and sends to **every** connected WebSocket client. Also tracks tool events for stream/tool resumption when clients switch conversations.
+
+**How it works in ConsoleChannel**: No-op (single user, no connected clients to push to).
+
+**For messenger channels**, `broadcast` has different relevance per platform:
+
+| Platform | broadcast() Behavior | Notes |
+|---|---|---|
+| **Slack** | Could update a "status" message in a dedicated channel | E.g., post tool progress to a #bot-activity channel |
+| **Teams** | Could send proactive notification cards | Adaptive Card showing current operation status |
+| **Discord** | Could update a status embed in a designated channel | E.g., bot-status channel |
+| **WhatsApp** | Likely no-op | No concept of broadcasting; 1:1 only |
+| **SMS** | No-op | No rich notification mechanism |
+| **FB Messenger** | Likely no-op | 1:1 only, no sidebar concept |
+
+**Implementation guidance for new channels**: Most messenger channels should implement `broadcast` as a **no-op** or as a selective forwarder that only pushes `conversation_created`/`conversation_updated` events if the platform supports proactive notifications. Tool-level events (`tool_requested`, `tool_progress`, etc.) are primarily for the web UI's real-time tool execution display and are generally not useful in messenger contexts.
+
 ### Existing Implementations
 
 - **ConsoleChannel** (`src/channels/console.ts`): CLI/terminal using inquirer prompts
@@ -85,7 +241,9 @@ const channel = new SomeChannel(id, config);
 await channel.init();
 supervisor.registerChannel(channel);
 
-// Supervisor binds onMessage -> handleMessage() for routing to agents
+// Supervisor binds:
+//   onMessage  -> handleMessage() for routing user messages to agents
+//   onAction   -> currently just logs (extension point for UI actions)
 ```
 
 ### Key Design Points for New Channels
@@ -95,6 +253,9 @@ supervisor.registerChannel(channel);
 3. **Streaming**: Platforms without live message editing should accumulate chunks and send final message on `endStream`
 4. **Rate limiting**: Each channel must implement its own rate limiting
 5. **Markdown conversion**: LLM output is standard Markdown; each platform needs a converter to its native format
+6. **`onAction`**: Map platform-native button/action events. Required for all interactive channels.
+7. **`onInteraction`**: Implement if the platform supports modal/form submissions tied to a specific bot request. Optional otherwise.
+8. **`broadcast`**: No-op for most messenger channels. Only implement if the platform has a concept of push notifications or status channels.
 
 ---
 
@@ -908,6 +1069,39 @@ FB_VERIFY_TOKEN=...
 
 ## Implementation Recommendations
 
+### SDK Strategy
+
+| Platform | SDK | Rationale |
+|---|---|---|
+| **Teams** | M365 Agents SDK | Native, full Adaptive Card support |
+| **Facebook Messenger** | M365 Agents SDK (Azure Bot Service connector) | Free routing, acceptable for basic text + templates |
+| **LINE** | M365 Agents SDK (Azure Bot Service connector) | Free routing, cards rendered as images (acceptable) |
+| **Slack** | Native `@slack/bolt` | Full Block Kit, modals, slash commands, Socket Mode |
+| **Discord** | Native `discord.js` | Not supported by Azure Bot Service |
+| **WhatsApp** | Native (Cloud API / `@WhatsApp/WhatsApp-Nodejs-SDK`) | Not supported by Azure Bot Service |
+| **SMS/RCS** | Native `twilio` | Azure Bot Service SMS also uses Twilio underneath; going direct avoids indirection |
+
+### Channel Interface Fitness Review
+
+The current `Channel` interface has a gap: **WebSocketChannel has capabilities that exceed the interface**.
+
+WebSocketChannel exposes these methods NOT in the Channel interface:
+
+| Extra Method | Purpose | Should it be in Channel? |
+|---|---|---|
+| `attachToServer(wss)` | Bind to HTTP server's WebSocket upgrade | No -- transport-specific |
+| `onBrowserAction(handler)` | Handle browser automation session actions | No -- feature-specific |
+| `onDesktopAction(handler)` | Handle desktop automation session actions | No -- feature-specific |
+| `onNewConversation(handler)` | New conversation event | Already optional in interface |
+| `getConnectedClients()` | Client count for monitoring | Could be useful as optional `getClientCount?()` |
+| `disconnectAllClients()` | Test cleanup | No -- test utility |
+| Private: `sendToClient(clientId, data)` | Targeted send to one client | No -- multi-client is WebSocket-specific |
+| Private: `sendActiveStreamState(clientId, conversationId)` | Stream resume on conversation switch | No -- web UI-specific |
+
+**Verdict**: The Channel interface fits WebSocketChannel well for its public contract. The extra methods are transport-specific extensions, not core channel behavior. Messenger channels will NOT need `attachToServer`, `onBrowserAction`, `onDesktopAction`, or targeted client sends. The interface is sound as-is.
+
+One potential addition for messenger channels: an optional `sendTypingIndicator?(conversationId: string): void` -- Slack, Teams, Discord, WhatsApp, and FB Messenger all support typing indicators, but the current interface has no way to express this. This could be added as an optional method.
+
 ### Shared Infrastructure
 
 All messenger channels share a common pattern that can be abstracted:
@@ -915,8 +1109,12 @@ All messenger channels share a common pattern that can be abstracted:
 ```typescript
 // src/channels/messenger-base.ts
 abstract class MessengerChannel implements Channel {
+  abstract readonly id: string;
+  abstract readonly name: string;
+
   protected messageHandler: ((message: Message) => Promise<void>) | null = null;
   protected actionHandler: ((action: string, data: unknown) => Promise<void>) | null = null;
+  protected interactionHandler: ((requestId: string, response: unknown, conversationId?: string) => Promise<void>) | null = null;
   protected activeStreams: Map<string, { content: string; messageId?: string }> = new Map();
 
   onMessage(handler: (message: Message) => Promise<void>): void {
@@ -925,6 +1123,10 @@ abstract class MessengerChannel implements Channel {
 
   onAction(handler: (action: string, data: unknown) => Promise<void>): void {
     this.actionHandler = handler;
+  }
+
+  onInteraction(handler: (requestId: string, response: unknown, conversationId?: string) => Promise<void>): void {
+    this.interactionHandler = handler;
   }
 
   // Common streaming pattern: accumulate + send/update on end
@@ -937,8 +1139,15 @@ abstract class MessengerChannel implements Channel {
     if (stream) stream.content += chunk;
   }
 
+  // Most messenger channels: no-op (system events are web UI-specific)
+  broadcast(_data: unknown): void {}
+
   abstract endStream(streamId: string, options?: StreamEndOptions): void;
   abstract send(content: string, options?: SendOptions): Promise<void>;
+  abstract sendError(error: string, details?: string, conversationId?: string): Promise<void>;
+  abstract isConnected(): boolean;
+  abstract init(): Promise<void>;
+  abstract close(): Promise<void>;
 }
 ```
 
@@ -949,67 +1158,66 @@ Each platform needs LLM Markdown output converted to its native format:
 | Platform | Conversion Needed | Tool |
 |---|---|---|
 | Slack | Markdown -> mrkdwn | `md-to-slack` npm package |
-| Teams | Markdown -> Adaptive Card JSON | Custom converter |
+| Teams | Markdown -> Adaptive Card JSON or Teams MD subset | Custom converter |
 | Discord | Minimal (mostly compatible) | Strip unsupported elements |
 | WhatsApp | Markdown -> WhatsApp formatting | Custom converter (`**` -> `*`, etc.) |
 | SMS | Strip all formatting | Plain text only |
 | FB Messenger | Strip all formatting | Plain text (no markdown support) |
+| LINE | Strip all formatting | Plain text (cards are images) |
 
 ### Webhook Router
 
-For platforms requiring webhooks (Teams, WhatsApp, SMS, FB Messenger), add routes to the Hono server:
+For platforms requiring webhooks (Teams, WhatsApp, SMS, FB Messenger), add routes to the Hono server. M365 Agents SDK channels route through Azure Bot Service, so only the Teams endpoint is needed locally:
 
 ```typescript
 // src/server/index.ts (additions)
-app.post('/api/teams/messages', teamsChannel.handleWebhook);
-app.post('/api/whatsapp/webhook', whatsappChannel.handleWebhook);
-app.get('/api/whatsapp/webhook', whatsappChannel.handleVerification);
-app.post('/api/sms/webhook', smsChannel.handleWebhook);
-app.post('/api/messenger/webhook', messengerChannel.handleWebhook);
-app.get('/api/messenger/webhook', messengerChannel.handleVerification);
+
+// M365 Agents SDK (Teams + FB Messenger + LINE all route through a single Azure Bot Service endpoint)
+app.post('/api/im-channels/azure-bot/webhook', agentsBotChannel.handleWebhook);
+
+// Native integrations
+// Slack: no webhook needed (Socket Mode uses outbound WebSocket)
+// Discord: no webhook needed (Gateway uses outbound WebSocket)
+app.post('/api/im-channels/whatsapp/webhook', whatsappChannel.handleWebhook);
+app.get('/api/im-channels/whatsapp/webhook', whatsappChannel.handleVerification);
+app.post('/api/im-channels/sms/webhook', smsChannel.handleWebhook);
 ```
 
-### Suggested Implementation Order
+### Implementation Order
 
-1. **Slack** -- Easiest: Socket Mode (no public endpoint), excellent TypeScript SDK, free, great thread support
-2. **Discord** -- Easy: discord.js is mature, free, good thread support for session management
-3. **Teams** -- High value but complex: requires Azure subscription, public endpoint, JWT validation
-4. **WhatsApp** -- High value: straightforward webhook + REST, but requires business verification and has per-message costs
-5. **SMS/RCS** -- Straightforward webhook + REST with Twilio, but requires 10DLC registration and has per-segment costs
-6. **Facebook Messenger** -- Lower priority: restrictive 24h window, conservative app review, Page requirement
+1. **Slack** (native `@slack/bolt`) -- Socket Mode, no public endpoint, full Block Kit, free
+2. **Teams + FB Messenger + LINE** (M365 Agents SDK) -- Single Azure Bot resource, one codebase for 3 channels, ~$15-70/month Azure hosting
+3. **Discord** (native `discord.js`) -- Gateway WebSocket, threads for sessions, free
+4. **WhatsApp** (native Cloud API) -- Webhook + REST, business verification required, per-message costs
+5. **SMS/RCS** (native `twilio`) -- Webhook + REST, 10DLC registration, per-segment costs
 
 ### Environment Configuration
 
 Add to `.env.example`:
 ```bash
-# Slack
+# Slack (native Bolt SDK)
 SLACK_BOT_TOKEN=
 SLACK_APP_TOKEN=
 
-# Discord
+# M365 Agents SDK (Teams + FB Messenger + LINE)
+AZURE_BOT_APP_ID=
+AZURE_BOT_APP_PASSWORD=
+AZURE_BOT_TENANT_ID=
+
+# Discord (native discord.js)
 DISCORD_BOT_TOKEN=
 DISCORD_CLIENT_ID=
 
-# Teams
-TEAMS_APP_ID=
-TEAMS_APP_PASSWORD=
-TEAMS_TENANT_ID=
-
-# WhatsApp (Cloud API)
+# WhatsApp (native Cloud API)
 WHATSAPP_PHONE_NUMBER_ID=
 WHATSAPP_ACCESS_TOKEN=
 WHATSAPP_VERIFY_TOKEN=
 WHATSAPP_WABA_ID=
 
-# SMS (Twilio)
+# SMS (native Twilio)
 TWILIO_ACCOUNT_SID=
 TWILIO_AUTH_TOKEN=
 TWILIO_PHONE_NUMBER=
-
-# Facebook Messenger
-FB_PAGE_ACCESS_TOKEN=
-FB_APP_SECRET=
-FB_VERIFY_TOKEN=
 ```
 
 ### Key Dependencies
@@ -1017,13 +1225,13 @@ FB_VERIFY_TOKEN=
 ```json
 {
   "@slack/bolt": "^4.x",
-  "discord.js": "^14.x",
   "@microsoft/agents-hosting": "^1.x",
   "@microsoft/agents-hosting-express": "^1.x",
   "@microsoft/agents-hosting-teams": "^1.x",
+  "discord.js": "^14.x",
   "twilio": "^5.x",
   "md-to-slack": "^1.x"
 }
 ```
 
-For WhatsApp and Facebook Messenger, direct HTTP calls to the Graph API are preferred over third-party wrappers (official Meta SDKs are available but thin).
+For WhatsApp, use `@WhatsApp/WhatsApp-Nodejs-SDK` or direct HTTP calls to the Graph API. Facebook Messenger and LINE are routed through Azure Bot Service (no separate SDK needed).
