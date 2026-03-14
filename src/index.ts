@@ -13,7 +13,7 @@ import {
   AzureOpenAIProvider,
   type LLMProvider,
 } from './llm/index.js';
-import { ConsoleChannel } from './channels/index.js';
+import { ConsoleChannel, AzureBotChannel } from './channels/index.js';
 import { AssistantServer } from './server/index.js';
 import { MCPClient } from './mcp/index.js';
 import type { MCPServerConfig } from './mcp/types.js';
@@ -681,6 +681,22 @@ async function main(): Promise<void> {
   } else {
     // Server mode - HTTP + WebSocket
     console.log('[Init] Starting in server mode...');
+
+    // Initialize IM channels (webhook-based)
+    const azureBotChannel = CONFIG.azureBotAppId
+      ? new AzureBotChannel('azure-bot', {
+          appId: CONFIG.azureBotAppId,
+          appPassword: CONFIG.azureBotAppPassword,
+          tenantId: CONFIG.azureBotTenantId || undefined,
+        })
+      : undefined;
+
+    if (azureBotChannel) {
+      await azureBotChannel.init();
+      supervisor.registerChannel(azureBotChannel);
+      console.log('[Init] Azure Bot channel enabled (Teams, FB Messenger, LINE)');
+    }
+
     const server = new AssistantServer({
       port: CONFIG.port,
       supervisor,
@@ -710,6 +726,7 @@ async function main(): Promise<void> {
       fastProvider: CONFIG.fastProvider,
       fastModel: CONFIG.fastModel,
       messageEmbeddingService: messageEmbeddingService || undefined,
+      imChannels: { azureBotChannel },
     });
     await server.start();
 

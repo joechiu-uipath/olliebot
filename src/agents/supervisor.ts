@@ -159,22 +159,33 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
   // Note: getConversationId() is not overridden - supervisor uses request-scoped conversationId
   // passed through method parameters, not instance state.
 
+  /** Map of channel ID → channel instance for multi-channel routing */
+  private channels: Map<string, Channel> = new Map();
+
   registerChannel(channel: Channel): void {
     super.registerChannel(channel);
+    this.channels.set(channel.id, channel);
 
     // Set up message handler for this channel
     channel.onMessage(async (message) => {
+      // Tag the message with its source channel so responses route back correctly
+      if (!message.metadata) message.metadata = {};
+      message.metadata._sourceChannelId = channel.id;
       await this.handleMessage(message);
     });
 
     channel.onAction(async (action, data) => {
       console.log(`[${this.identity.name}] Action: ${action}`, data);
     });
+  }
 
-    // Note: onNewConversation is not needed - conversation context is now request-scoped.
-    // Each message carries its own conversationId in metadata. To start a new conversation,
-    // the frontend simply doesn't send a conversationId, and ensureConversation() will
-    // create one or find a recent conversation to continue.
+  /** Resolve the channel a message came from (falls back to default this.channel) */
+  private resolveChannel(message?: Message): Channel | null {
+    const sourceId = message?.metadata?._sourceChannelId as string | undefined;
+    if (sourceId && this.channels.has(sourceId)) {
+      return this.channels.get(sourceId)!;
+    }
+    return this.channel;
   }
 
   async handleMessage(message: Message): Promise<void> {
@@ -231,11 +242,11 @@ export class SupervisorAgentImpl extends AbstractAgent implements ISupervisorAge
 
     // All state below is request-scoped - passed through parameters, not instance variables
 
-    if (!this.channel) {
+    const channel = this.resolveChannel(message);
+    if (!channel) {
       console.error(`[${this.identity.name}] No channel registered`);
       return;
     }
-    const channel = this.channel;
 
     // Start execution trace
     const traceStore = getTraceStore();
