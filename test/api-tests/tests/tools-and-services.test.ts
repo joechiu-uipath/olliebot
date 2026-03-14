@@ -20,8 +20,8 @@
 import { describe, it, expect, beforeAll, afterEach, afterAll } from 'vitest';
 import { ServerHarness } from '../harness/index.js';
 import { HTTP_STATUS, TIMEOUTS, waitFor } from '../harness/index.js';
-import { getDb } from '../../src/db/index.js';
-import type { NativeTool, NativeToolResult } from '../../src/tools/native/types.js';
+import { getDb } from '../../../src/db/index.js';
+import type { NativeTool, NativeToolResult } from '../../../src/tools/native/types.js';
 
 // ---------------------------------------------------------------------------
 // Test helpers for user tool registration tests

@@ -15,7 +15,7 @@
 import { describe, it, expect, beforeAll, afterEach, afterAll } from 'vitest';
 import { ServerHarness, seedMission, seedPillar, seedMetric, seedTodo } from '../harness/index.js';
 import { HTTP_STATUS, TIMEOUTS, waitFor } from '../harness/index.js';
-import { getDb } from '../../src/db/index.js';
+import { getDb } from '../../../src/db/index.js';
 
 const harness = new ServerHarness();
 

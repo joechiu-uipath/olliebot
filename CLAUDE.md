@@ -155,7 +155,7 @@ pnpm test                    # Run all unit tests (Vitest)
 pnpm test src/agents         # Run specific directory
 pnpm test:watch              # Watch mode
 npx playwright test          # Run all e2e tests
-npx playwright test e2e/tests/rag/  # Run specific e2e directory
+npx playwright test test/e2e/tests/rag/  # Run specific e2e directory
 ```
 
 Unit tests use Vitest. Mock external services and LLM calls.
@@ -202,7 +202,7 @@ These are already configured in the project's `playwright.config.ts`.
 
 **5. Verify it works:**
 ```bash
-npx playwright test e2e/tests/rag/   # Should pass all 7 RAG tests
+npx playwright test test/e2e/tests/rag/   # Should pass all 7 RAG tests
 npx playwright test                   # Full suite: 218 tests
 ```
 

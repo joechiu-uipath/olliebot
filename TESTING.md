@@ -30,7 +30,7 @@ src/
    - Use mocks for external services
    - Run with: `pnpm test`
 
-2. **API Integration Tests** (`api-tests/tests/**/*.test.ts`): Test the REST API and WebSocket layer
+2. **API Integration Tests** (`test/api-tests/tests/**/*.test.ts`): Test the REST API and WebSocket layer
    - Real Hono server with in-memory SQLite (no disk I/O)
    - Real WebSocket connections (no browser mocking)
    - Dynamic port allocation — safe to run alongside a dev server
@@ -40,7 +40,7 @@ src/
    - Run with: `pnpm test:api`
    - Coverage: `pnpm test:api:coverage` (reports to `coverage-api/`)
 
-3. **E2E Tests** (`e2e/tests/**/*.spec.ts`): Test complete user workflows through the UI
+3. **E2E Tests** (`test/e2e/tests/**/*.spec.ts`): Test complete user workflows through the UI
    - Playwright with real browser (headless Chromium)
    - Full frontend + mocked backend (API mock + WebSocket mock)
    - Page Object Model for maintainable selectors

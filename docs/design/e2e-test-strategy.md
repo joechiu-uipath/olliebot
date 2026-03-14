@@ -340,9 +340,9 @@ Use Vitest for unit and API tests, and Playwright for E2E UI tests:
 - Mission/pillar management and evaluation lifecycle
 - Well-known conversation protection (delete/rename guards)
 
-See [`api-tests/`](../../api-tests/) for the implementation. Key properties:
+See [`test/api-tests/`](../../test/api-tests/) for the implementation. Key properties:
 - **No mocks**: Real Hono server, real SQLite (in-memory), real WebSocket
-- **No outbound network**: `SimulatorServer` from `e2e/simulators/` absorbs all external calls
+- **No outbound network**: `SimulatorServer` from `test/e2e/simulators/` absorbs all external calls
 - **Real agent pipeline**: `AgentPipelineHarness` uses real `SupervisorAgentImpl` backed by `SimulatorLLMProvider`
 - **Parallel-safe**: Dynamic port allocation (port 0) per test file
 - **Fast reset**: `DELETE FROM` + re-seed between tests (no server restart)
@@ -504,8 +504,8 @@ All these suites follow similar patterns:
    ```
 
 2. **Create test infrastructure**
-   - `e2e/` directory for Playwright E2E UI tests + simulators
-   - `api-tests/` directory for API tests with harnesses + clients
+   - `test/e2e/` directory for Playwright E2E UI tests + simulators
+   - `test/api-tests/` directory for API tests with harnesses + clients
    - Simulator server for absorbing all outbound network calls
 
 3. **Implement core test harnesses**
@@ -594,35 +594,36 @@ Based on current OllieBot setup:
 olliebot/
 ├── src/
 │   └── **/*.test.ts             # Unit tests (colocated with source)
-├── api-tests/
-│   ├── harness/
-│   │   ├── server-harness.ts    # ServerHarness, FullServerHarness
-│   │   ├── api-client.ts        # REST helper (getJson, postJson, etc.)
-│   │   ├── ws-client.ts         # WebSocket test client
-│   │   ├── simulator-llm-provider.ts  # Test-only LLM provider
-│   │   └── index.ts             # Barrel exports
-│   ├── tests/
-│   │   ├── health-and-startup.test.ts
-│   │   ├── conversations.test.ts
-│   │   ├── messages.test.ts
-│   │   ├── settings.test.ts
-│   │   ├── websocket.test.ts
-│   │   ├── trace-routes.test.ts
-│   │   ├── dashboard-routes.test.ts
-│   │   ├── mission-routes.test.ts
-│   │   ├── eval-routes.test.ts
-│   │   ├── server-routes.test.ts
-│   │   ├── agent-pipeline.test.ts
-│   │   ├── tools-and-services.test.ts
-│   │   └── ...
-│   └── vitest.config.ts         # API test Vitest config
-├── e2e/
-│   ├── simulators/
-│   │   └── server.ts            # SimulatorServer (absorbs outbound calls)
-│   ├── tests/
-│   │   ├── chat.spec.ts         # Playwright E2E UI
-│   │   └── ...
-│   └── playwright.config.ts
+├── test/
+│   ├── api-tests/
+│   │   ├── harness/
+│   │   │   ├── server-harness.ts    # ServerHarness, FullServerHarness
+│   │   │   ├── api-client.ts        # REST helper (getJson, postJson, etc.)
+│   │   │   ├── ws-client.ts         # WebSocket test client
+│   │   │   ├── simulator-llm-provider.ts  # Test-only LLM provider
+│   │   │   └── index.ts             # Barrel exports
+│   │   ├── tests/
+│   │   │   ├── health-and-startup.test.ts
+│   │   │   ├── conversations.test.ts
+│   │   │   ├── messages.test.ts
+│   │   │   ├── settings.test.ts
+│   │   │   ├── websocket.test.ts
+│   │   │   ├── trace-routes.test.ts
+│   │   │   ├── dashboard-routes.test.ts
+│   │   │   ├── mission-routes.test.ts
+│   │   │   ├── eval-routes.test.ts
+│   │   │   ├── server-routes.test.ts
+│   │   │   ├── agent-pipeline.test.ts
+│   │   │   ├── tools-and-services.test.ts
+│   │   │   └── ...
+│   │   └── vitest.config.ts         # API test Vitest config
+│   └── e2e/
+│       ├── simulators/
+│       │   └── server.ts            # SimulatorServer (absorbs outbound calls)
+│       ├── tests/
+│       │   ├── chat.spec.ts         # Playwright E2E UI
+│       │   └── ...
+│       └── playwright.config.ts
 └── vitest.config.ts             # Root Vitest config (unit tests)
 ```
 

@@ -11,7 +11,7 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   test: {
-    include: ['api-tests/tests/**/*.test.ts'],
+    include: ['test/api-tests/tests/**/*.test.ts'],
     // Each file gets its own isolated fork so server ports don't collide
     isolate: true,
     fileParallelism: true,
