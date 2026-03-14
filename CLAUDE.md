@@ -24,6 +24,7 @@ src/
 ├── db/               # SQLite database layer
 ├── deep-research/    # Multi-step research orchestration
 ├── desktop/          # Windows Sandbox + VNC automation
+│   └── sandbox/      # Sandbox scripts (setup-vnc.ps1, .wsb config)
 ├── evaluation/       # Eval framework for testing agent behavior
 ├── llm/              # LLM provider abstraction (Anthropic, OpenAI, Google, Azure)
 ├── mcp/              # MCP client for external tool servers
@@ -58,7 +59,6 @@ user/                 # User data directory (gitignored)
 ├── tools/            # User-defined tools (.md)
 └── rag/              # RAG project data
 
-sandbox/              # Windows Sandbox automation scripts
 ```
 
 ## Development Commands
@@ -121,7 +121,7 @@ Two strategies in `src/browser/strategies/`:
 
 ### Desktop Automation (Windows Sandbox)
 - Launches Windows Sandbox with VNC server
-- `sandbox/setup-vnc.ps1` runs inside sandbox to configure TightVNC
+- `src/desktop/sandbox/setup-vnc.ps1` runs inside sandbox to configure TightVNC
 - VNC client in `src/desktop/vnc-client.ts` connects via rfb2 protocol
 - See memory file for networking details (sandbox uses Hyper-V NAT)
 

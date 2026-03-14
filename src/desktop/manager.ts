@@ -115,7 +115,7 @@ export class DesktopSessionManager {
     this.config = config;
     this.channel = config.channel;
     // Path to source sandbox scripts (in the project)
-    this.sandboxConfigPath = config.sandboxConfigPath || path.join(__dirname, '../../sandbox');
+    this.sandboxConfigPath = config.sandboxConfigPath || path.join(__dirname, 'sandbox');
   }
 
   // ===========================================================================
