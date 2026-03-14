@@ -32,6 +32,7 @@ export function setupIMChannelRoutes(app: Hono, options: IMChannelRouteOptions):
     app.post('/api/im-channels/azure-bot/webhook', async (c) => {
       try {
         const activity = await c.req.json<BotActivity>();
+        console.log(`[IMRoutes] Azure Bot incoming: type=${activity.type}, channelId=${activity.channelId}, from=${activity.from?.name ?? activity.from?.id}, text=${activity.text?.substring(0, 80) ?? '(none)'}`);
         const authHeader = c.req.header('Authorization');
         const response = await azureBotChannel.handleWebhook(activity, authHeader);
 

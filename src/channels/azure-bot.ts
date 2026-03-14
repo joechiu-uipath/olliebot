@@ -15,7 +15,7 @@
 
 import { v4 as uuid } from 'uuid';
 import { MessengerChannel } from './messenger-base.js';
-import type { Message, SendOptions, StreamEndOptions } from './types.js';
+import type { Message, SendOptions, StreamStartOptions, StreamEndOptions } from './types.js';
 
 /**
  * Activity object from Azure Bot Service (simplified).
@@ -87,13 +87,19 @@ export class AzureBotChannel extends MessengerChannel {
     // TODO: Validate JWT Bearer token from Azure Bot Service in production
     // For now, trust the activity (development mode)
 
+    // Guard against malformed activities
+    if (!activity.conversation?.id || !activity.serviceUrl) {
+      console.warn('[AzureBotChannel] Ignoring malformed activity (missing conversation or serviceUrl)');
+      return null;
+    }
+
     // Store conversation reference for replies
     const convRef: ConversationReference = {
       serviceUrl: activity.serviceUrl,
       channelId: activity.channelId,
       conversationId: activity.conversation.id,
-      userId: activity.from.id,
-      botId: activity.recipient.id,
+      userId: activity.from?.id ?? '',
+      botId: activity.recipient?.id ?? '',
       tenantId: activity.conversation.tenantId,
     };
     this.conversationRefs.set(activity.conversation.id, convRef);
@@ -189,6 +195,9 @@ export class AzureBotChannel extends MessengerChannel {
 
     const activity: Record<string, unknown> = {
       type: 'message',
+      from: { id: convRef.botId },
+      recipient: { id: convRef.userId },
+      conversation: { id: convRef.conversationId },
       text: content,
       textFormat: 'markdown',
     };
@@ -229,6 +238,13 @@ export class AzureBotChannel extends MessengerChannel {
       }
     }
 
+    await this.postActivity(convRef, activity);
+  }
+
+  /**
+   * Post a new activity. Returns the activity ID (for subsequent updates).
+   */
+  private async postActivity(convRef: ConversationReference, activity: Record<string, unknown>): Promise<string | null> {
     try {
       const token = await this.getAccessToken();
       const url = `${convRef.serviceUrl}v3/conversations/${convRef.conversationId}/activities`;
@@ -245,9 +261,43 @@ export class AzureBotChannel extends MessengerChannel {
       if (!response.ok) {
         const body = await response.text();
         console.error(`[AzureBotChannel] Send failed (${response.status}):`, body);
+        return null;
       }
+
+      const data = await response.json() as { id?: string };
+      return data.id ?? null;
     } catch (error) {
       console.error('[AzureBotChannel] Failed to send message:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Update an existing activity by ID (for streaming updates).
+   */
+  private async updateActivity(convRef: ConversationReference, activityId: string, activity: Record<string, unknown>): Promise<void> {
+    try {
+      const token = await this.getAccessToken();
+      const url = `${convRef.serviceUrl}v3/conversations/${convRef.conversationId}/activities/${activityId}`;
+
+      const response = await fetch(url, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          ...activity,
+          id: activityId,
+        }),
+      });
+
+      if (!response.ok) {
+        const body = await response.text();
+        console.error(`[AzureBotChannel] Update failed (${response.status}):`, body);
+      }
+    } catch (error) {
+      console.error('[AzureBotChannel] Failed to update message:', error);
     }
   }
 
@@ -256,13 +306,116 @@ export class AzureBotChannel extends MessengerChannel {
     await this.send(text, { conversationId });
   }
 
-  async endStream(streamId: string, options?: StreamEndOptions): Promise<void> {
+  /** Channels that support activity updates (PUT) for streaming */
+  private static UPDATABLE_CHANNELS = new Set(['msteams']);
+  /** Minimum interval between streaming updates (ms) to avoid rate limits */
+  private static STREAM_UPDATE_INTERVAL = 800;
+  /** Track last update time per stream */
+  private streamUpdateTimers: Map<string, NodeJS.Timeout> = new Map();
+
+  override startStream(streamId: string, options?: StreamStartOptions): void {
+    super.startStream(streamId, options);
+
+    const convId = options?.conversationId;
+    if (!convId) return;
+
+    const { azureConversationId } = this.parseConversationId(convId);
+    const convRef = azureConversationId ? this.conversationRefs.get(azureConversationId) : undefined;
+    if (!convRef || !AzureBotChannel.UPDATABLE_CHANNELS.has(convRef.channelId)) return;
+
+    const activity: Record<string, unknown> = {
+      type: 'message',
+      from: { id: convRef.botId },
+      recipient: { id: convRef.userId },
+      conversation: { id: convRef.conversationId },
+      text: '...',
+      textFormat: 'markdown',
+    };
+
+    this.postActivity(convRef, activity).then(activityId => {
+      const stream = this.activeStreams.get(streamId);
+      if (stream && activityId) {
+        stream.platformMessageId = activityId;
+      }
+    });
+  }
+
+  override sendStreamChunk(streamId: string, chunk: string): void {
+    super.sendStreamChunk(streamId, chunk);
+
     const stream = this.activeStreams.get(streamId);
-    if (stream && stream.content) {
-      const convId = options?.conversationId ?? stream.conversationId;
+    if (!stream?.platformMessageId) return;
+
+    // Debounce updates to avoid rate limits
+    if (this.streamUpdateTimers.has(streamId)) return;
+
+    const timer = setTimeout(() => {
+      this.streamUpdateTimers.delete(streamId);
+      this.flushStreamUpdate(streamId);
+    }, AzureBotChannel.STREAM_UPDATE_INTERVAL);
+
+    this.streamUpdateTimers.set(streamId, timer);
+  }
+
+  private flushStreamUpdate(streamId: string): void {
+    const stream = this.activeStreams.get(streamId);
+    if (!stream?.platformMessageId || !stream.content) return;
+
+    const convRef = this.getConvRefForStream(stream);
+    if (!convRef) return;
+
+    const activity: Record<string, unknown> = {
+      type: 'message',
+      from: { id: convRef.botId },
+      recipient: { id: convRef.userId },
+      conversation: { id: convRef.conversationId },
+      text: stream.content + ' ▍',
+      textFormat: 'markdown',
+    };
+
+    this.updateActivity(convRef, stream.platformMessageId, activity);
+  }
+
+  override async endStream(streamId: string, options?: StreamEndOptions): Promise<void> {
+    // Clear any pending update timer
+    const timer = this.streamUpdateTimers.get(streamId);
+    if (timer) {
+      clearTimeout(timer);
+      this.streamUpdateTimers.delete(streamId);
+    }
+
+    const stream = this.activeStreams.get(streamId);
+    if (!stream?.content) {
+      this.activeStreams.delete(streamId);
+      return;
+    }
+
+    const convId = options?.conversationId ?? stream.conversationId;
+    const { azureConversationId } = this.parseConversationId(convId);
+    const convRef = azureConversationId ? this.conversationRefs.get(azureConversationId) : undefined;
+
+    if (convRef && stream.platformMessageId) {
+      // Final update to the existing message (remove cursor)
+      const activity: Record<string, unknown> = {
+        type: 'message',
+        from: { id: convRef.botId },
+        recipient: { id: convRef.userId },
+        conversation: { id: convRef.conversationId },
+        text: stream.content,
+        textFormat: 'markdown',
+      };
+      await this.updateActivity(convRef, stream.platformMessageId, activity);
+    } else {
+      // Fallback: no initial message was posted, send as new message
       await this.send(stream.content, { markdown: true, conversationId: convId });
     }
+
     this.activeStreams.delete(streamId);
+  }
+
+  private getConvRefForStream(stream: { conversationId?: string }): ConversationReference | undefined {
+    const { azureConversationId } = this.parseConversationId(stream.conversationId);
+    return azureConversationId ? this.conversationRefs.get(azureConversationId) : undefined;
   }
 
   async close(): Promise<void> {

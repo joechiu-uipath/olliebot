@@ -1,0 +1,25 @@
+{
+"$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.19/MicrosoftTeams.schema.json",
+"manifestVersion": "1.19",
+"version": "1.0.0",
+"id": "fc8e0b0c-8e7c-427f-8e75-54e6522304fc",
+"developer": {
+    "name": "You",
+    "websiteUrl": "https://localhost:3000",
+    "privacyUrl": "https://localhost:3000",
+    "termsOfUseUrl": "https://localhost:3000"
+},
+"name": { "short": "OllieBot" },
+"description": { "short": "AI assistant", "full": "OllieBot personal support agent" },
+"accentColor": "#4F46E5",
+"icons": { "outline": "outline.png", "color": "color.png" },
+"bots": [
+    {
+    "botId": "fc8e0b0c-8e7c-427f-8e75-54e6522304fc",
+    "scopes": ["personal", "team", "groupChat"],
+    "supportsFiles": false,
+    "isNotificationOnly": false
+    }
+],
+"validDomains": []
+}
