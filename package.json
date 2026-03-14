@@ -14,7 +14,7 @@
     "dev:console": "tsx src/index.ts console",
     "dev:web": "pnpm --filter olliebot-web dev",
     "dev:tui": "pnpm --filter olliebot-tui dev",
-    "dev:tunnel": "devtunnel host -p 3000 --allow-anonymous",
+    "dev:tunnel": "devtunnel host olliebot",
     "build": "pnpm run build:server && pnpm run build:web && pnpm run build:tui",
     "build:server": "tsc",
     "build:web": "pnpm --filter olliebot-web build",

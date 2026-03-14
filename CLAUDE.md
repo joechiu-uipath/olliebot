@@ -69,6 +69,7 @@ pnpm dev              # Start server + web UI concurrently
 pnpm dev:server       # Start server only (with hot reload)
 pnpm dev:web          # Start web UI only
 pnpm dev:console      # Console/CLI mode
+pnpm dev:tunnel       # Start persistent Dev Tunnel (stable URL for webhooks)
 pnpm build            # Build all packages
 pnpm typecheck        # TypeScript type checking
 pnpm test             # Run tests
@@ -82,6 +83,23 @@ Copy `.env.example` to `.env` and configure:
 - MAIN_PROVIDER/MAIN_MODEL for primary LLM
 - FAST_PROVIDER/FAST_MODEL for cheap/fast tasks
 - Optional: web search, image generation, voice, browser automation
+
+### Dev Tunnel (for IM channel webhooks)
+
+Azure Bot Service, WhatsApp, and Twilio require a public HTTPS endpoint to deliver webhook events. We use [VS Dev Tunnels](https://learn.microsoft.com/en-us/azure/developer/dev-tunnels/) with a persistent tunnel named `olliebot`.
+
+**One-time setup:**
+```bash
+devtunnel create olliebot --allow-anonymous
+devtunnel port create olliebot -p 3000
+```
+
+**Run:** `pnpm dev:tunnel` (alongside `pnpm dev`)
+
+**Stable URL:** `https://hccmnm35-3000.asse.devtunnels.ms`
+- Azure Bot messaging endpoint: `https://hccmnm35-3000.asse.devtunnels.ms/api/im-channels/azure-bot/webhook`
+
+This URL persists across tunnel restarts. It is configured in the Azure Bot resource under **Configuration > Messaging endpoint**.
 
 ## Architecture Notes
 

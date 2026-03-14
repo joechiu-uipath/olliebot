@@ -33,13 +33,13 @@ test.describe('Web UI Interactions', () => {
 
   // WEBUI-003: Sidebar accordions
   test('expands and collapses sidebar accordion sections', async ({ app }) => {
-    // Toggle Agent Tasks accordion
-    await app.sidebar.toggleAccordion('Agent Tasks');
-    expect(await app.sidebar.isAccordionExpanded('Agent Tasks')).toBe(true);
+    // Toggle Scheduled Tasks accordion
+    await app.sidebar.toggleAccordion('Scheduled Tasks');
+    expect(await app.sidebar.isAccordionExpanded('Scheduled Tasks')).toBe(true);
 
     // Collapse it
-    await app.sidebar.toggleAccordion('Agent Tasks');
-    expect(await app.sidebar.isAccordionExpanded('Agent Tasks')).toBe(false);
+    await app.sidebar.toggleAccordion('Scheduled Tasks');
+    expect(await app.sidebar.isAccordionExpanded('Scheduled Tasks')).toBe(false);
 
     // Toggle Agent Skills accordion
     await app.sidebar.toggleAccordion('Agent Skills');
