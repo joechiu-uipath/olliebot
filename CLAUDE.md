@@ -24,6 +24,7 @@ src/
 ├── db/               # SQLite database layer
 ├── deep-research/    # Multi-step research orchestration
 ├── desktop/          # Windows Sandbox + VNC automation
+│   └── sandbox/      # Sandbox scripts (setup-vnc.ps1, .wsb config)
 ├── evaluation/       # Eval framework for testing agent behavior
 ├── llm/              # LLM provider abstraction (Anthropic, OpenAI, Google, Azure)
 ├── mcp/              # MCP client for external tool servers
@@ -58,7 +59,6 @@ user/                 # User data directory (gitignored)
 ├── tools/            # User-defined tools (.md)
 └── rag/              # RAG project data
 
-sandbox/              # Windows Sandbox automation scripts
 ```
 
 ## Development Commands
@@ -69,6 +69,7 @@ pnpm dev              # Start server + web UI concurrently
 pnpm dev:server       # Start server only (with hot reload)
 pnpm dev:web          # Start web UI only
 pnpm dev:console      # Console/CLI mode
+pnpm dev:tunnel       # Start persistent Dev Tunnel (stable URL for webhooks)
 pnpm build            # Build all packages
 pnpm typecheck        # TypeScript type checking
 pnpm test             # Run tests
@@ -82,6 +83,23 @@ Copy `.env.example` to `.env` and configure:
 - MAIN_PROVIDER/MAIN_MODEL for primary LLM
 - FAST_PROVIDER/FAST_MODEL for cheap/fast tasks
 - Optional: web search, image generation, voice, browser automation
+
+### Dev Tunnel (for IM channel webhooks)
+
+Azure Bot Service, WhatsApp, and Twilio require a public HTTPS endpoint to deliver webhook events. We use [VS Dev Tunnels](https://learn.microsoft.com/en-us/azure/developer/dev-tunnels/) with a persistent tunnel named `olliebot`.
+
+**One-time setup:**
+```bash
+devtunnel create olliebot --allow-anonymous
+devtunnel port create olliebot -p 3000
+```
+
+**Run:** `pnpm dev:tunnel` (alongside `pnpm dev`)
+
+**Stable URL:** `https://hccmnm35-3000.asse.devtunnels.ms`
+- Azure Bot messaging endpoint: `https://hccmnm35-3000.asse.devtunnels.ms/api/im-channels/azure-bot/webhook`
+
+This URL persists across tunnel restarts. It is configured in the Azure Bot resource under **Configuration > Messaging endpoint**.
 
 ## Architecture Notes
 
@@ -103,7 +121,7 @@ Two strategies in `src/browser/strategies/`:
 
 ### Desktop Automation (Windows Sandbox)
 - Launches Windows Sandbox with VNC server
-- `sandbox/setup-vnc.ps1` runs inside sandbox to configure TightVNC
+- `src/desktop/sandbox/setup-vnc.ps1` runs inside sandbox to configure TightVNC
 - VNC client in `src/desktop/vnc-client.ts` connects via rfb2 protocol
 - See memory file for networking details (sandbox uses Hyper-V NAT)
 
@@ -137,7 +155,7 @@ pnpm test                    # Run all unit tests (Vitest)
 pnpm test src/agents         # Run specific directory
 pnpm test:watch              # Watch mode
 npx playwright test          # Run all e2e tests
-npx playwright test e2e/tests/rag/  # Run specific e2e directory
+npx playwright test test/e2e/tests/rag/  # Run specific e2e directory
 ```
 
 Unit tests use Vitest. Mock external services and LLM calls.
@@ -184,7 +202,7 @@ These are already configured in the project's `playwright.config.ts`.
 
 **5. Verify it works:**
 ```bash
-npx playwright test e2e/tests/rag/   # Should pass all 7 RAG tests
+npx playwright test test/e2e/tests/rag/   # Should pass all 7 RAG tests
 npx playwright test                   # Full suite: 218 tests
 ```
 

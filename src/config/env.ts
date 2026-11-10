@@ -86,6 +86,11 @@ const envSchema = z.object({
   // Voice
   VOICE_PROVIDER: VoiceProviderSchema.default('azure_openai'),
   VOICE_MODEL: z.string().default('gpt-4o-realtime-preview'),
+
+  // Azure Bot Service (Teams, FB Messenger, LINE)
+  AZURE_BOT_APP_ID: z.string().optional(),
+  AZURE_BOT_APP_PASSWORD: z.string().optional(),
+  AZURE_BOT_TENANT_ID: z.string().optional(),
 });
 
 /**
@@ -170,6 +175,11 @@ export function buildConfig(env: ValidatedEnv) {
     voiceProvider: env.VOICE_PROVIDER,
     voiceModel: env.VOICE_MODEL,
     voiceVoice: 'alloy' as const,
+
+    // Azure Bot Service (Teams, FB Messenger, LINE)
+    azureBotAppId: env.AZURE_BOT_APP_ID || '',
+    azureBotAppPassword: env.AZURE_BOT_APP_PASSWORD || '',
+    azureBotTenantId: env.AZURE_BOT_TENANT_ID || '',
   };
 }
 

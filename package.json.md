@@ -14,6 +14,7 @@ This document explains the purpose and use case for each script and devDependenc
 | `dev:console` | Runs OllieBot in console/CLI mode without starting the web server. Direct terminal interaction with the bot. |
 | `dev:web` | Runs only the Vite dev server for the web UI (port 5173). Proxies API/WebSocket requests to backend. Use when working on frontend-only changes (requires backend running separately). |
 | `dev:tui` | Runs the Terminal User Interface (React Ink). Alternative to web UI for terminal-based interaction. |
+| `dev:tunnel` | Hosts a persistent [VS Dev Tunnel](https://learn.microsoft.com/en-us/azure/developer/dev-tunnels/) named `olliebot`, exposing local port 3000 via a stable public HTTPS URL. Required for IM channel webhooks (Azure Bot Service, WhatsApp, Twilio) to reach the local dev server. **One-time setup:** `devtunnel create olliebot --allow-anonymous && devtunnel port create olliebot -p 3000`. **Stable URL:** `https://hccmnm35-3000.asse.devtunnels.ms` (configured in Azure Bot > Configuration > Messaging endpoint as `https://hccmnm35-3000.asse.devtunnels.ms/api/im-channels/azure-bot/webhook`). |
 
 ### Build Scripts
 

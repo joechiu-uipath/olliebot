@@ -18,7 +18,7 @@ import type {
   LLMResponseWithTools,
   LLMToolUse,
   StreamCallbacks,
-} from '../../src/llm/types.js';
+} from '../../../src/llm/types.js';
 
 export class SimulatorLLMProvider implements LLMProvider {
   readonly name = 'anthropic';

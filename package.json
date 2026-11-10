@@ -14,6 +14,7 @@
     "dev:console": "tsx src/index.ts console",
     "dev:web": "pnpm --filter olliebot-web dev",
     "dev:tui": "pnpm --filter olliebot-tui dev",
+    "dev:tunnel": "devtunnel host olliebot",
     "build": "pnpm run build:server && pnpm run build:web && pnpm run build:tui",
     "build:server": "tsc",
     "build:web": "pnpm --filter olliebot-web build",
@@ -27,8 +28,8 @@
     "test:e2e:ui": "playwright test --ui",
     "test:e2e:debug": "playwright test --debug",
     "test:e2e:report": "playwright show-report",
-    "test:api": "vitest run --config api-tests/vitest.config.ts",
-    "test:api:coverage": "vitest run --config api-tests/vitest.config.ts --coverage",
+    "test:api": "vitest run --config test/api-tests/vitest.config.ts",
+    "test:api:coverage": "vitest run --config test/api-tests/vitest.config.ts --coverage",
     "eval": "npx -y promptfoo eval",
     "eval:view": "npx -y promptfoo view"
   },

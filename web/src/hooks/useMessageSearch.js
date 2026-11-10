@@ -13,6 +13,8 @@ export function useMessageSearch() {
   const [isSearchMode, setIsSearchMode] = useState(false);
   const abortControllerRef = useRef(null);
 
+  const oldestCursor = searchPagination?.oldestCursor ?? null;
+
   const search = useCallback(async (query, loadMore = false) => {
     // Cancel any pending search
     if (abortControllerRef.current) {
@@ -30,36 +32,36 @@ export function useMessageSearch() {
     setIsSearching(true);
     abortControllerRef.current = new AbortController();
 
-    try {
-      const params = new URLSearchParams({
-        q: query,
-        limit: '20',
-        includeTotal: 'true',
-        mode: 'hybrid',
-      });
+    const params = new URLSearchParams({
+      q: query,
+      limit: '20',
+      includeTotal: 'true',
+      mode: 'hybrid',
+    });
 
-      if (loadMore && searchPagination?.oldestCursor) {
-        params.set('before', searchPagination.oldestCursor);
-      }
+    if (loadMore && oldestCursor) {
+      params.set('before', oldestCursor);
+    }
 
-      const res = await fetch(`/api/messages/search?${params}`, {
-        signal: abortControllerRef.current.signal,
-      });
-
-      if (!res.ok) throw new Error('Search failed');
-
-      const data = await res.json();
-
-      setSearchResults(prev => loadMore ? [...prev, ...data.items] : data.items);
-      setSearchPagination(data.pagination);
-    } catch (error) {
+    const res = await fetch(`/api/messages/search?${params}`, {
+      signal: abortControllerRef.current.signal,
+    }).catch(error => {
       if (error.name !== 'AbortError') {
         console.error('[MessageSearch] Search error:', error);
       }
-    } finally {
-      setIsSearching(false);
+      return null;
+    });
+
+    if (res && res.ok) {
+      const data = await res.json();
+      setSearchResults(prev => loadMore ? [...prev, ...data.items] : data.items);
+      setSearchPagination(data.pagination);
+    } else if (res) {
+      console.error('[MessageSearch] Search failed:', res.status);
     }
-  }, [searchPagination?.oldestCursor]);
+
+    setIsSearching(false);
+  }, [oldestCursor]);
 
   const clearSearch = useCallback(() => {
     // Cancel any pending request

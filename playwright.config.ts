@@ -7,7 +7,7 @@ import { defineConfig, devices } from '@playwright/test';
  * by the dependency simulator server started in globalSetup.
  */
 export default defineConfig({
-  testDir: './e2e/tests',
+  testDir: './test/e2e/tests',
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,

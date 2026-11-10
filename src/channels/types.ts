@@ -112,7 +112,7 @@ export interface ChannelFactory {
 }
 
 export interface ChannelConfig {
-  type: 'web' | 'console';
+  type: 'web' | 'console' | 'slack' | 'discord' | 'azure-bot' | 'whatsapp' | 'sms';
   id: string;
   options?: Record<string, unknown>;
 }

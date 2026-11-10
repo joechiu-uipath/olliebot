@@ -20,7 +20,7 @@ import {
   seedMessage,
   waitFor,
 } from '../harness/index.js';
-import { getDb } from '../../src/db/index.js';
+import { getDb } from '../../../src/db/index.js';
 
 const harness = new ServerHarness();
 

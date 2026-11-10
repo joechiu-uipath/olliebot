@@ -4,7 +4,7 @@
  * Provides common helper functions to reduce duplication across test files.
  */
 
-import { getDb } from '../../src/db/index.js';
+import { getDb } from '../../../src/db/index.js';
 
 // ---------------------------------------------------------------------------
 // Database Seeding Helpers

@@ -28,6 +28,7 @@ import { LogBuffer, OllieBotMCPServer } from '../mcp-server/index.js';
 import { getUserSettingsService } from '../settings/index.js';
 import { setMessageEventServiceChannel, getMessageEventService } from '../services/message-event-service.js';
 import { setupMissionRoutes } from './mission-routes.js';
+import { setupIMChannelRoutes, type IMChannelRouteOptions } from './im-channel-routes.js';
 import { getDashboardStore, SnapshotEngine, RenderEngine, setupDashboardRoutes } from '../dashboard/index.js';
 import { MissionUpdateDashboardTool } from '../tools/native/mission-update-dashboard.js';
 
@@ -72,6 +73,8 @@ export interface ServerConfig {
   resultsDir?: string;
   // Message embedding service for semantic search
   messageEmbeddingService?: MessageEmbeddingService;
+  // IM channel instances (webhook-based channels need route registration)
+  imChannels?: IMChannelRouteOptions;
 }
 
 export class AssistantServer {
@@ -112,6 +115,7 @@ export class AssistantServer {
   private evaluationsDir?: string;
   private resultsDir?: string;
   private messageEmbeddingService?: MessageEmbeddingService;
+  private imChannels?: IMChannelRouteOptions;
 
   constructor(config: ServerConfig) {
     this.port = config.port;
@@ -143,6 +147,7 @@ export class AssistantServer {
     this.evaluationsDir = config.evaluationsDir;
     this.resultsDir = config.resultsDir;
     this.messageEmbeddingService = config.messageEmbeddingService;
+    this.imChannels = config.imChannels;
 
     // Security: Default to localhost-only binding (Layer 1: Network Binding)
     this.bindAddress = config.bindAddress ?? '127.0.0.1';
@@ -1125,6 +1130,11 @@ export class AssistantServer {
         }));
         console.log('[Server] Dashboard update tool registered (mission_update_dashboard)');
       }
+    }
+
+    // Setup IM channel webhook routes (Azure Bot, WhatsApp, SMS)
+    if (this.imChannels) {
+      setupIMChannelRoutes(this.app, this.imChannels);
     }
 
     // REST endpoints for browser session management

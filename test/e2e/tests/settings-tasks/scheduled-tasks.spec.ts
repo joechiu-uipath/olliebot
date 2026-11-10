@@ -19,8 +19,8 @@ test.describe('Scheduled Tasks', () => {
     app.api.setTasks(tasks);
     await app.reload();
 
-    await app.sidebar.toggleAccordion('Agent Tasks');
-    await expect(app.sidebar.accordionContent('Agent Tasks')).toBeVisible();
+    await app.sidebar.toggleAccordion('Scheduled Tasks');
+    await expect(app.sidebar.accordionContent('Scheduled Tasks')).toBeVisible();
   });
 
   // TASK-002: Run task manually
@@ -29,7 +29,7 @@ test.describe('Scheduled Tasks', () => {
     app.api.setTasks(tasks);
     await app.reload();
 
-    await app.sidebar.toggleAccordion('Agent Tasks');
+    await app.sidebar.toggleAccordion('Scheduled Tasks');
 
     // Run the task
     await app.sidebar.runTask('Manual Task');
@@ -57,7 +57,7 @@ test.describe('Scheduled Tasks', () => {
     app.api.setTasks(tasks);
     await app.reload();
 
-    await app.sidebar.toggleAccordion('Agent Tasks');
+    await app.sidebar.toggleAccordion('Scheduled Tasks');
     await app.sidebar.toggleTask('Toggle Task');
   });
 

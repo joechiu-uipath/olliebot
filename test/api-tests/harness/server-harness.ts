@@ -20,13 +20,13 @@
  *   afterAll(() => harness.stop());
  */
 
-import { initDb, getDb, closeDb } from '../../src/db/index.js';
-import { ensureWellKnownConversations } from '../../src/db/well-known-conversations.js';
-import { AssistantServer } from '../../src/server/index.js';
-import type { ServerConfig } from '../../src/server/index.js';
-import { endpoints } from '../../src/config/endpoint-manager.js';
+import { initDb, getDb, closeDb } from '../../../src/db/index.js';
+import { ensureWellKnownConversations } from '../../../src/db/well-known-conversations.js';
+import { AssistantServer } from '../../../src/server/index.js';
+import type { ServerConfig } from '../../../src/server/index.js';
+import { endpoints } from '../../../src/config/endpoint-manager.js';
 import { SimulatorServer } from '../../e2e/simulators/server.js';
-import { LLMService } from '../../src/llm/service.js';
+import { LLMService } from '../../../src/llm/service.js';
 import {
   ToolRunner,
   WebSearchTool,
@@ -48,28 +48,28 @@ import {
   MissionTodoUpdateTool,
   MissionTodoCompleteTool,
   MissionMetricRecordTool,
-} from '../../src/tools/index.js';
+} from '../../../src/tools/index.js';
 import {
   ReadFrontendCodeTool,
   ModifyFrontendCodeTool,
   CheckFrontendCodeTool,
-} from '../../src/self-coding/index.js';
-import { MissionManager } from '../../src/missions/manager.js';
-import { initMissionSchema } from '../../src/missions/schema.js';
-import { getDashboardStore } from '../../src/dashboard/index.js';
-import { TraceStore } from '../../src/tracing/trace-store.js';
-import { MemoryService } from '../../src/memory/index.js';
-import { SkillManager } from '../../src/skills/index.js';
-import { TaskManager } from '../../src/tasks/index.js';
-import { UserToolManager } from '../../src/tools/user/index.js';
+} from '../../../src/self-coding/index.js';
+import { MissionManager } from '../../../src/missions/manager.js';
+import { initMissionSchema } from '../../../src/missions/schema.js';
+import { getDashboardStore } from '../../../src/dashboard/index.js';
+import { TraceStore } from '../../../src/tracing/trace-store.js';
+import { MemoryService } from '../../../src/memory/index.js';
+import { SkillManager } from '../../../src/skills/index.js';
+import { TaskManager } from '../../../src/tasks/index.js';
+import { UserToolManager } from '../../../src/tools/user/index.js';
 import {
   RAGProjectService,
   OpenAIEmbeddingProvider,
   RagDataManager,
-} from '../../src/rag-projects/index.js';
-import { MCPClient } from '../../src/mcp/index.js';
-import { SupervisorAgentImpl } from '../../src/agents/supervisor.js';
-import { AgentRegistry } from '../../src/agents/registry.js';
+} from '../../../src/rag-projects/index.js';
+import { MCPClient } from '../../../src/mcp/index.js';
+import { SupervisorAgentImpl } from '../../../src/agents/supervisor.js';
+import { AgentRegistry } from '../../../src/agents/registry.js';
 import { SimulatorLLMProvider } from './simulator-llm-provider.js';
 import { ApiClient } from './api-client.js';
 import { WsClient } from './ws-client.js';
