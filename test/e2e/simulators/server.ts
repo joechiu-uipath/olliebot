@@ -67,7 +67,7 @@ export class SimulatorServer {
           await this.handleRequest(req, res);
         } catch (err) {
           res.writeHead(500, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'Simulator internal error', details: String(err) }));
+          res.end(JSON.stringify({ error: 'Simulator internal error' }));
         }
       });
 
