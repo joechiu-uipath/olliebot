@@ -360,6 +360,14 @@ export class EvaluationManager {
 
     const baselineAggregated = this.statistics.aggregateResults(baselineRuns, 'baseline');
 
+    // Save tool snapshots if in capture mode (use first run's snapshots)
+    if (definition.toolMode === 'capture') {
+      const firstRunWithSnapshots = baselineRuns.find(r => r.capturedSnapshots);
+      if (firstRunWithSnapshots?.capturedSnapshots) {
+        this.saveToolSnapshots(evaluationPath, firstRunWithSnapshots.capturedSnapshots);
+      }
+    }
+
     // Run alternative if defined
     let alternativeAggregated: AggregatedResults | undefined;
     let comparison: ComparisonResult['comparison'];
@@ -524,6 +532,23 @@ export class EvaluationManager {
 
     writeFileSync(filepath, JSON.stringify(results, null, 2));
     console.log(`[EvaluationManager] Suite results saved to: ${filepath}`);
+  }
+
+  /**
+   * Save tool snapshots from capture mode alongside the eval file.
+   * Creates a .snapshots.json file that can be used to populate mockedOutputs.
+   */
+  private saveToolSnapshots(
+    evaluationPath: string,
+    snapshots: Record<string, import('./types.js').MockedToolOutput>
+  ): void {
+    const fullPath = evaluationPath.startsWith('/')
+      ? evaluationPath
+      : join(this.config.evaluationsDir, evaluationPath);
+
+    const snapshotPath = fullPath.replace('.eval.json', '.snapshots.json');
+    writeFileSync(snapshotPath, JSON.stringify(snapshots, null, 2));
+    console.log(`[EvaluationManager] Tool snapshots saved to: ${snapshotPath}`);
   }
 
   /**

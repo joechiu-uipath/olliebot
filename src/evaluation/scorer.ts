@@ -22,7 +22,7 @@ import type {
   ToolExpectation,
   ParameterExpectation,
 } from './types.js';
-import type { RecordedToolCall } from './mocked-tool-runner.js';
+import type { RecordedToolCall } from './recording-tool-executor.js';
 
 export interface ScoringResult {
   toolSelectionScore: number;

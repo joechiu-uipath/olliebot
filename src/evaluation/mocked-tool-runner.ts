@@ -1,18 +1,19 @@
 /**
  * MockedToolRunner - Provides deterministic tool responses for evaluation
  *
- * Implements the same interface patterns as ToolRunner but returns mocked outputs
- * defined in the evaluation file instead of executing real tools.
+ * Implements ToolExecutor so it can be used interchangeably with the real
+ * ToolRunner in the evaluation loop. Returns mocked outputs defined in the
+ * evaluation file instead of executing real tools.
  */
 
 import { v4 as uuid } from 'uuid';
 import type {
+  ToolExecutor,
   ToolRequest,
   ToolResult,
   LLMTool,
   ToolSource,
 } from '../tools/types.js';
-import type { ToolRunner } from '../tools/runner.js';
 import type { MockedToolOutput } from './types.js';
 
 export interface RecordedToolCall {
@@ -22,21 +23,22 @@ export interface RecordedToolCall {
   order: number;
 }
 
-export class MockedToolRunner {
+export class MockedToolRunner implements ToolExecutor {
+  private tools: LLMTool[];
   private mockedOutputs: Record<string, MockedToolOutput>;
   private recordedCalls: RecordedToolCall[] = [];
   private callOrder = 0;
 
-  constructor(mockedOutputs: Record<string, MockedToolOutput> = {}) {
+  constructor(tools: LLMTool[], mockedOutputs: Record<string, MockedToolOutput> = {}) {
+    this.tools = tools;
     this.mockedOutputs = mockedOutputs;
   }
 
   /**
-   * Get tools for LLM - returns real tool definitions from the actual runner
-   * This ensures the LLM knows what tools are available
+   * Get tools for LLM - returns the tool definitions passed at construction
    */
-  getToolsForLLM(realToolRunner: ToolRunner): LLMTool[] {
-    return realToolRunner.getToolsForLLM();
+  getToolsForLLM(): LLMTool[] {
+    return this.tools;
   }
 
   /**
@@ -53,13 +55,13 @@ export class MockedToolRunner {
       order: this.callOrder++,
     });
 
-    // Find mocked output
-    const mocked = this.mockedOutputs[request.toolName];
-
     // Simulate a small delay for realism
     await new Promise(resolve => setTimeout(resolve, 10));
 
     const endTime = new Date();
+
+    // Find mocked output
+    const mocked = this.mockedOutputs[request.toolName];
 
     if (!mocked) {
       // No mock defined - return a default result indicating no mock

@@ -18,6 +18,7 @@ import type {
   ToolEventCallback,
   ToolSource,
   LLMTool,
+  ToolExecutor,
 } from './types.js';
 import type { NativeTool, ToolExecutionContext } from './native/types.js';
 import type { MCPClient } from '../mcp/client.js';
@@ -55,7 +56,7 @@ export interface ToolRunnerConfig {
   traceStore?: TraceStore;
 }
 
-export class ToolRunner {
+export class ToolRunner implements ToolExecutor {
   private mcpClient: MCPClient | null;
   private nativeTools: Map<string, NativeTool>;
   private userTools: Map<string, NativeTool>;

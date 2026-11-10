@@ -3,7 +3,7 @@
  *
  * A comprehensive system for evaluating prompt quality.
  * Supports testing supervisor, sub-agent, and tool-generator prompts
- * with mocked tool outputs and statistical comparison.
+ * with mocked or real tool execution and statistical comparison.
  */
 
 // Core types
@@ -12,7 +12,8 @@ export * from './types.js';
 // Components
 export { PromptLoader } from './prompt-loader.js';
 export { MockedToolRunner } from './mocked-tool-runner.js';
-export type { RecordedToolCall } from './mocked-tool-runner.js';
+export { RecordingToolExecutor } from './recording-tool-executor.js';
+export type { RecordedToolCall } from './recording-tool-executor.js';
 export { Scorer } from './scorer.js';
 export type { ScoringResult } from './scorer.js';
 export { StatisticsEngine } from './statistics.js';
